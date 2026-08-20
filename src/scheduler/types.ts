@@ -33,6 +33,8 @@ export interface ScheduleEntry {
 	interval?: string;
 	/** Daily fixed time: "HH:MM" (local to timezone). */
 	at?: string;
+	/** One-shot absolute time, ISO 8601. Fires exactly once, then becomes inert. */
+	once?: string;
 	/** IANA timezone; defaults to "Asia/Shanghai". */
 	timezone: string;
 	/** Message sent to the Agent when this fires (goes through normal routing / execution). */

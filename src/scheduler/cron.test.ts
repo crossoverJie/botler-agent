@@ -6,6 +6,8 @@ import {
 	nextCronWall,
 	wallToEpoch,
 	epochToWall,
+	nextFireEpoch,
+	parseOnceEpoch,
 	type WallClock,
 	type CompiledCron,
 } from "./cron.ts";
@@ -155,4 +157,73 @@ test("nextCronWall resolves a far-future date without scanning minutes", () => {
 	const ms = Number(process.hrtime.bigint() - t0) / 1e6;
 	assert.deepEqual(next, w(2028, 2, 29, 0, 0));
 	assert.ok(ms < 50, `expected day-level advancement to be fast, took ${ms}ms`);
+});
+
+// --- once (one-shot) trigger ---
+
+test("parseOnceEpoch parses absolute forms with explicit offset", () => {
+	assert.equal(parseOnceEpoch("2026-08-20T22:00:00+08:00", "UTC"), Date.parse("2026-08-20T22:00:00+08:00"));
+	assert.equal(parseOnceEpoch("2026-08-20T14:00:00Z", "UTC"), Date.parse("2026-08-20T14:00:00Z"));
+	assert.equal(parseOnceEpoch("2026-08-20T22:00+08:00", "UTC"), Date.parse("2026-08-20T22:00:00+08:00"));
+});
+
+test("parseOnceEpoch parses naive local forms in the entry timezone", () => {
+	// 2026-06-15 12:30 Asia/Shanghai (UTC+8) -> 04:30 UTC
+	assert.equal(parseOnceEpoch("2026-06-15T12:30", "Asia/Shanghai"), Date.UTC(2026, 5, 15, 4, 30));
+	// Space separator instead of T is accepted.
+	assert.equal(parseOnceEpoch("2026-06-15 12:30", "Asia/Shanghai"), Date.UTC(2026, 5, 15, 4, 30));
+	// Same wall time in America/New_York (EDT, UTC-4) -> 16:30 UTC
+	assert.equal(parseOnceEpoch("2026-06-15T12:30", "America/New_York"), Date.UTC(2026, 5, 15, 16, 30));
+});
+
+test("parseOnceEpoch rejects malformed or out-of-range input", () => {
+	assert.equal(parseOnceEpoch("", "UTC"), null);
+	assert.equal(parseOnceEpoch("not-a-date", "UTC"), null);
+	assert.equal(parseOnceEpoch("2026-13-40T25:99", "UTC"), null);
+	assert.equal(parseOnceEpoch("22:00", "UTC"), null); // bare HH:MM is an `at`, not once
+});
+
+test("parseOnceEpoch rejects impossible calendar dates that Date.UTC would otherwise overflow", () => {
+	// Feb 30 / Apr 31 must be rejected, not silently rolled over into the next month.
+	assert.equal(parseOnceEpoch("2026-02-30T22:00", "Asia/Shanghai"), null);
+	assert.equal(parseOnceEpoch("2026-04-31T22:00", "Asia/Shanghai"), null);
+	// Feb 29 in a non-leap year is also impossible.
+	assert.equal(parseOnceEpoch("2026-02-29T22:00", "Asia/Shanghai"), null);
+	// Feb 29 in a leap year is valid.
+	assert.notEqual(parseOnceEpoch("2028-02-29T22:00", "Asia/Shanghai"), null);
+});
+
+test("nextFireEpoch returns the once instant when it is in the future of the watermark", () => {
+	const onceEpoch = Date.parse("2026-08-20T22:00:00+08:00");
+	const after = Date.parse("2026-08-20T10:00:00+08:00");
+	const e = entry({ once: "2026-08-20T22:00:00+08:00" });
+	assert.equal(nextFireEpoch(e, after), onceEpoch);
+});
+
+test("nextFireEpoch returns Infinity for a once at or before the watermark (already fired / expired)", () => {
+	const onceEpoch = Date.parse("2026-08-20T22:00:00+08:00");
+	const e = entry({ once: "2026-08-20T22:00:00+08:00" });
+	assert.equal(nextFireEpoch(e, onceEpoch), Infinity); // equal watermark -> not strictly after
+	assert.equal(nextFireEpoch(e, onceEpoch + 1000), Infinity); // past
+});
+
+test("nextFireEpoch for once does not apply silentHours", () => {
+	const onceEpoch = Date.parse("2026-08-20T23:30:00+08:00");
+	const after = Date.parse("2026-08-20T10:00:00+08:00");
+	const e = entry({
+		once: "2026-08-20T23:30:00+08:00",
+		silentHours: { from: "22:00", to: "07:00" }, // would defer a daily trigger to next 07:00
+	});
+	assert.equal(nextFireEpoch(e, after), onceEpoch); // returned exactly, not deferred
+});
+
+test("nextFireEpoch accepts a once-only entry without any cron/interval/at", () => {
+	// A once-only entry must not trip compileSchedule's missing-trigger error.
+	const e = entry({ once: "2026-08-20T22:00:00+08:00" });
+	assert.doesNotThrow(() => nextFireEpoch(e, Date.parse("2026-08-20T10:00:00+08:00")));
+});
+
+test("nextFireEpoch throws on an invalid once value", () => {
+	const e = entry({ once: "not-a-date" });
+	assert.throws(() => nextFireEpoch(e, 0), /invalid once/);
 });

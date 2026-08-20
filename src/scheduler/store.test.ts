@@ -33,7 +33,7 @@ test("normalizeEntry accepts cron and interval triggers", () => {
 });
 
 test("normalizeEntry rejects an entry with no trigger", () => {
-	assert.throws(() => normalizeEntry({ id: "x", message: "m" }), /needs one of cron\/interval\/at/);
+	assert.throws(() => normalizeEntry({ id: "x", message: "m" }), /needs one of cron\/interval\/at\/once/);
 });
 
 test("normalizeEntry rejects invalid timezone", () => {
@@ -125,6 +125,65 @@ test("normalizeSchedules rejects duplicate ids", () => {
 test("normalizeSchedules rejects a list containing a bad entry", () => {
 	assert.throws(
 		() => normalizeSchedules([base, { id: "t2", message: "m" }]), // t2 has no trigger
-		/needs one of cron\/interval\/at/,
+		/needs one of cron\/interval\/at\/once/,
 	);
+});
+
+// ---------------------------------------------------------------------------
+// once (one-shot) trigger
+// ---------------------------------------------------------------------------
+
+test("normalizeEntry accepts a valid once entry and preserves it", () => {
+	const e = normalizeEntry({ id: "o1", message: "m", once: "2026-08-20T22:00:00+08:00" });
+	assert.equal(e.once, "2026-08-20T22:00:00+08:00");
+	assert.equal(e.at, undefined);
+});
+
+test("normalizeEntry accepts a naive once and applies the entry timezone", () => {
+	const e = normalizeEntry({
+		id: "o2", message: "m", timezone: "Asia/Shanghai", once: "2026-08-20T22:00",
+	});
+	assert.equal(e.once, "2026-08-20T22:00");
+});
+
+test("normalizeEntry rejects a malformed once value", () => {
+	assert.throws(
+		() => normalizeEntry({ id: "o3", message: "m", once: "not-a-date" }),
+		/invalid once/,
+	);
+	assert.throws(
+		() => normalizeEntry({ id: "o4", message: "m", once: "22:00" }), // bare time is an `at`, not once
+		/invalid once/,
+	);
+});
+
+test("normalizeEntry rejects multiple triggers (mutual exclusion)", () => {
+	assert.throws(
+		() => normalizeEntry({ id: "o5", message: "m", cron: "0 8 * * *", once: "2026-08-20T22:00:00+08:00" }),
+		/exactly one/,
+	);
+	assert.throws(
+		() => normalizeEntry({ id: "o6", message: "m", at: "22:00", interval: "1h" }),
+		/exactly one/,
+	);
+});
+
+// CRITICAL boundary: the store layer must NEVER enforce "once must be in the future".
+// saveSchedules writes the whole list all-or-nothing, and an expired once is left in config after
+// it fires (engine does not delete it). A future-time check here would make EVERY subsequent write
+// (creating another reminder, editing a different task, even disabling the expired once) fail,
+// locking the whole schedule config read-only. Lock this in with a test.
+test("normalizeEntry does NOT reject an expired once (no future-time check on the store path)", () => {
+	const expired = "2000-01-01T00:00:00Z";
+	const e = normalizeEntry({ id: "old-once", message: "m", once: expired });
+	assert.equal(e.once, expired);
+});
+
+test("normalizeSchedules accepts a list containing an expired once alongside other entries (no write poisoning)", () => {
+	const out = normalizeSchedules([
+		{ id: "old-once", message: "fired", once: "2000-01-01T00:00:00Z" },
+		{ id: "daily", message: "m", at: "08:00" },
+	]);
+	assert.equal(out.length, 2);
+	assert.equal(out[0].once, "2000-01-01T00:00:00Z");
 });

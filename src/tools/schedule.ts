@@ -14,7 +14,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import { loadSchedules, saveSchedules } from "../scheduler/store.ts";
-import { nextFireEpoch } from "../scheduler/cron.ts";
+import { nextFireEpoch, parseOnceEpoch } from "../scheduler/cron.ts";
 import type { ScheduleEntry } from "../scheduler/types.ts";
 import { getTaskContext } from "./task-context.ts";
 
@@ -34,9 +34,10 @@ const schema = Type.Object({
 		Type.String({ description: "Scheduled task id (short, e.g. drink-water). Required for update/delete/enable/disable; auto-generated if omitted on create" }),
 	),
 	message: Type.Optional(Type.String({ description: "Message content sent to the Agent when the task fires (required for create)" })),
-	cron: Type.Optional(Type.String({ description: "5-field cron expression, e.g. '0 8 * * *' (one of three for create)" })),
-	interval: Type.Optional(Type.String({ description: "Simple interval, e.g. '5m' / '2h' / '1d' (one of three for create)" })),
-	at: Type.Optional(Type.String({ description: "Fixed daily time 'HH:MM' (one of three for create)" })),
+	cron: Type.Optional(Type.String({ description: "5-field cron expression, e.g. '0 8 * * *' (recurring; one of four for create)" })),
+	interval: Type.Optional(Type.String({ description: "Simple interval, e.g. '5m' / '2h' / '1d' (recurring; one of four for create)" })),
+	at: Type.Optional(Type.String({ description: "Fixed DAILY time 'HH:MM' — repeats every day (one of four for create). Do NOT use for one-off reminders like 'tonight 10pm'; use once instead." })),
+	once: Type.Optional(Type.String({ description: "ONE-SHOT absolute date-time in ISO 8601, e.g. '2026-08-20T22:00:00+08:00' — fires exactly once then becomes inert (one of four for create). Use for 'tonight 10pm' / 'tomorrow 3pm' / 'Aug 20 at 10am'. MUST include the full date; compute it from today's date. Do NOT use 'at' (that repeats daily)." })),
 	timezone: Type.Optional(Type.String({ description: "IANA timezone, default Asia/Shanghai" })),
 	project: Type.Optional(
 		Type.String({ description: "Routing hint (data subproject name); when set, the routing LLM is skipped on fire and the project runs directly" }),
@@ -50,6 +51,7 @@ type ScheduleArgs = {
 	cron?: string;
 	interval?: string;
 	at?: string;
+	once?: string;
 	timezone?: string;
 	project?: string;
 };
@@ -57,7 +59,8 @@ type ScheduleArgs = {
 function triggerOf(e: ScheduleEntry): string {
 	if (e.cron) return `cron ${e.cron}`;
 	if (e.interval) return `interval ${e.interval}`;
-	if (e.at) return `at ${e.at}`;
+	if (e.at) return `at ${e.at} (daily)`;
+	if (e.once) return `once ${e.once}`;
 	return "(no trigger)";
 }
 
@@ -67,7 +70,9 @@ function fmtFire(epoch: number, tz: string): string {
 
 function nextFireOf(e: ScheduleEntry): string | null {
 	try {
-		return fmtFire(nextFireEpoch(e, Date.now()), e.timezone);
+		const next = nextFireEpoch(e, Date.now());
+		if (next === Infinity) return null; // expired one-shot
+		return fmtFire(next, e.timezone);
 	} catch {
 		return null;
 	}
@@ -81,7 +86,7 @@ export const scheduleTool: AgentTool<typeof schema> = {
 	name: "schedule",
 	label: "Manage scheduled tasks",
 	description:
-		"Create / view / modify / delete / enable / disable scheduled tasks (writes the fixed schedule config, takes effect immediately). Use when the user says things like 'remind me every morning at 8am…', 'summarize every 2 hours…', 'remind me in X minutes…' that contain scheduling / reminder / calendar intent. create must specify exactly one of cron / interval / at, plus a non-empty message (the instruction sent back to the Agent on fire). After creating or modifying, confirm the next fire time to the user in your reply.",
+		"Create / view / modify / delete / enable / disable scheduled tasks (writes the fixed schedule config, takes effect immediately). Use when the user says things like 'remind me every morning at 8am…', 'summarize every 2 hours…', 'remind me in X minutes…' that contain scheduling / reminder / calendar intent. create must specify exactly one trigger plus a non-empty message (the instruction sent back to the Agent on fire). Four trigger types: (1) cron — 5-field cron for complex recurring schedules; (2) interval — simple '5m'/'2h'/'1d' recurring; (3) at — a DAILY fixed time 'HH:MM' that REPEATS EVERY DAY; (4) once — a ONE-SHOT absolute date-time (ISO 8601, MUST include the full date) that fires EXACTLY ONCE. CRITICAL DISTINCTION: for one-off reminders like 'tonight 10pm', 'tomorrow 3pm', 'next Monday 8am', or any specific date, you MUST use 'once' (compute the full YYYY-MM-DD from today's date) — do NOT use 'at', because 'at' repeats every day. Use 'at' only when the user explicitly says 'every day'. After creating or modifying, confirm the next fire time to the user in your reply.",
 	parameters: schema,
 	async execute(_toolCallId, args: ScheduleArgs) {
 		const { action } = args;
@@ -96,7 +101,13 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			const next = e.enabled ? nextFireOf(e) : null;
 			const rec = e.recipient ? ` push=${e.recipient.source}:${e.recipient.userId}` : "";
 			const proj = e.project ? ` project=${e.project}` : "";
-			const fire = !e.enabled ? " disabled" : next ? ` next-fire=${next}` : "";
+			const fire = !e.enabled
+				? " disabled"
+				: next
+					? ` next-fire=${next}`
+					: e.once
+						? " (expired)"
+						: "";
 			return `- ${e.id} [${e.enabled ? "enabled" : "disabled"}] ${triggerOf(e)} tz=${e.timezone}${proj}${rec}${fire}`;
 		});
 		return textResult(`Scheduled tasks (${entries.length}):\n${lines.join("\n")}`, { count: entries.length });
@@ -107,12 +118,21 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			const id = args.id?.trim() || `sched-${Date.now().toString(36)}`;
 			const message = args.message?.trim();
 			if (!message) throw new Error("create requires a non-empty message (the instruction sent to the Agent on fire)");
-			const triggers: Array<[keyof Omit<ScheduleArgs, "action" | "id" | "message" | "timezone" | "project">, string]> = [];
+			const tz = args.timezone || "Asia/Shanghai";
+			const triggers: Array<[keyof ScheduleArgs, string]> = [];
 			if (args.cron !== undefined && args.cron !== "") triggers.push(["cron", args.cron]);
 			if (args.interval !== undefined && args.interval !== "") triggers.push(["interval", args.interval]);
 			if (args.at !== undefined && args.at !== "") triggers.push(["at", args.at]);
+			if (args.once !== undefined && args.once !== "") triggers.push(["once", args.once]);
 			if (triggers.length !== 1) {
-				throw new Error("create must specify exactly one of cron / interval / at");
+				throw new Error("create must specify exactly one of cron / interval / at / once");
+			}
+			// Entry-level future-time check only for one-shot triggers (store layer stays permissive so
+			// an expired once left in config after firing never blocks subsequent writes).
+			if (triggers[0][0] === "once") {
+				const t = parseOnceEpoch(triggers[0][1], tz);
+				if (t === null) throw new Error(`invalid once value "${triggers[0][1]}"; use ISO 8601 date-time, e.g. 2026-08-20T22:00:00+08:00`);
+				if (t <= Date.now()) throw new Error(`once time must be in the future (got ${triggers[0][1]}); use a full date-time, e.g. 2026-08-20T22:00:00+08:00`);
 			}
 			if (loadSchedules().some((e) => e.id === id)) {
 				throw new Error(`Scheduled task id already exists: ${id}. Use update to modify it.`);
@@ -121,7 +141,7 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			const raw: Record<string, unknown> = {
 				id,
 				enabled: true,
-				timezone: args.timezone ?? "Asia/Shanghai",
+				timezone: tz,
 				message,
 				[triggers[0][0]]: triggers[0][1],
 			};
@@ -166,6 +186,7 @@ export const scheduleTool: AgentTool<typeof schema> = {
 
 		// update
 		const patch: Record<string, unknown> = { ...current[idx] };
+		let newOnceForCheck: { val: string; tz: string } | null = null;
 		if (args.message !== undefined) {
 			const m = args.message.trim();
 			if (!m) throw new Error("update message must not be empty");
@@ -181,14 +202,30 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			patch.cron = args.cron;
 			delete patch.interval;
 			delete patch.at;
+			delete patch.once;
 		} else if (args.interval !== undefined && args.interval !== "") {
 			patch.interval = args.interval;
 			delete patch.cron;
 			delete patch.at;
+			delete patch.once;
 		} else if (args.at !== undefined && args.at !== "") {
 			patch.at = args.at;
 			delete patch.cron;
 			delete patch.interval;
+			delete patch.once;
+		} else if (args.once !== undefined && args.once !== "") {
+			patch.once = args.once;
+			delete patch.cron;
+			delete patch.interval;
+			delete patch.at;
+			newOnceForCheck = { val: args.once, tz: (patch.timezone as string) || "Asia/Shanghai" };
+		}
+		// Future-time check only when this update sets/changes the once value; edits that leave an
+		// existing expired once untouched (e.g. disabling the entry) must not be blocked.
+		if (newOnceForCheck) {
+			const t = parseOnceEpoch(newOnceForCheck.val, newOnceForCheck.tz);
+			if (t === null) throw new Error(`invalid once value "${newOnceForCheck.val}"; use ISO 8601 date-time, e.g. 2026-08-20T22:00:00+08:00`);
+			if (t <= Date.now()) throw new Error(`once time must be in the future (got ${newOnceForCheck.val})`);
 		}
 		current[idx] = patch as unknown as ScheduleEntry;
 		saveSchedules(current);

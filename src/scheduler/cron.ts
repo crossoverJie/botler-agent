@@ -166,16 +166,51 @@ function atToCron(s: string): string {
 }
 
 /**
- * Compile a schedule entry to a cron. Exactly one of cron / interval / at is used
+ * Parse a `once` trigger value to epoch ms.
+ *
+ * Accepted forms:
+ * - absolute time with explicit offset: "2026-08-20T22:00:00+08:00" / "2026-08-20T14:00:00Z"
+ * - naive local form (no offset): "2026-08-20T22:00:00" or "2026-08-20 22:00", interpreted in `tz`
+ *
+ * Returns null on malformed input. Does not check whether the time is in the future.
+ */
+export function parseOnceEpoch(s: string, tz: string): number | null {
+	const trimmed = s.trim();
+	// Explicit offset (Z or +/-HH:MM) -> let Date.parse resolve the absolute instant.
+	if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+		const t = Date.parse(trimmed);
+		return Number.isNaN(t) ? null : t;
+	}
+	// Naive local form: interpret in the entry's timezone.
+	const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(trimmed);
+	if (!m) return null;
+	const year = Number(m[1]);
+	const month = Number(m[2]);
+	const day = Number(m[3]);
+	const hour = Number(m[4]);
+	const minute = Number(m[5]);
+	const second = m[6] !== undefined ? Number(m[6]) : 0;
+	if (
+		month < 1 || month > 12 ||
+		day < 1 || day > daysInMonth(year, month) ||
+		hour > 23 || minute > 59 || second > 59
+	) return null;
+	return wallToEpoch({ year, month, day, hour, minute, second }, tz);
+}
+
+/**
+ * Compile a schedule entry to a cron. One of cron / interval / at is used
  * (priority cron > interval > at). Throws if none (or an invalid form) is present.
- * The original entry keeps its user-written value; this returns a fresh compiled object.
+ * Note: `once` is a one-shot trigger resolved directly by nextFireEpoch and never
+ * reaches this function. The original entry keeps its user-written value; this returns
+ * a fresh compiled object.
  */
 export function compileSchedule(e: ScheduleEntry): CompiledCron {
 	let expr: string;
 	if (e.cron) expr = e.cron;
 	else if (e.interval) expr = intervalToCron(e.interval);
 	else if (e.at) expr = atToCron(e.at);
-	else throw new Error("schedule must specify one of cron/interval/at");
+	else throw new Error("schedule must specify one of cron/interval/at (or once for one-shot)");
 	return compileCron(expr);
 }
 
@@ -325,6 +360,15 @@ export function nextCronWall(c: CompiledCron, after: WallClock): WallClock {
  * with the optional silent-hours window applied (defer to window end).
  */
 export function nextFireEpoch(e: ScheduleEntry, afterEpoch: number): number {
+	// One-shot trigger: must be handled BEFORE compileSchedule(), which has no `once` case and
+	// would reject a once-only entry as missing a trigger. Returns the target instant when it is
+	// still in the future relative to the watermark, or Infinity once it has fired/passed.
+	// silentHours is intentionally NOT applied: a one-shot reminder is an explicit, exact instant.
+	if (e.once) {
+		const t = parseOnceEpoch(e.once, e.timezone || DEFAULT_TZ);
+		if (t === null) throw new Error(`schedule "${e.id}" invalid once "${e.once}"`);
+		return t > afterEpoch ? t : Infinity;
+	}
 	const cron = compileSchedule(e);
 	const tz = e.timezone || DEFAULT_TZ;
 	const wall = epochToWall(afterEpoch, tz);

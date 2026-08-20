@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { CONFIG } from "../config.ts";
-import { compileSchedule, isValidTimezone } from "./cron.ts";
+import { compileSchedule, isValidTimezone, parseOnceEpoch } from "./cron.ts";
 import { writeConfigFile } from "../webui/config-store.ts";
 import type { Recipient } from "../push/types.ts";
 import type { ScheduleEntry } from "./types.ts";
@@ -60,8 +60,13 @@ export function normalizeEntry(item: unknown): ScheduleEntry {
 	const hasCron = typeof o.cron === "string" && o.cron.trim().length > 0;
 	const hasInterval = typeof o.interval === "string" && o.interval.trim().length > 0;
 	const hasAt = typeof o.at === "string" && o.at.trim().length > 0;
-	if (!hasCron && !hasInterval && !hasAt) {
-		throw new Error(`schedule "${id}" needs one of cron/interval/at`);
+	const hasOnce = typeof o.once === "string" && o.once.trim().length > 0;
+	const triggerCount = [hasCron, hasInterval, hasAt, hasOnce].filter(Boolean).length;
+	if (triggerCount === 0) {
+		throw new Error(`schedule "${id}" needs one of cron/interval/at/once`);
+	}
+	if (triggerCount > 1) {
+		throw new Error(`schedule "${id}" must specify exactly one of cron/interval/at/once`);
 	}
 
 	const tz = typeof o.timezone === "string" && o.timezone ? o.timezone : DEFAULT_TZ;
@@ -95,6 +100,12 @@ export function normalizeEntry(item: unknown): ScheduleEntry {
 		if (!parseHM(o.at)) throw new Error(`schedule "${id}" invalid at "${o.at}"`);
 		entry.at = o.at as string;
 	}
+	if (hasOnce) {
+		if (parseOnceEpoch(o.once as string, tz) === null) {
+			throw new Error(`schedule "${id}" invalid once "${o.once}"`);
+		}
+		entry.once = o.once as string;
+	}
 	if (typeof o.project === "string" && o.project) entry.project = o.project;
 
 	if (o.retry !== undefined) {
@@ -127,8 +138,9 @@ export function normalizeEntry(item: unknown): ScheduleEntry {
 		entry.recipient = { source, userId } as Recipient;
 	}
 
-	// Final sanity: must compile.
-	compileSchedule(entry);
+	// Final sanity: cron/interval/at entries must compile. once entries are resolved directly
+	// by nextFireEpoch and do not go through the cron compiler.
+	if (!hasOnce) compileSchedule(entry);
 	return entry;
 }
 

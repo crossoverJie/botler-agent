@@ -247,6 +247,7 @@ export function startWebui(): void {
 						cron?: string;
 						interval?: string;
 						at?: string;
+						once?: string;
 						timezone?: string;
 					};
 					try {
@@ -258,9 +259,10 @@ export function startWebui(): void {
 							...(b.cron ? { cron: b.cron } : {}),
 							...(b.interval ? { interval: b.interval } : {}),
 							...(b.at ? { at: b.at } : {}),
+							...(b.once ? { once: b.once } : {}),
 						};
 						const next = nextFireEpoch(e, Date.now());
-						return json(res, { ok: true, next });
+						return json(res, { ok: true, next: next === Infinity ? null : next });
 					} catch (e) {
 						return json(res, { error: e instanceof Error ? e.message : String(e) }, 400);
 					}

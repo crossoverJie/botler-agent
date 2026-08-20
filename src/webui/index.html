@@ -691,7 +691,8 @@ document.getElementById("sp-save").onclick = async ()=>{
 function scheduleSummary(e){
   if(e.cron) return "cron: "+e.cron;
   if(e.interval) return "interval: "+e.interval;
-  if(e.at) return "at: "+e.at;
+  if(e.at) return "at: "+e.at+" (daily)";
+  if(e.once) return "once: "+e.once;
   return "(no trigger)";
 }
 function renderSchedules(lastExec){
@@ -744,8 +745,8 @@ async function loadSchedulesView(){
 }
 
 function openSchedModal(id){
-  const e = id ? JSON.parse(JSON.stringify(schedules.find(x=>x.id===id))) : { id:"", enabled:true, timezone:"Asia/Shanghai", message:"", cron:"", interval:"", at:"" };
-  const mode = e.cron?"cron":e.interval?"interval":e.at?"at":"cron";
+  const e = id ? JSON.parse(JSON.stringify(schedules.find(x=>x.id===id))) : { id:"", enabled:true, timezone:"Asia/Shanghai", message:"", cron:"", interval:"", at:"", once:"" };
+  const mode = e.cron?"cron":e.interval?"interval":e.at?"at":e.once?"once":"cron";
   const m = document.createElement("div");
   m.className="modal-bg";
   m.innerHTML = `<div class="modal">
@@ -758,11 +759,12 @@ function openSchedModal(id){
       <div>
         <label><input type="radio" name="m-mode" value="cron" ${mode==="cron"?"checked":""}/> cron (5 fields)</label>
         <label><input type="radio" name="m-mode" value="interval" ${mode==="interval"?"checked":""}/> interval (5m/2h/1d)</label>
-        <label><input type="radio" name="m-mode" value="at" ${mode==="at"?"checked":""}/> daily time (HH:MM)</label>
+        <label><input type="radio" name="m-mode" value="at" ${mode==="at"?"checked":""}/> daily time (HH:MM, repeats daily)</label>
+        <label><input type="radio" name="m-mode" value="once" ${mode==="once"?"checked":""}/> once (one-time date-time)</label>
       </div>
     </div>
     <div class="field" style="grid-template-columns:140px 1fr">
-      <div class="flabel">cron / interval / at</div><div><input id="m-spec" value="${esc(e.cron||e.interval||e.at||"")}" placeholder="e.g. 0 8 * * * or 1h or 23:30" /></div>
+      <div class="flabel">cron / interval / at / once</div><div><input id="m-spec" value="${esc(e.cron||e.interval||e.at||e.once||"")}" placeholder="e.g. 0 8 * * * | 1h | 23:30 | 2026-08-20T22:00+08:00" /></div>
     </div>
     <div class="field" style="grid-template-columns:140px 1fr">
       <div class="flabel">Timezone</div><div><input id="m-tz" value="${esc(e.timezone||"Asia/Shanghai")}" /></div>
@@ -779,7 +781,7 @@ function openSchedModal(id){
     </div>
     <div class="field" style="grid-template-columns:140px 1fr">
       <div class="flabel">Silent hours (optional)</div>
-      <div>from <input id="m-sh-from" value="${esc(e.silentHours?.from||"")}" placeholder="22:00" style="width:80px"/> to <input id="m-sh-to" value="${esc(e.silentHours?.to||"")}" placeholder="07:00" style="width:80px"/> (supports crossing midnight)</div>
+      <div>from <input id="m-sh-from" value="${esc(e.silentHours?.from||"")}" placeholder="22:00" style="width:80px" ${mode==="once"?"disabled":""}/> to <input id="m-sh-to" value="${esc(e.silentHours?.to||"")}" placeholder="07:00" style="width:80px" ${mode==="once"?"disabled":""}/> (supports crossing midnight; ignored for once)</div>
     </div>
     <div class="field" style="grid-template-columns:140px 1fr">
       <div class="flabel">Failure retry (optional)</div>
@@ -794,13 +796,21 @@ function openSchedModal(id){
   document.body.appendChild(m);
   const close = ()=>m.remove();
   m.querySelector("#m-cancel").onclick = close;
+  // Silent hours do not apply to one-shot triggers; toggle the inputs live as the mode changes.
+  m.querySelectorAll('input[name="m-mode"]').forEach(r=>{
+    r.onchange = ()=>{
+      const once = m.querySelector('input[name="m-mode"]:checked').value === "once";
+      m.querySelector("#m-sh-from").disabled = once;
+      m.querySelector("#m-sh-to").disabled = once;
+    };
+  });
   m.querySelector("#m-preview").onclick = async ()=>{
     const mode = m.querySelector('input[name="m-mode"]:checked').value;
     const spec = m.querySelector("#m-spec").value.trim();
     const tz = m.querySelector("#m-tz").value.trim()||"Asia/Shanghai";
     const body = { timezone: tz };
     body[mode] = spec;
-    try { const r = await cfgWrite("/api/config/schedules/preview", body, "POST"); if(r.error) return m.querySelector("#m-preview-out").textContent="Error: "+r.error; m.querySelector("#m-preview-out").textContent = "Next fire: " + fmtTime(r.next); }
+    try { const r = await cfgWrite("/api/config/schedules/preview", body, "POST"); if(r.error) return m.querySelector("#m-preview-out").textContent="Error: "+r.error; m.querySelector("#m-preview-out").textContent = (r.next===null||r.next===0) ? "Next fire: (expired / no upcoming fire)" : "Next fire: " + fmtTime(r.next); }
     catch(e){ m.querySelector("#m-preview-out").textContent = "Error: "+e.message; }
   };
   m.querySelector("#m-save").onclick = async ()=>{
@@ -810,13 +820,29 @@ function openSchedModal(id){
     const msg = m.querySelector("#m-msg").value.trim();
     const tz = m.querySelector("#m-tz").value.trim()||"Asia/Shanghai";
     const project = m.querySelector("#m-project").value.trim()||undefined;
-    const shFrom = m.querySelector("#m-sh-from").value.trim();
-    const shTo = m.querySelector("#m-sh-to").value.trim();
+    // Silent-hours inputs are disabled (but still readable) in once mode; force them empty so an
+    // entry switched to/from once never persists a misleading silentHours (engine ignores it for
+    // once, but the stored field would contradict the design).
+    const shFrom = mode==="once" ? "" : m.querySelector("#m-sh-from").value.trim();
+    const shTo = mode==="once" ? "" : m.querySelector("#m-sh-to").value.trim();
     const rmax = Number(m.querySelector("#m-retry-max").value)||0;
     const rms = Number(m.querySelector("#m-retry-ms").value)||0;
     if(!newId){ m.querySelector("#m-err").textContent="ID cannot be empty"; return; }
     if(!spec){ m.querySelector("#m-err").textContent="Trigger cannot be empty"; return; }
     if(!msg){ m.querySelector("#m-err").textContent="Message cannot be empty"; return; }
+    // Future-time guard for one-shot triggers, only on create or when the once value actually
+    // changes (so editing message/project of an already-expired once is not blocked).
+    // NOTE: this is a UX-only guard. It uses Date.parse, which interprets a naive (no-offset)
+    // value in the BROWSER's local timezone rather than the entry's `timezone` field. On a machine
+    // whose timezone differs from the entry's (default Asia/Shanghai) it could mis-reject a valid
+    // naive once; the backend never enforces this, and actual firing uses parseOnceEpoch in the
+    // entry timezone. Explicit-offset forms (e.g. ...+08:00) are unaffected.
+    if(mode==="once"){
+      const t = Date.parse(spec);
+      if(Number.isNaN(t)){ m.querySelector("#m-err").textContent="once must be a valid ISO 8601 date-time, e.g. 2026-08-20T22:00:00+08:00"; return; }
+      const changedOnce = !id || e.once !== spec;
+      if(changedOnce && t <= Date.now()){ m.querySelector("#m-err").textContent="once time must be in the future"; return; }
+    }
     const entry = { id:newId, enabled:true, timezone:tz, message:msg };
     entry[mode] = spec;
     // Build only the fields present in the form; omit (delete) the ones cleared, so editing an
