@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>botler-agent · Console</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --panel2:#1f242d; --line:#2a313c; --fg:#e6e9ef; --muted:#9aa4b2; --accent:#5b8cff; --ok:#3ecf8e; --warn:#f5a623; --err:#ff6b6b; --dup:#9aa4b2; --radius:10px; --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
+  a { color:var(--accent); cursor:pointer; text-decoration:none; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:16px; margin:0; }
+  .layout { display:flex; min-height:calc(100vh - 53px); }
+  .sidebar { width:180px; flex:0 0 auto; border-right:1px solid var(--line); padding:12px; }
+  .sidebar a { display:block; padding:9px 12px; border-radius:8px; margin-bottom:4px; color:var(--fg); }
+  .sidebar a.active { background:var(--panel2); color:var(--accent); font-weight:600; }
+  .main { flex:1 1 auto; overflow:auto; }
+  .wrap { padding:16px 20px; max-width:1200px; margin:0 auto; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:18px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:14px; }
+  .card .k { color:var(--muted); font-size:12px; }
+  .card .v { font-size:22px; font-weight:600; margin-top:4px; }
+  .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:14px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:12px; }
+  .filters label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+  .filters input, .filters select { background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:6px 8px; font-size:13px; }
+  .filters button { background:var(--accent); border:none; color:#fff; border-radius:6px; padding:7px 14px; cursor:pointer; font-size:13px; }
+  .filters button.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--fg); }
+  .pager { display:flex; gap:8px; align-items:center; margin:12px 0; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:12px; }
+  tr.row { cursor:pointer; }
+  tr.row:hover { background:var(--panel); }
+  .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+  .b-success { background:rgba(62,207,142,.15); color:var(--ok); }
+  .b-auto-fixed { background:rgba(91,140,255,.15); color:var(--accent); }
+  .b-validation-failed { background:rgba(245,166,35,.15); color:var(--warn); }
+  .b-error { background:rgba(255,107,107,.15); color:var(--err); }
+  .b-duplicate { background:rgba(154,164,178,.15); color:var(--dup); }
+  .b-unknown-project { background:rgba(154,164,178,.15); color:var(--dup); }
+  .detail { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:16px; margin-top:14px; }
+  .detail h2 { margin:0 0 8px; font-size:15px; }
+  .kv { display:grid; grid-template-columns:120px 1fr; gap:6px 10px; margin-bottom:12px; }
+  .kv .k { color:var(--muted); }
+  pre { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px; overflow:auto; max-height:340px; margin:6px 0; font-size:12.5px; white-space:pre-wrap; word-break:break-word; }
+  .timeline { border-left:2px solid var(--line); margin-left:6px; padding-left:12px; }
+  .tl-item { margin:10px 0; }
+  .tl-role { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .tl-role.assistant { color:var(--accent); }
+  .tl-role.toolResult { color:var(--warn); }
+  .tl-role.user { color:var(--ok); }
+  .think { color:var(--muted); font-style:italic; }
+  .err { color:var(--err); }
+  details { margin:6px 0; }
+  summary { cursor:pointer; color:var(--muted); font-size:12px; }
+  .usage-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:10px; margin:8px 0; }
+  .usage-grid .u { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  .usage-grid .u .k { color:var(--muted); font-size:11px; }
+  .usage-grid .u .v { font-size:16px; font-weight:600; }
+  .token-bar { display:flex; flex-wrap:wrap; gap:18px; align-items:center; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin:10px 0; font-size:13px; }
+  .token-bar .k { color:var(--muted); }
+  .token-bar b { font-size:15px; margin-left:4px; }
+  .token-bar .hint { color:var(--muted); font-size:12px; }
+  .section-title { font-size:13px; color:var(--muted); margin:16px 0 6px; text-transform:uppercase; letter-spacing:.04em; }
+  .disk table th, .disk table td { font-size:13px; }
+  .btn { background:var(--accent); border:none; color:#fff; border-radius:6px; padding:6px 12px; cursor:pointer; font-size:13px; }
+  .btn.danger { background:var(--err); }
+  .btn.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--fg); }
+  .muted { color:var(--muted); }
+  .row-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--panel2); border:1px solid var(--line); padding:10px 16px; border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,.4); z-index:50; }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:40; }
+  .modal { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; max-width:560px; width:92%; max-height:90vh; overflow:auto; }
+  .modal h3 { margin-top:0; }
+  .modal .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:16px; }
+  input[type=checkbox] { accent-color:var(--accent); }
+
+  /* Config view */
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:16px; margin-bottom:16px; }
+  .panel h2 { margin:0 0 4px; font-size:15px; }
+  .panel .hint { color:var(--muted); font-size:12px; margin-bottom:12px; }
+  .cfg-form { display:grid; grid-template-columns:220px 1fr; gap:14px; }
+  .cfg-group { margin-bottom:18px; }
+  .cfg-group > .gtitle { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--accent); margin:8px 0; border-bottom:1px solid var(--line); padding-bottom:4px; }
+  .field { display:grid; grid-template-columns:200px 1fr auto; gap:10px; align-items:start; padding:8px 0; border-bottom:1px solid var(--line); }
+  .field .flabel { font-size:13px; }
+  .field .fdesc { color:var(--muted); font-size:11px; margin-top:2px; }
+  .field input, .field select, .field textarea { background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:6px 8px; font-size:13px; width:100%; }
+  .field input[type=checkbox] { width:auto; }
+  .field .verr { color:var(--err); font-size:11px; }
+  .banner { background:rgba(245,166,35,.12); border:1px solid var(--warn); color:var(--warn); border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:13px; display:none; }
+  textarea.code { font-family:var(--font-mono); min-height:340px; width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:10px; font-size:12.5px; line-height:1.5; }
+  .sched-row { display:grid; grid-template-columns:auto 160px 1fr 150px auto; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); }
+  .sched-summary { font-size:12px; color:var(--muted); }
+  .eye { background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:4px 8px; cursor:pointer; font-size:12px; }
+</style>
+</head>
+<body>
+<header><h1>🤖 botler-agent · Console</h1><span class="muted" id="host"></span></header>
+<div class="layout">
+  <nav class="sidebar">
+    <a id="nav-logs" class="active" data-view="logs-view">📋 Task logs</a>
+    <a id="nav-stats" data-view="stats-view">📊 Stats</a>
+    <a id="nav-monitor" data-view="monitor-view">🩺 Monitor</a>
+    <a id="nav-config" data-view="config-view">⚙️ Config</a>
+  </nav>
+  <div class="main">
+
+    <!-- ============ LOGS VIEW ============ -->
+    <div id="logs-view" class="wrap">
+      <div class="cards" id="cards"></div>
+      <div class="filters">
+        <label>From (date)<input type="date" id="f-from" /></label>
+        <label>To (date)<input type="date" id="f-to" /></label>
+        <label>Project<select id="f-project"><option value="">All</option></select></label>
+        <label>Channel<select id="f-source"><option value="">All</option></select></label>
+        <label>Keyword<input type="text" id="f-q" placeholder="user message / reply / project" /></label>
+        <button id="f-search">Filter</button>
+        <button class="ghost" id="f-reset">Reset</button>
+      </div>
+      <div id="list"></div>
+      <div class="pager" id="pager"></div>
+      <div id="detail"></div>
+      <div class="disk" id="disk">
+        <div class="section-title">Disk usage & cleanup</div>
+        <div id="disk-summary"></div>
+        <div id="disk-files"></div>
+      </div>
+    </div>
+
+    <!-- ============ STATS VIEW ============ -->
+    <div id="stats-view" class="wrap" style="display:none">
+      <div class="filters">
+        <label>Granularity<select id="s-gran"><option value="hour">Hour</option><option value="day" selected>Day</option><option value="week">Week</option></select></label>
+        <label>Group<select id="s-group"><option value="">None</option><option value="project">Project</option><option value="source">Channel</option></select></label>
+        <label>Metric<select id="s-field"><option value="total" selected>total</option><option value="input">input</option><option value="output">output</option><option value="cacheRead">Cache read</option><option value="cacheWrite">Cache write</option></select></label>
+        <label>From (date)<input type="date" id="s-from" /></label>
+        <label>To (date)<input type="date" id="s-to" /></label>
+        <button id="s-go">Stats</button>
+      </div>
+      <div class="cards" id="s-cards"></div>
+      <div id="s-chart"></div>
+      <div id="s-table"></div>
+    </div>
+
+    <!-- ============ CONFIG VIEW ============ -->
+    <div id="config-view" class="wrap" style="display:none">
+      <div class="panel">
+        <h2>System prompt</h2>
+        <div class="hint">Takes effect immediately after saving (reloaded on the next task). Supports __DATA_ROOT__ / __PROJECT_CONTEXT__ / __TODAY__ placeholders.</div>
+        <textarea class="code" id="sp-text"></textarea>
+        <div class="row-actions" style="margin-top:10px">
+          <button class="btn" id="sp-save">Save</button>
+          <span class="muted" id="sp-count"></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>WeChat channel status</h2>
+        <div class="hint">Read-only status of the WeChat renewal reminder (24h session window). Threshold is set by WECHAT_REMINDER_HOURS in .env.</div>
+        <div class="row-actions" style="margin-bottom:10px">
+          <button class="btn ghost" id="wx-refresh">Refresh</button>
+        </div>
+        <div id="wechat-status"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Scheduled tasks</h2>
+        <div class="hint">At fire time, builds a message into dispatch (reusing dedup / queue / validation / commit). Takes effect immediately.</div>
+        <div class="row-actions" style="margin-bottom:10px">
+          <button class="btn" id="sched-add">+ Add</button>
+          <button class="btn ghost" id="sched-reload">Refresh</button>
+        </div>
+        <div id="sched-list"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Backup & rollback</h2>
+        <div class="hint">Auto-backed up to ~/.botler-agent/.backups/ before each write (keeps the last 10). Restoring .env requires a restart; system prompt / schedules take effect immediately.</div>
+        <div id="backup-list"></div>
+      </div>
+    </div>
+
+    <!-- ============ MONITOR VIEW ============ -->
+    <div id="monitor-view" class="wrap" style="display:none">
+      <div class="cards" id="m-cards"></div>
+      <div class="section-title">Memory</div>
+      <div id="m-chart-mem"></div>
+      <div class="section-title">Queue / in-flight</div>
+      <div id="m-chart-queue"></div>
+      <div class="section-title">Event-loop lag</div>
+      <div id="m-chart-lag"></div>
+    </div>
+
+  </div>
+</div>
+
+<div id="toast-host"></div>
+
+<script>
+const API = "";
+function fmtBytes(n){ if(n<1024) return n+" B"; const u=["KB","MB","GB","TB"]; let i=-1; do{ n/=1024; i++; }while(n>=1024&&i<u.length-1); return n.toFixed(1)+" "+u[i]; }
+function fmtTime(ms){ return new Date(ms).toLocaleString(); }
+function fmtDur(ms){ if(ms<1000) return ms+" ms"; return (ms/1000).toFixed(1)+" s"; }
+function fmtDurHuman(ms){
+  if(!Number.isFinite(ms) || ms<0) return "—";
+  const s = Math.floor(ms/1000);
+  const d = Math.floor(s/86400), h = Math.floor((s%86400)/3600), m = Math.floor((s%3600)/60);
+  if(d>0) return `${d} d ${h} h`;
+  if(h>0) return `${h} h ${m} m`;
+  return `${Math.max(m,1)} m`;
+}
+function fmtN(n){ return (n??0).toLocaleString(); }
+function estTokens(s){ const cjk=(s.match(/[\u3400-\u9fff]/g)||[]).length; const other=s.length-cjk; return Math.ceil(cjk+other/4); }
+function esc(s){ return String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function toast(msg){ const t=document.createElement("div"); t.className="toast"; t.textContent=msg; document.getElementById("toast-host").appendChild(t); setTimeout(()=>t.remove(),2600); }
+
+let state = { offset:0, limit:50, total:0, filters:{} };
+
+async function getJSON(path){ const r=await fetch(API+path); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+async function postJSON(path,body){ const r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","X-Botler-UI":"1"},body:JSON.stringify(body)}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+// write to config endpoints (PUT or POST) with the required UI header
+async function cfgWrite(path,body,method){ method=method||"PUT"; const r=await fetch(API+path,{method,headers:{"Content-Type":"application/json","X-Botler-UI":"1"},body:JSON.stringify(body)}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+async function cfgGet(path){ return getJSON(path); }
+
+function statusBadge(s){ return `<span class="badge b-${s}">${s}</span>`; }
+
+// ---------------- nav ----------------
+document.querySelectorAll(".sidebar a").forEach(a=>a.onclick=()=>{
+  document.querySelectorAll(".sidebar a").forEach(x=>x.classList.remove("active"));
+  a.classList.add("active");
+  document.getElementById("logs-view").style.display = a.dataset.view==="logs-view"?"block":"none";
+  document.getElementById("stats-view").style.display = a.dataset.view==="stats-view"?"block":"none";
+  document.getElementById("monitor-view").style.display = a.dataset.view==="monitor-view"?"block":"none";
+  document.getElementById("config-view").style.display = a.dataset.view==="config-view"?"block":"none";
+  // Stop polling whenever we leave the monitor view (avoid stacking timers on repeated visits).
+  clearInterval(monitorTimer);
+  monitorTimer = null;
+  if(a.dataset.view==="config-view") loadConfig();
+  if(a.dataset.view==="stats-view") loadStats();
+  if(a.dataset.view==="monitor-view") startMonitorTimer();
+});
+
+// =====================================================================
+// LOGS
+// =====================================================================
+async function loadSummary(){
+  const s = await getJSON("/api/summary");
+  const cards = [
+    ["Total tasks", s.totalTasks],
+    ["Success", s.byStatus.success||0],
+    ["auto-fixed", s.byStatus["auto-fixed"]||0],
+    ["Failed/unsaved", (s.byStatus["validation-failed"]||0)+(s.byStatus.error||0)],
+    ["Input tokens", s.token.input],
+    ["Output tokens", s.token.output],
+    ["Cache hit", s.token.cacheRead],
+    ["Avg duration", fmtDur(s.avgDurationMs)],
+    ["Model cache hit rate", (s.modelCache.hitRate*100).toFixed(0)+"%"],
+  ];
+  document.getElementById("cards").innerHTML = cards.map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+
+  const projSel = document.getElementById("f-project");
+  const srcSel = document.getElementById("f-source");
+  const curP = projSel.value, curS = srcSel.value;
+  projSel.innerHTML = '<option value="">All</option>' + Object.keys(s.byProject).sort().map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join("");
+  srcSel.innerHTML = '<option value="">All</option>' + Object.keys(s.bySource).sort().map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join("");
+  projSel.value = curP; srcSel.value = curS;
+}
+
+function buildQuery(extra){
+  const f = state.filters;
+  const p = new URLSearchParams();
+  if(f.from!=null) p.set("from", f.from);
+  if(f.to!=null) p.set("to", f.to);
+  if(f.project) p.set("project", f.project);
+  if(f.source) p.set("source", f.source);
+  if(f.q) p.set("q", f.q);
+  p.set("limit", state.limit);
+  p.set("offset", state.offset);
+  if(extra) for(const k in extra) p.set(k, extra[k]);
+  return p.toString();
+}
+
+async function loadList(){
+  const data = await getJSON("/api/logs?"+buildQuery());
+  state.total = data.total;
+  const rows = data.logs.map(l=>{
+    const firstLine = (l.userMessage||"").split("\n")[0];
+    return `<tr class="row" data-id="${esc(l.id)}">
+      <td>${fmtTime(l.startedAt)}</td>
+      <td>${esc(l.source)}</td>
+      <td>${esc(l.project||"—")}</td>
+      <td>${statusBadge(l.status)}</td>
+      <td>${fmtDur(l.durationMs)}</td>
+      <td>${l.usage.total}</td>
+      <td>${esc(firstLine).slice(0,80)}</td>
+    </tr>`;
+  }).join("");
+  document.getElementById("list").innerHTML = `
+    <table>
+      <thead><tr><th>Time</th><th>Channel</th><th>Project</th><th>Status</th><th>Duration</th><th>Tokens</th><th>Message</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan="7" class="muted">No records</td></tr>'}</tbody>
+    </table>`;
+  document.querySelectorAll("#list tr.row").forEach(tr=>tr.onclick=()=>showDetail(tr.dataset.id));
+
+  const pages = Math.ceil(state.total/state.limit);
+  const cur = Math.floor(state.offset/state.limit)+1;
+  document.getElementById("pager").innerHTML = `
+    <button class="ghost" ${cur<=1?"disabled":""} id="pg-prev">← Prev</button>
+    <span class="muted">Page ${cur} / ${pages||1} · ${state.total} total</span>
+    <button class="ghost" ${cur>=pages?"disabled":""} id="pg-next">Next →</button>`;
+  const prev=document.getElementById("pg-prev"), next=document.getElementById("pg-next");
+  if(prev) prev.onclick=()=>{ state.offset=Math.max(0,state.offset-state.limit); loadList(); };
+  if(next) next.onclick=()=>{ state.offset=Math.min(state.total-state.limit, state.offset+state.limit); if(state.offset<0)state.offset=0; loadList(); };
+}
+
+function renderConversation(conv){
+  if(!conv||!conv.length) return '<div class="muted">None</div>';
+  return `<div class="timeline">${conv.map(e=>{
+    const head=`<div class="tl-role ${e.role}">${e.role}${e.toolName?` · ${esc(e.toolName)}`:""}${e.stopReason?` · ${esc(e.stopReason)}`:""}${e.isError?' · <span class="err">error</span>':""} · ${fmtTime(e.timestamp)}</div>`;
+    let body="";
+    if(e.text) body+=`<div>${esc(e.text)}</div>`;
+    if(e.thinking) body+=`<div class="think">💭 ${esc(e.thinking)}</div>`;
+    if(e.chars && ((e.text&&e.chars>e.text.length)||(e.thinking&&e.chars>e.thinking.length))) body+=`<div class="muted">(truncated, original ${e.chars} chars)</div>`;
+    if(!e.text&&!e.thinking) body+='<div class="muted">—</div>';
+    return `<div class="tl-item">${head}${body}</div>`;
+  }).join("")}</div>`;
+}
+
+function renderTools(tools){
+  if(!tools||!tools.length) return '<div class="muted">No tool calls</div>';
+  return `<table>
+    <thead><tr><th>Tool</th><th>Args</th><th>Result</th><th>Duration</th><th>Error</th></tr></thead>
+    <tbody>${tools.map(t=>`
+      <tr>
+        <td>${esc(t.name)}</td>
+        <td><details><summary>View</summary><pre>${esc(JSON.stringify(t.arguments,null,2))}</pre></details></td>
+        <td><details><summary>View</summary><pre>${esc(t.resultText)}</pre>${t.resultTruncated?`<span class="muted">(truncated, original ${t.resultChars??"?"} chars)</span>`:""}</details></td>
+        <td>${fmtDur(t.durationMs)}</td>
+        <td>${t.isError?'<span class="err">✗</span>':""}</td>
+      </tr>`).join("")}</tbody>
+  </table>`;
+}
+
+function renderCalls(calls){
+  if(!calls||!calls.length) return "";
+  const rows = calls.map((c,i)=>`<tr>
+    <td>#${i+1}</td><td>${fmtTime(c.timestamp)}</td><td>${esc(c.stopReason||"")}</td>
+    <td>${c.input}</td><td>${c.output}</td><td>${c.cacheRead}</td><td>${c.cacheWrite}</td>
+    <td>${c.reasoning??0}</td><td>${c.total}</td><td>${(c.costUsd??0).toFixed(4)}</td></tr>`).join("");
+  return `<div class="section-title">Per LLM call</div>
+    <table>
+      <thead><tr><th>#</th><th>Time</th><th>stopReason</th><th>input</th><th>output</th><th>cacheRead</th><th>cacheWrite</th><th>reasoning</th><th>total</th><th>cost$</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderPrompt(title, text, note){
+  const tokens = estTokens(text);
+  return `<div class="section-title">${title}</div>
+    <div class="kv">
+      <div class="k">Chars</div><div>${text.length.toLocaleString()}</div>
+      <div class="k">Est. tokens</div><div>≈${tokens.toLocaleString()}<span class="muted">(CJK≈1/char, others≈1/4, rough estimate)</span></div>
+      ${note?`<div class="k">Derived from actual</div><div><b>${note}</b></div>`:""}
+    </div>
+    <details><summary>Expand full text</summary><pre>${esc(text)}</pre></details>`;
+}
+
+function derivedPromptTokens(inputTokens, userMessage){
+  if(!inputTokens) return null;
+  return Math.max(0, inputTokens - estTokens(userMessage));
+}
+
+function renderUsage(u, label){
+  const grid = [["Input",u.input],["Output",u.output],["Cache read",u.cacheRead],["Cache write",u.cacheWrite],["Reasoning",u.reasoning??0],["Total",u.total],["Cost $",(u.costUsd??0).toFixed(4)]];
+  return `<div class="section-title">${label}</div><div class="usage-grid">${grid.map(([k,v])=>`<div class="u"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>`;
+}
+
+async function showDetail(id){
+  const l = await getJSON("/api/logs/"+encodeURIComponent(id));
+  if(!l){ document.getElementById("detail").innerHTML='<div class="muted">Not found</div>'; return; }
+  const mc = l.modelCache;
+  document.getElementById("detail").innerHTML = `
+    <div class="detail">
+      <a onclick="loadList();document.getElementById('detail').innerHTML='';">← Back to list</a>
+      <h2>Task detail</h2>
+      <div class="kv">
+        <div class="k">Status</div><div>${statusBadge(l.status)} ${l.phase==="self-heal"?'<span class="badge b-auto-fixed">self-heal</span>':""}</div>
+        <div class="k">Start</div><div>${fmtTime(l.startedAt)}</div>
+        <div class="k">End</div><div>${fmtTime(l.endedAt)}</div>
+        <div class="k">Duration</div><div>${fmtDur(l.durationMs)}</div>
+        <div class="k">provider/model</div><div>${esc(l.provider)} / ${esc(l.model)}</div>
+        <div class="k">Project</div><div>${esc(l.project||"—")}</div>
+        <div class="k">Channel</div><div>${esc(l.source)}</div>
+        <div class="k">mutated</div><div>${l.mutated?"Yes":"No"}</div>
+        <div class="k">Images</div><div>${l.images?.length||0}</div>
+      </div>
+      <div class="token-bar">
+        <span class="k">Input</span><b>${fmtN(l.usage.input)}</b>
+        <span class="k">Output</span><b>${fmtN(l.usage.output)}</b>
+        <span class="k">Cache read</span><b>${fmtN(l.usage.cacheRead)}</b>
+        <span class="k">Total</span><b>${fmtN(l.usage.total)}</b>
+        <span class="hint">Total includes cache read (gateway basis); input = new non-cached tokens</span>
+      </div>
+      ${l.systemPrompt?(()=>{const c=l.calls&&l.calls[0];const d=derivedPromptTokens(c&&c.input,l.userMessage);return renderPrompt("System prompt (execution phase)",l.systemPrompt,d!==null?`${d.toLocaleString()} (first-turn input ${c.input} − user message)`:null);})():""}
+      <div class="section-title">Reply</div>
+      <pre>${esc(l.replyText)}</pre>
+      ${renderCalls(l.calls)}
+      ${renderUsage(l.usage,"Token total (execution + routing)")}
+      <div class="section-title">Model parse-cache snapshot</div>
+      <div class="usage-grid">
+        <div class="u"><div class="k">queries</div><div class="v">${mc.queries}</div></div>
+        <div class="u"><div class="k">hits</div><div class="v">${mc.hits}</div></div>
+        <div class="u"><div class="k">hitRate</div><div class="v">${(mc.hitRate*100).toFixed(0)}%</div></div>
+      </div>
+      ${l.routing?`<div class="section-title">Routing</div>
+        <div class="kv"><div class="k">Candidates</div><div>${l.routing.candidates.map(esc).join(", ")}</div>
+        <div class="k">Decision</div><div>${esc(l.routing.decision||"—")}</div></div>
+        ${renderUsage(l.routing.usage,"Routing tokens")}
+        ${l.routing.prompt?(()=>{const d=derivedPromptTokens(l.routing.usage.input,l.userMessage);return renderPrompt("Routing prompt",l.routing.prompt,d!==null?`${d.toLocaleString()} (routing input ${l.routing.usage.input} − user message)`:null);})():""}`:""}
+      <div class="section-title">Tool calls</div>
+      ${renderTools(l.tools)}
+      <div class="section-title">Conversation timeline</div>
+      ${renderConversation(l.conversation)}
+    </div>`;
+}
+
+async function loadDisk(){
+  const d = await getJSON("/api/usage");
+  document.getElementById("disk-summary").innerHTML = `
+    <div class="usage-grid">
+      <div class="u"><div class="k">Dir</div><div class="v" style="font-size:13px">${esc(d.dir)}</div></div>
+      <div class="u"><div class="k">Total size</div><div class="v">${fmtBytes(d.totalBytes)}</div></div>
+      <div class="u"><div class="k">Files</div><div class="v">${d.fileCount}</div></div>
+      <div class="u"><div class="k">Entries</div><div class="v">${d.entryCount}</div></div>
+      <div class="u"><div class="k">Earliest</div><div class="v" style="font-size:13px">${esc(d.oldestDay||"—")}</div></div>
+      <div class="u"><div class="k">Latest</div><div class="v" style="font-size:13px">${esc(d.newestDay||"—")}</div></div>
+    </div>`;
+  const rows = d.files.map(f=>`<tr>
+    <td><input type="checkbox" class="day-chk" value="${esc(f.day)}"></td>
+    <td>${esc(f.day)}</td><td>${f.entries}</td><td>${fmtBytes(f.bytes)}</td></tr>`).join("");
+  document.getElementById("disk-files").innerHTML = `
+    <table>
+      <thead><tr><th></th><th>Date</th><th>Entries</th><th>Size</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan="4" class="muted">No log files</td></tr>'}</tbody>
+    </table>
+    <div class="row-actions" style="margin-top:12px">
+      <button class="btn danger" id="del-selected">Delete selected</button>
+      <label class="muted">Delete before <input type="date" id="del-before"></label>
+      <button class="btn danger" id="del-before-btn">Delete before</button>
+      <button class="btn ghost" id="dry-run">Preview (before delete)</button>
+    </div>`;
+  document.getElementById("del-selected").onclick = confirmDeleteSelected;
+  document.getElementById("del-before-btn").onclick = confirmDeleteBefore;
+  document.getElementById("dry-run").onclick = dryRunBefore;
+}
+
+async function confirmDeleteSelected(){
+  const days = [...document.querySelectorAll(".day-chk:checked")].map(c=>c.value);
+  if(!days.length){ toast("No days selected"); return; }
+  if(!confirm(`Confirm deleting ${days.length} days of logs? This cannot be undone.`)) return;
+  const r = await postJSON("/api/cleanup",{ days });
+  toast(`Deleted ${r.deleted.length} files, freed ${fmtBytes(r.freedBytes)}`);
+  await loadDisk(); await loadList(); await loadSummary();
+}
+
+async function confirmDeleteBefore(){
+  const v = document.getElementById("del-before").value;
+  if(!v){ toast("Please select a date"); return; }
+  if(!confirm(`Confirm deleting all logs before ${v} (excluding ${v})?`)) return;
+  const r = await postJSON("/api/cleanup",{ before:v });
+  toast(`Deleted ${r.deleted.length} files, freed ${fmtBytes(r.freedBytes)}`);
+  await loadDisk(); await loadList(); await loadSummary();
+}
+
+async function dryRunBefore(){
+  const v = document.getElementById("del-before").value;
+  if(!v){ toast("Please select a date"); return; }
+  const r = await postJSON("/api/cleanup",{ before:v, dryRun:true });
+  toast(`Preview: will delete ${r.deleted.length} files, freeing ${fmtBytes(r.freedBytes)}`);
+}
+
+function applyFilters(){
+  const from = document.getElementById("f-from").value;
+  const to = document.getElementById("f-to").value;
+  state.filters = {
+    from: from? new Date(from+"T00:00:00").getTime(): undefined,
+    to: to? new Date(to+"T23:59:59").getTime(): undefined,
+    project: document.getElementById("f-project").value||undefined,
+    source: document.getElementById("f-source").value||undefined,
+    q: document.getElementById("f-q").value.trim()||undefined,
+  };
+  state.offset = 0;
+  loadList();
+}
+
+// =====================================================================
+// STATS (token time-series)
+// =====================================================================
+const TABLE_PAGE_SIZE = 20;
+let lastSeries = null;   // last fetched /api/token-stats payload
+let lastGran = "day";
+let statsTablePages = {}; // group key -> page index (0-based)
+
+function toDateInput(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function fmtBucket(ts, gran){
+  const d = new Date(ts);
+  if(gran==="hour") return String(d.getHours()).padStart(2,"0")+":00";
+  return (d.getMonth()+1)+"-"+d.getDate();
+}
+function fmtShort(n){
+  if(n>=1e6) return (n/1e6).toFixed(1)+"M";
+  if(n>=1e3) return (n/1e3).toFixed(1)+"K";
+  return String(Math.round(n));
+}
+function statsRangeMs(){
+  const from = document.getElementById("s-from").value;
+  const to = document.getElementById("s-to").value;
+  const fromMs = from? new Date(from+"T00:00:00").getTime() : Date.now()-30*86400000;
+  const toMs = to? new Date(to+"T23:59:59").getTime() : Date.now();
+  return { from:fromMs, to:toMs, range:Math.max(0, toMs-fromMs) };
+}
+
+// Granularity × range cap: hour is selectable only when the range ≤7 days, day only when ≤90 days;
+// beyond that the option is disabled and the current selection is bumped up to week.
+function updateGranOptions(rangeMs){
+  const sel = document.getElementById("s-gran");
+  const dayMs = 86400000;
+  const ok = { hour: rangeMs<=7*dayMs, day: rangeMs<=90*dayMs, week: true };
+  [...sel.options].forEach(o=>o.disabled = !ok[o.value]);
+  if(sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].disabled){
+    const order = ["hour","day","week"];
+    const cur = sel.value;
+    for(const g of order){ if(ok[g]){ sel.value = g; break; } }
+    if(sel.value===cur) sel.value = "week";
+  }
+  return sel.value;
+}
+
+async function loadStats(){
+  const { from, to, range } = statsRangeMs();
+  const gran = updateGranOptions(range);
+  const group = document.getElementById("s-group").value;
+  const p = new URLSearchParams();
+  p.set("from", String(from));
+  p.set("to", String(to));
+  p.set("granularity", gran);
+  if(group) p.set("groupBy", group);
+  try {
+    const series = await getJSON("/api/token-stats?"+p.toString());
+    renderStats(series, gran, group);
+  } catch(e){
+    document.getElementById("s-cards").innerHTML="";
+    document.getElementById("s-chart").innerHTML = '<div class="err">Stats failed: '+esc(e.message)+'</div>';
+    document.getElementById("s-table").innerHTML="";
+  }
+}
+
+function renderStats(series, gran, group){
+  lastSeries = series;
+  lastGran = gran;
+  statsTablePages = {};
+  const groups = series.groups || [];
+  const empty = !groups.length || groups.every(g=>!g.buckets.length);
+  const cardsEl = document.getElementById("s-cards");
+  const chartEl = document.getElementById("s-chart");
+  const tblEl = document.getElementById("s-table");
+  if(empty){
+    cardsEl.innerHTML="";
+    chartEl.innerHTML='<div class="muted">No data</div>';
+    tblEl.innerHTML="";
+    return;
+  }
+  const all = groups.flatMap(g=>g.buckets);
+  const sum = k=>all.reduce((a,b)=>a+(b[k]||0),0);
+  const peak = all.reduce((a,b)=>(b.total>a.total?b:a), all[0]);
+  const field = document.getElementById("s-field").value;
+  const cards = [
+    ["Input tokens", fmtN(sum("input"))],
+    ["Output tokens", fmtN(sum("output"))],
+    ["Cache read tokens", fmtN(sum("cacheRead"))],
+    ["Cache write tokens", fmtN(sum("cacheWrite"))],
+    ["Total tokens", fmtN(sum("total"))],
+    ["Cost $", (sum("costUsd")||0).toFixed(4)],
+    ["Peak bucket"+(group?" (all groups)":""), `${fmtBucket(peak.start, gran)} · ${fmtN(peak.total)}`],
+  ];
+  cardsEl.innerHTML = cards.map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  chartEl.innerHTML = renderStatsChart(series, gran, field);
+  tblEl.innerHTML = renderStatsTable(series, gran);
+  bindStatsPager();
+}
+
+function renderStatsChart(series, gran, field){
+  const groups = series.groups;
+  const W = 960, H = 300, pad = 40;
+  const n = groups[0].buckets.length;
+  const step = n>1 ? (W-pad*2)/n : W-pad*2;
+  const max = Math.max(1, ...groups.flatMap(g=>g.buckets.map(b=>b[field]||0)));
+  const colors = ["var(--accent)","var(--ok)","var(--warn)","var(--err)","var(--dup)"];
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" style="max-width:960px" xmlns="http://www.w3.org/2000/svg">`;
+  // axes
+  svg += `<line x1="${pad}" y1="0" x2="${pad}" y2="${H-pad}" stroke="var(--line)"/>`;
+  svg += `<line x1="${pad}" y1="${H-pad}" x2="${W-10}" y2="${H-pad}" stroke="var(--line)"/>`;
+  svg += `<text x="${pad-6}" y="12" text-anchor="end" fill="var(--muted)" font-size="11">${fmtShort(max)}</text>`;
+  const bw = Math.max(2, step/groups.length*0.8);
+  const labelEvery = Math.max(1, Math.ceil(n/40));
+  for(let i=0;i<n;i++){
+    const x = pad + i*step;
+    for(let gi=0;gi<groups.length;gi++){
+      const b = groups[gi].buckets[i];
+      const v = b[field]||0;
+      const h = v/max*(H-pad-12);
+      svg += `<rect x="${x + gi*bw + (step-groups.length*bw)/2}" y="${H-pad-h}" width="${bw}" height="${Math.max(0,h)}" fill="${colors[gi%colors.length]}" rx="1"><title>${esc(groups[gi].key)} · ${fmtBucket(b.start,gran)} · ${fmtN(v)} tokens</title></rect>`;
+    }
+    if(i%labelEvery===0){
+      svg += `<text x="${x+step/2}" y="${H-pad+16}" text-anchor="middle" fill="var(--muted)" font-size="10">${fmtBucket(groups[0].buckets[i].start,gran)}</text>`;
+    }
+  }
+  svg += `</svg>`;
+  return svg;
+}
+
+// Table bucket order: newest first (descending time); each group is paginated independently, TABLE_PAGE_SIZE rows per page.
+function renderStatsTable(series, gran){
+  const groups = series.groups;
+  const header = `<thead><tr><th>Bucket start</th><th>Tasks</th><th>input</th><th>output</th><th>Cache read</th><th>Cache write</th><th>total</th><th>Cost$</th></tr></thead>`;
+  return groups.map((g, gi)=>{
+    const buckets = [...g.buckets].reverse();
+    const totalRows = buckets.length;
+    const pageCount = Math.max(1, Math.ceil(totalRows/TABLE_PAGE_SIZE));
+    const page = Math.min(statsTablePages[g.key]||0, pageCount-1);
+    const slice = buckets.slice(page*TABLE_PAGE_SIZE, (page+1)*TABLE_PAGE_SIZE);
+    const rows = slice.map(b=>`<tr>
+      <td>${fmtBucket(b.start, gran)}</td>
+      <td>${b.tasks}</td>
+      <td>${fmtN(b.input)}</td>
+      <td>${fmtN(b.output)}</td>
+      <td>${fmtN(b.cacheRead)}</td>
+      <td>${fmtN(b.cacheWrite)}</td>
+      <td>${fmtN(b.total)}</td>
+      <td>${(b.costUsd||0).toFixed(4)}</td>
+    </tr>`).join("");
+    const pager = totalRows>TABLE_PAGE_SIZE ? `<div class="pager">
+      <button class="ghost st-prev" data-gi="${gi}" ${page<=0?"disabled":""}>← Prev</button>
+      <span class="muted">Page ${page+1} / ${pageCount} · ${totalRows} total</span>
+      <button class="ghost st-next" data-gi="${gi}" ${page>=pageCount-1?"disabled":""}>Next →</button>
+    </div>` : "";
+    const t = `<table>${header}<tbody>${rows}</tbody></table>${pager}`;
+    return groups.length>1 ? `<div class="section-title">${esc(g.key)}</div>${t}` : t;
+  }).join("");
+}
+
+function bindStatsPager(){
+  const tbl = document.getElementById("s-table");
+  tbl.querySelectorAll(".st-prev").forEach(b=>b.onclick=()=>statsPage(-1, Number(b.dataset.gi)));
+  tbl.querySelectorAll(".st-next").forEach(b=>b.onclick=()=>statsPage(1, Number(b.dataset.gi)));
+}
+function statsPage(delta, gi){
+  const g = ((lastSeries&&lastSeries.groups)||[])[gi];
+  if(!g) return;
+  const pageCount = Math.max(1, Math.ceil(g.buckets.length/TABLE_PAGE_SIZE));
+  let page = statsTablePages[g.key]||0;
+  statsTablePages[g.key] = Math.min(Math.max(0, page+delta), pageCount-1);
+  document.getElementById("s-table").innerHTML = renderStatsTable(lastSeries, lastGran);
+  bindStatsPager();
+}
+
+// =====================================================================
+// CONFIG
+// =====================================================================
+let schedules = [];
+
+// ---- system prompt ----
+document.getElementById("sp-text").addEventListener("input", ()=>{
+  const len = document.getElementById("sp-text").value.length;
+  document.getElementById("sp-count").textContent = `${len} chars`;
+});
+document.getElementById("sp-save").onclick = async ()=>{
+  const content = document.getElementById("sp-text").value;
+  try {
+    const r = await cfgWrite("/api/config/system-prompt", { content });
+    if(r.error) return toast("Error: "+r.error);
+    toast("Saved; takes effect on the next task");
+  } catch(e){ toast("Save failed: "+e.message); }
+};
+
+// ---- schedules ----
+function scheduleSummary(e){
+  if(e.cron) return "cron: "+e.cron;
+  if(e.interval) return "interval: "+e.interval;
+  if(e.at) return "at: "+e.at;
+  return "(no trigger)";
+}
+function renderSchedules(lastExec){
+  if(!schedules.length){ document.getElementById("sched-list").innerHTML='<div class="muted">No scheduled tasks yet. Click "Add" to create one.</div>'; return; }
+  document.getElementById("sched-list").innerHTML = schedules.map(e=>{
+    const last = lastExec[e.id];
+    const lastStr = last? `${fmtTime(last.startedAt)} · ${statusBadge(last.status)}` : "—";
+    return `<div class="sched-row">
+      <label><input type="checkbox" class="sched-enable" data-id="${esc(e.id)}" ${e.enabled?"checked":""}/> ${esc(e.id)}</label>
+      <div class="sched-summary">${esc(scheduleSummary(e))}<br/>tz:${esc(e.timezone||"Asia/Shanghai")}${e.project?("<br/>project:"+esc(e.project)):""}</div>
+      <div class="sched-summary">${esc((e.message||"").slice(0,60))}</div>
+      <div class="muted" style="font-size:12px">Last: ${lastStr}</div>
+      <div class="row-actions">
+        <button class="btn ghost sched-edit" data-id="${esc(e.id)}">Edit</button>
+        <button class="btn danger sched-del" data-id="${esc(e.id)}">Delete</button>
+      </div>
+    </div>`;
+  }).join("");
+  document.querySelectorAll(".sched-enable").forEach(c=>c.onchange=async()=>{
+    const id=c.dataset.id; const e=schedules.find(x=>x.id===id); if(!e) return;
+    e.enabled = c.checked;
+    await persistSchedules();
+  });
+  document.querySelectorAll(".sched-edit").forEach(b=>b.onclick=()=>openSchedModal(b.dataset.id));
+  document.querySelectorAll(".sched-del").forEach(b=>b.onclick=async()=>{
+    if(!confirm("Confirm deleting scheduled task "+b.dataset.id+"?")) return;
+    schedules = schedules.filter(x=>x.id!==b.dataset.id);
+    await persistSchedules();
+  });
+}
+async function persistSchedules(){
+  try { const r = await cfgWrite("/api/config/schedules", { schedules }); if(r.error) return toast("Error: "+r.error); toast("Saved; takes effect immediately"); await loadSchedulesView(); }
+  catch(e){ toast("Save failed: "+e.message); }
+}
+async function loadSchedulesView(){
+  const data = await cfgGet("/api/config/schedules");
+  schedules = data || [];
+  // aggregate last execution per schedule id from scheduler-source logs
+  let lastExec = {};
+  try {
+    const logs = await cfgGet("/api/logs?source=scheduler&limit=500");
+    for(const l of (logs.logs||[])){
+      const m = (l.taskId||"").match(/^schedule:([^:]+):/);
+      if(!m) continue;
+      const id = m[1];
+      if(!lastExec[id] || l.startedAt > lastExec[id].startedAt) lastExec[id] = l;
+    }
+  } catch(_){}
+  renderSchedules(lastExec);
+}
+
+function openSchedModal(id){
+  const e = id ? JSON.parse(JSON.stringify(schedules.find(x=>x.id===id))) : { id:"", enabled:true, timezone:"Asia/Shanghai", message:"", cron:"", interval:"", at:"" };
+  const mode = e.cron?"cron":e.interval?"interval":e.at?"at":"cron";
+  const m = document.createElement("div");
+  m.className="modal-bg";
+  m.innerHTML = `<div class="modal">
+    <h3>${id?"Edit":"Add"} scheduled task</h3>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">ID (unique)</div><div><input id="m-id" value="${esc(e.id)}" ${id?"disabled":""} /></div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Trigger</div>
+      <div>
+        <label><input type="radio" name="m-mode" value="cron" ${mode==="cron"?"checked":""}/> cron (5 fields)</label>
+        <label><input type="radio" name="m-mode" value="interval" ${mode==="interval"?"checked":""}/> interval (5m/2h/1d)</label>
+        <label><input type="radio" name="m-mode" value="at" ${mode==="at"?"checked":""}/> daily time (HH:MM)</label>
+      </div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">cron / interval / at</div><div><input id="m-spec" value="${esc(e.cron||e.interval||e.at||"")}" placeholder="e.g. 0 8 * * * or 1h or 23:30" /></div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Timezone</div><div><input id="m-tz" value="${esc(e.timezone||"Asia/Shanghai")}" /></div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Message</div><div><textarea id="m-msg" rows="3">${esc(e.message||"")}</textarea></div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">project (optional)</div><div><input id="m-project" value="${esc(e.project||"")}" placeholder="routing hint, skip routing" /></div>
+    </div>
+    <div class="row-actions" style="margin:8px 0">
+      <button class="btn ghost" id="m-preview">Preview next fire</button>
+      <span id="m-preview-out" class="muted"></span>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Silent hours (optional)</div>
+      <div>from <input id="m-sh-from" value="${esc(e.silentHours?.from||"")}" placeholder="22:00" style="width:80px"/> to <input id="m-sh-to" value="${esc(e.silentHours?.to||"")}" placeholder="07:00" style="width:80px"/> (supports crossing midnight)</div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Failure retry (optional)</div>
+      <div>count <input id="m-retry-max" type="number" value="${esc(e.retry?.max??0)}" style="width:70px"/> interval(ms) <input id="m-retry-ms" type="number" value="${esc(e.retry?.backoffMs??0)}" style="width:90px"/></div>
+    </div>
+    <div id="m-err" class="err" style="min-height:16px"></div>
+    <div class="actions">
+      <button class="btn ghost" id="m-cancel">Cancel</button>
+      <button class="btn" id="m-save">Save</button>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  const close = ()=>m.remove();
+  m.querySelector("#m-cancel").onclick = close;
+  m.querySelector("#m-preview").onclick = async ()=>{
+    const mode = m.querySelector('input[name="m-mode"]:checked').value;
+    const spec = m.querySelector("#m-spec").value.trim();
+    const tz = m.querySelector("#m-tz").value.trim()||"Asia/Shanghai";
+    const body = { timezone: tz };
+    body[mode] = spec;
+    try { const r = await cfgWrite("/api/config/schedules/preview", body, "POST"); if(r.error) return m.querySelector("#m-preview-out").textContent="Error: "+r.error; m.querySelector("#m-preview-out").textContent = "Next fire: " + fmtTime(r.next); }
+    catch(e){ m.querySelector("#m-preview-out").textContent = "Error: "+e.message; }
+  };
+  m.querySelector("#m-save").onclick = async ()=>{
+    const newId = m.querySelector("#m-id").value.trim();
+    const mode = m.querySelector('input[name="m-mode"]:checked').value;
+    const spec = m.querySelector("#m-spec").value.trim();
+    const msg = m.querySelector("#m-msg").value.trim();
+    const tz = m.querySelector("#m-tz").value.trim()||"Asia/Shanghai";
+    const project = m.querySelector("#m-project").value.trim()||undefined;
+    const shFrom = m.querySelector("#m-sh-from").value.trim();
+    const shTo = m.querySelector("#m-sh-to").value.trim();
+    const rmax = Number(m.querySelector("#m-retry-max").value)||0;
+    const rms = Number(m.querySelector("#m-retry-ms").value)||0;
+    if(!newId){ m.querySelector("#m-err").textContent="ID cannot be empty"; return; }
+    if(!spec){ m.querySelector("#m-err").textContent="Trigger cannot be empty"; return; }
+    if(!msg){ m.querySelector("#m-err").textContent="Message cannot be empty"; return; }
+    const entry = { id:newId, enabled:true, timezone:tz, message:msg };
+    entry[mode] = spec;
+    // Build only the fields present in the form; omit (delete) the ones cleared, so editing an
+    // existing entry and emptying project / silentHours / retry actually removes them.
+    if(project) entry.project = project; else delete entry.project;
+    if(shFrom && shTo) entry.silentHours = { from:shFrom, to:shTo }; else delete entry.silentHours;
+    if(rmax>0) entry.retry = { max:rmax, backoffMs:rms }; else delete entry.retry;
+    if(id){ // edit: replace, keep enabled + recipient
+      const old = schedules.find(x=>x.id===id);
+      entry.enabled = old? old.enabled : true;
+      // The form has no recipient field; keep the original one so an edit never silently drops it.
+      if(old && old.recipient) entry.recipient = old.recipient;
+      schedules = schedules.map(x=>x.id===id?entry:x);
+    } else {
+      if(schedules.some(x=>x.id===newId)){ m.querySelector("#m-err").textContent="ID already exists"; return; }
+      schedules.push(entry);
+    }
+    close();
+    await persistSchedules();
+  };
+}
+
+// ---- backups ----
+async function loadBackups(){
+  const data = await cfgGet("/api/config/backups");
+  if(!data.length){ document.getElementById("backup-list").innerHTML='<div class="muted">No backups yet.</div>'; return; }
+  const rows = data.map(b=>`<tr>
+    <td>${esc(b.name)}</td>
+    <td>${fmtTime(b.ts)}</td>
+    <td>${fmtBytes(b.bytes)}</td>
+    <td><button class="btn ghost backup-restore" data-name="${esc(b.name)}" data-file="${esc(b.file)}">Restore</button></td>
+  </tr>`).join("");
+  document.getElementById("backup-list").innerHTML = `<table>
+    <thead><tr><th>File</th><th>Time</th><th>Size</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+  document.querySelectorAll(".backup-restore").forEach(b=>b.onclick=async()=>{
+    if(!confirm("Confirm restoring this backup? Restoring .env requires a restart to take effect.")) return;
+    try { const r = await cfgWrite("/api/config/backups/restore", { name:b.dataset.name, file:b.dataset.file }, "POST"); if(r.error) return toast("Error: "+r.error); toast(r.live?"Restored; takes effect immediately":"Restored; restart to take effect"); await loadConfig(); }
+    catch(e){ toast("Restore failed: "+e.message); }
+  });
+}
+
+// ---- wechat status ----
+function renderWechatStatus(w){
+  const el = document.getElementById("wechat-status");
+  if(!w){ el.innerHTML = '<div class="muted">No WeChat status available.</div>'; return; }
+  if(!w.configured){ el.innerHTML = '<div class="muted">WeChat channel not logged in (not configured or logged out).</div>'; return; }
+  const row = (label, value)=>`<div class="field"><div><div class="flabel">${label}</div></div><div>${value}</div></div>`;
+  const ts = (t)=> t? fmtTime(t) : "—";
+  const loginBadge = '<span class="badge b-success">Logged in</span>';
+  const loopBadge = w.reminderLoopStarted ? '<span class="badge b-success">running</span>' : '<span class="badge b-error">not running</span>';
+  const remindedBadge = w.remindedThisStretch ? '<span class="badge b-success">reminded</span>' : '<span class="badge b-duplicate">not reminded</span>';
+  const rows = [];
+  rows.push(row("Login", `${loginBadge} owner: ${esc(w.owner||"—")}${w.loginAt?` · logged in ${fmtDurHuman(w.loginAgeMs)}`:" · duration unknown"}`));
+  rows.push(row("Renewal reminder", `${w.reminderEnabled?`threshold ${w.thresholdHours} h`:"disabled"} · loop ${loopBadge} · check interval ${Math.round((w.reminderTickMs||600000)/60000)} min`));
+  rows.push(row("Loop check", `Last ${ts(w.lastTickAt)} · Next ${ts(w.nextTickAt)}`));
+  if(!w.ownerHasContext){
+    rows.push(row("owner session", '<span class="muted">Owner has never messaged the bot (no context, cannot determine silence)</span>'));
+  } else {
+    rows.push(row("Last message", `${ts(w.lastMsgAt)} · silent for ${fmtDurHuman(w.quietMs)}`));
+    rows.push(row("This silence stretch", `${remindedBadge} · last reminded ${ts(w.lastRemindedAt)} · next reminder due ${ts(w.nextReminderAt)}`));
+  }
+  el.innerHTML = rows.join("");
+}
+document.getElementById("wx-refresh").onclick = ()=>loadConfig();
+
+async function loadConfig(){
+  const c = await cfgGet("/api/config");
+  document.getElementById("sp-text").value = c.systemPrompt || "";
+  document.getElementById("sp-count").textContent = `${(c.systemPrompt||"").length} chars`;
+  renderWechatStatus(c.wechat);
+  await loadSchedulesView();
+  await loadBackups();
+}
+
+// ---- wire config buttons ----
+document.getElementById("sched-add").onclick = ()=>openSchedModal(null);
+document.getElementById("sched-reload").onclick = async ()=>{ await loadSchedulesView(); toast("Refreshed"); };
+
+// =====================================================================
+// MONITOR (process health / metrics)
+// =====================================================================
+let monitorTimer = null;
+const MONITOR_REFRESH_MS = 5000;
+const LAG_WARN_MS = 100; // p99 event-loop lag above this turns the line red
+
+// Inline SVG line chart (zero deps, same style as the token-stats chart). Draws one or more
+// series sharing a single auto-scaled Y axis. `defs` = [{field, color}].
+function renderLines(points, defs, opts){
+  opts = opts || {};
+  if(!points || !points.length) return '<div class="muted">No data yet (sampling every '+MONITOR_REFRESH_MS/1000+'s)</div>';
+  const W = 960, H = 180, pad = { l:48, r:12, t:10, b:20 };
+  let max = opts.max || 1;
+  for(const d of defs) for(const p of points) max = Math.max(max, p[d.field]||0);
+  const n = points.length;
+  const X = i => pad.l + (n>1 ? i/(n-1)*(W-pad.l-pad.r) : (W-pad.l-pad.r)/2);
+  const Y = v => H-pad.b - (v/max)*(H-pad.t-pad.b);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:960px" xmlns="http://www.w3.org/2000/svg">`;
+  svg += `<line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${H-pad.b}" stroke="var(--line)"/>`;
+  svg += `<line x1="${pad.l}" y1="${H-pad.b}" x2="${W-pad.r}" y2="${H-pad.b}" stroke="var(--line)"/>`;
+  svg += `<text x="${pad.l-6}" y="${pad.t+10}" text-anchor="end" fill="var(--muted)" font-size="11">${fmtShort(max)}${opts.unit||""}</text>`;
+  for(const i of [0, Math.floor((n-1)/2), n-1]){
+    if(i<0) continue;
+    svg += `<text x="${X(i)}" y="${H-pad.b+16}" text-anchor="middle" fill="var(--muted)" font-size="10">${new Date(points[i].ts).toLocaleTimeString()}</text>`;
+  }
+  for(const d of defs){
+    const pts = points.map((p,i)=>`${X(i).toFixed(1)},${Y(p[d.field]||0).toFixed(1)}`).join(" ");
+    svg += `<polyline points="${pts}" fill="none" stroke="${d.color}" stroke-width="1.5"/>`;
+  }
+  svg += `</svg>`;
+  // Inline legend so each colored line is self-explanatory (no need to cross-reference the title).
+  const legend = `<div style="display:flex;flex-wrap:wrap;gap:16px;margin:2px 0 12px;font-size:12px;color:var(--muted)">` +
+    defs.map(d=>`<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:14px;height:3px;background:${d.color};display:inline-block;border-radius:2px"></i>${d.label||d.field}</span>`).join("") +
+    `</div>`;
+  return svg + legend;
+}
+
+function chanBadge(name, c){
+  const cls = c.up ? "b-success" : "b-error";
+  const txt = c.up ? "online" : "offline";
+  return `<span class="badge ${cls}">${name}: ${txt}</span>`;
+}
+
+function renderMonitorCards(s){
+  const cards = [
+    ["Uptime", fmtDurHuman(s.uptimeSec*1000)],
+    ["RSS", fmtBytes(s.memory.rss)],
+    ["Heap used", fmtBytes(s.memory.heapUsed)],
+    ["Queue depth", s.queueDepth],
+    ["In-flight tasks", s.activeTasks],
+    ["In-flight agents", s.activeAgents],
+    ["Total tasks", s.totalDispatched],
+    ["Failed", s.totalFailed],
+    ["Dedup dropped", s.duplicatesTotal],
+    ["Lag p50", s.eventLoopLagMs.p50.toFixed(2)+" ms"],
+    ["Lag p99", s.eventLoopLagMs.p99.toFixed(2)+" ms"],
+  ];
+  let html = cards.map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  const chans = Object.entries(s.channels||{});
+  if(chans.length){
+    html += `<div class="card" style="grid-column:1/-1"><div class="k">Channels</div><div class="v" style="font-size:14px">${chans.map(([n,c])=>chanBadge(n,c)).join(" ")}</div></div>`;
+  }
+  document.getElementById("m-cards").innerHTML = html;
+}
+
+function renderMonitorCharts(samples){
+  document.getElementById("m-chart-mem").innerHTML = renderLines(samples, [
+    { field:"rss", color:"var(--accent)", label:"RSS (resident set, incl. off-heap / buffers)" },
+    { field:"heapUsed", color:"var(--ok)", label:"Heap used (V8 heap)" },
+  ]);
+  document.getElementById("m-chart-queue").innerHTML = renderLines(samples, [
+    { field:"queueDepth", color:"var(--warn)", label:"Queue depth (tasks waiting to run)" },
+    { field:"activeTasks", color:"var(--accent)", label:"In-flight tasks (running)" },
+  ]);
+  const lagColor = samples.some(s=>(s.lagP99||0) >= LAG_WARN_MS) ? "var(--err)" : "var(--accent)";
+  document.getElementById("m-chart-lag").innerHTML = renderLines(samples, [
+    { field:"lagP99", color:lagColor, label:"Event-loop lag p99 (turns red above "+LAG_WARN_MS+"ms)" },
+  ]);
+}
+
+async function loadMonitor(){
+  try {
+    const snap = await getJSON("/healthz");
+    renderMonitorCards(snap);
+    const hist = await getJSON("/healthz/history");
+    renderMonitorCharts(hist.samples || []);
+  } catch(e){
+    document.getElementById("m-cards").innerHTML = '<div class="err">Failed to fetch monitor data: '+esc(e.message)+'</div>';
+  }
+}
+
+function startMonitorTimer(){
+  if(monitorTimer) return;
+  loadMonitor();
+  monitorTimer = setInterval(loadMonitor, MONITOR_REFRESH_MS);
+}
+function stopMonitorTimer(){
+  if(monitorTimer){ clearInterval(monitorTimer); monitorTimer = null; }
+}
+
+// =====================================================================
+// INIT
+// =====================================================================
+async function init(){
+  document.getElementById("host").textContent = `http://127.0.0.1:${location.port||""}`;
+  document.getElementById("f-search").onclick = applyFilters;
+  document.getElementById("f-reset").onclick = ()=>{
+    document.getElementById("f-from").value=""; document.getElementById("f-to").value="";
+    document.getElementById("f-project").value=""; document.getElementById("f-source").value="";
+    document.getElementById("f-q").value=""; state.filters={}; state.offset=0; loadList();
+  };
+  // stats: default range = last 30 days; metric switch re-renders
+  const now = new Date();
+  document.getElementById("s-from").value = toDateInput(new Date(now.getTime()-30*86400000));
+  document.getElementById("s-to").value = toDateInput(now);
+  document.getElementById("s-go").onclick = loadStats;
+  document.getElementById("s-field").onchange = loadStats;
+  await loadSummary();
+  await loadList();
+  await loadDisk();
+}
+init().catch(e=>{ document.body.innerHTML = '<div class="wrap"><pre class="err">'+esc(e.message)+'</pre></div>'; });
+</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+{
+	"name": "botler-agent",
+	"version": "0.1.0",
+	"type": "module",
+	"description": "Lightweight personal agent framework: receives messages from Telegram / Feishu / WeChat (iLink) and autonomously completes short tasks within the data directory, with an optional in-process scheduler, a local WebUI, and health/metrics monitoring.",
+	"license": "AGPL-3.0-only",
+	"bin": {
+		"botler": "./bin/botler.mjs"
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"files": [
+		"bin",
+		"src",
+		"AGENTS.md",
+		"README.md",
+		"README-ZH.md",
+		".env.example",
+		"tsconfig.json",
+		"THIRD-PARTY-LICENSES",
+		"!src/**/*.test.ts"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/crossoverJie/botler-agent.git"
+	},
+	"homepage": "https://github.com/crossoverJie/botler-agent#readme",
+	"bugs": {
+		"url": "https://github.com/crossoverJie/botler-agent/issues"
+	},
+	"scripts": {
+		"start": "tsx src/index.ts",
+		"dev": "tsx src/index.ts",
+		"init": "tsx src/init.ts",
+		"typecheck": "tsc --noEmit",
+		"test": "tsx --test src/scheduler/cron.test.ts src/scheduler/store.test.ts src/monitor/stats.test.ts",
+		"webui": "tsx src/webui/server.ts",
+		"cli": "tsx src/index.ts"
+	},
+	"dependencies": {
+		"@earendil-works/pi-agent-core": "^0.84.1",
+		"@earendil-works/pi-ai": "^0.84.1",
+		"grammy": "^1.34.0",
+		"https-proxy-agent": "^9.1.0",
+		"qrcode-terminal": "^0.12.0",
+		"tsx": "^4.19.0"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.0",
+		"typescript": "^5.7.0"
+	}
+}
