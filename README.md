@@ -97,29 +97,6 @@ Scheduler ──► dispatch(schedule.message) ──► (same pipeline)
    └─ if entry has a recipient: deliver({text,images}, recipient) → primary channel → fallback telegram → feishu → wechat
 ```
 
-### Module responsibilities
-
-| File | Responsibility |
-|------|----------------|
-| `src/index.ts` | Entry: positional args → CLI / WeChat CLI subcommands; otherwise start channels & services per `.env` |
-| `src/init.ts` | Initialize `~/.botler-agent/` (.env + providers.json + system-prompt.md templates); existing files not overwritten |
-| `src/config.ts` | Two-level `.env` loading (user-level > source-level) + providers.json loading + `CONFIG` + `USER_CONFIG_DIR` |
-| `src/dispatcher.ts` | Dedup, sequential queue, validation retry, commit orchestration (**never rejects**), task-log append |
-| `src/runner.ts` | Two-phase routing + new Agent + collect final reply + tool-turn cap |
-| `src/providers.ts` | Build a custom provider config into a pi-ai `Provider` (openai-completions / anthropic-messages) |
-| `src/prompts/system-prompt.ts` | Built-in generic default prompt + `buildRoutePrompt` + `loadSystemPrompt()` (externalized first + placeholder injection) |
-| `src/tools/paths.ts` | **Security boundary**: `safePath()` allowlist check + `projectOf()` |
-| `src/tools/{read,write,edit,run,schedule}.ts` | Five custom `AgentTool`s; read/write/edit/run checked by `safePath` (run limited to in-project python3/node scripts); `schedule` manages `schedules.json` (fixed file, no path param — the one narrow allowlist exception) |
-| `src/tools/task-context.ts` | Module-level per-task context; injects the message sender as the push recipient for the `schedule` tool |
-| `src/safety/validate.ts` | Post-write check that all data JSON is valid (catches edit breaking syntax), returns a self-contained `fix` instruction |
-| `src/safety/git.ts` | Iterate first-level subdirs of `DATA_ROOT`, commit each independent git repo only if changed (optional push) |
-| `src/scheduler/{types,store,engine,cron}.ts` | Schedule config schema + validation/atomic store (`schedules.json`), in-process firing loop (watermark + `nextFireEpoch`), saved-listener so a schedule write wakes the loop immediately |
-| `src/push/{types,contacts,deliver}.ts` | Push types; per-channel known-address store (`contacts.json`); `deliver()` primary-channel send + `telegram → feishu → wechat` fallback |
-| `src/logging/{types,collect,store}.ts` | Per-task JSONL logs (`task-logs/`) consumed by the WebUI |
-| `src/monitor/{stats,health}.ts` | In-process counters + local health/metrics server (`/healthz`, `/metrics`, `/healthz/history`) |
-| `src/webui/server.ts` | Local task-log UI (binds `127.0.0.1` only) |
-| `src/channels/{telegram,feishu}.ts` | Channel adapters: grammy long polling / Feishu webhook (with decryption) |
-| `src/channels/wechat/*` | WeChat iLink channel: QR login (`login.ts`), long-poll monitor (`monitor.ts`), media send/upload, context_token persistence (`context.ts`), owner renewal reminder loop (`reminder.ts`) |
 
 ## Config directory `~/.botler-agent/`
 
@@ -248,40 +225,7 @@ By default a local health/metrics server runs on `127.0.0.1:MONITOR_PORT` (defau
 - **Path allowlist**: `safePath()` only permits first-level subdirectories under `DATA_ROOT`; it uses `root + sep` prefix matching to avoid `/agent2` slipping in, and does a `realpath` on the deepest existing ancestor to prevent symlink escapes.
 - **No arbitrary shell**: only read/write/edit + a controlled run (limited to existing python3/node scripts inside allowlisted projects, no shell, args passed directly, 60s timeout) + a controlled schedule (only writes the fixed `schedules.json`, no file-path parameter). Git commits are done by the glue layer via `execFileSync`.
 
-## Directory structure
 
-```
-src/
-├── index.ts                 # Entry: CLI / WeChat CLI subcommands / start channels & services per .env
-├── init.ts                  # Initialize ~/.botler-agent/ (.env + providers.json + system-prompt.md templates)
-├── config.ts                # Two-level .env loading + providers.json + CONFIG (DATA_ROOT / provider / channels / scheduler / webui / monitor)
-├── dispatcher.ts            # Dedup + sequential queue + validation retry + commit orchestration (never rejects)
-├── runner.ts                # Two-phase routing + new Agent + collect final reply + tool-turn cap
-├── providers.ts             # Build a custom OpenAI-completions / anthropic-messages provider
-├── prompts/system-prompt.ts # Built-in default prompt + route prompt + loadSystemPrompt() (loaded on demand)
-├── tools/
-│   ├── index.ts             # Register read/write/edit/run/schedule
-│   ├── paths.ts             # safePath allowlist check + projectOf
-│   ├── read.ts / write.ts / edit.ts / run.ts / schedule.ts
-│   └── task-context.ts      # Per-task context (injects the message sender as the push recipient)
-├── safety/
-│   ├── validate.ts          # Post-write check that all data JSON is valid (catches edit breaking syntax)
-│   └── git.ts               # Iterate DATA_ROOT subprojects and commit each (optional push)
-├── scheduler/
-│   ├── types.ts / store.ts / engine.ts / cron.ts   # schedules.json schema, atomic store, in-process firing loop
-├── push/
-│   ├── types.ts / contacts.ts / deliver.ts         # recipient types, per-channel known-address store, push with fallback
-├── logging/
-│   ├── types.ts / collect.ts / store.ts            # per-task JSONL logs for the WebUI
-├── monitor/
-│   ├── stats.ts / health.ts                        # in-process counters + local health/metrics server
-├── webui/
-│   └── server.ts            # local task-log UI (binds 127.0.0.1)
-└── channels/
-    ├── telegram.ts          # grammy + long polling
-    ├── feishu.ts            # Feishu event subscription webhook (with decryption)
-    └── wechat/              # WeChat iLink: login / monitor long-poll / media / context_token / renewal reminder
-```
 
 ## Environment variables
 
@@ -349,7 +293,6 @@ The framework hardcodes no data schema. Each data subproject's root `AGENTS.md` 
 
 [AGPL-3.0](LICENSE) (GNU Affero General Public License v3). Third-party dependency licenses are reproduced in [`THIRD-PARTY-LICENSES`](THIRD-PARTY-LICENSES).
 
-> **AGPL note**: if you run a **modified** version of botler-agent as a network service (e.g. a public bot), you must offer its source code to the users interacting with it.
 
 ## Related docs
 
