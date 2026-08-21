@@ -1,7 +1,7 @@
 /**
  * Scheduler configuration types.
  *
- * A schedule is one of three mutually-exclusive trigger forms (cron / interval / at),
+ * A schedule is one of four mutually-exclusive trigger forms (cron / interval / at / once),
  * plus an optional timezone, a message to fire, and optional project / retry / silentHours fields.
  * The config lives in `~/.botler-agent/schedules.json` (externalized, like providers.json).
  */

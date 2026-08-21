@@ -14,7 +14,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import { loadSchedules, saveSchedules } from "../scheduler/store.ts";
-import { nextFireEpoch, parseOnceEpoch } from "../scheduler/cron.ts";
+import { nextFireEpoch, parseOnceEpoch, isValidTimezone } from "../scheduler/cron.ts";
 import type { ScheduleEntry } from "../scheduler/types.ts";
 import { getTaskContext } from "./task-context.ts";
 
@@ -94,8 +94,8 @@ export const scheduleTool: AgentTool<typeof schema> = {
 		if (action === "list") {
 			const entries = loadSchedules();
 			if (entries.length === 0) {
-			return textResult("There are no scheduled tasks right now.");
-		}
+				return textResult("There are no scheduled tasks right now.");
+			}
 		const lines = entries.map((e) => {
 			// Disabled entries don't fire, so don't show a (misleading) next-fire time.
 			const next = e.enabled ? nextFireOf(e) : null;
@@ -118,8 +118,9 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			const id = args.id?.trim() || `sched-${Date.now().toString(36)}`;
 			const message = args.message?.trim();
 			if (!message) throw new Error("create requires a non-empty message (the instruction sent to the Agent on fire)");
-			const tz = args.timezone || "Asia/Shanghai";
-			const triggers: Array<[keyof ScheduleArgs, string]> = [];
+		const tz = args.timezone || "Asia/Shanghai";
+		if (!isValidTimezone(tz)) throw new Error(`invalid timezone "${tz}"`);
+		const triggers: Array<[keyof ScheduleArgs, string]> = [];
 			if (args.cron !== undefined && args.cron !== "") triggers.push(["cron", args.cron]);
 			if (args.interval !== undefined && args.interval !== "") triggers.push(["interval", args.interval]);
 			if (args.at !== undefined && args.at !== "") triggers.push(["at", args.at]);
@@ -192,7 +193,10 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			if (!m) throw new Error("update message must not be empty");
 			patch.message = m;
 		}
-		if (args.timezone !== undefined) patch.timezone = args.timezone;
+		if (args.timezone !== undefined) {
+			if (!isValidTimezone(args.timezone)) throw new Error(`invalid timezone "${args.timezone}"`);
+			patch.timezone = args.timezone;
+		}
 		if (args.project !== undefined) patch.project = args.project.trim() || undefined;
 		// Swapping the trigger must drop the previous trigger field(s), or the entry would
 		// become invalid (normalizeSchedules would reject the leftover second trigger).

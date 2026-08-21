@@ -177,7 +177,17 @@ function atToCron(s: string): string {
 export function parseOnceEpoch(s: string, tz: string): number | null {
 	const trimmed = s.trim();
 	// Explicit offset (Z or +/-HH:MM) -> let Date.parse resolve the absolute instant.
+	// Validate the calendar date ourselves first: Date.parse silently rolls over impossible
+	// dates (e.g. "2026-02-30..." -> Mar 2), so we'd otherwise violate the "reject impossible
+	// calendar dates" guarantee that the naive form already provides.
 	if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+		const ymd = /^(\d{4})-(\d{2})-(\d{2})/.exec(trimmed);
+		if (ymd) {
+			const y = Number(ymd[1]);
+			const mo = Number(ymd[2]);
+			const d = Number(ymd[3]);
+			if (mo < 1 || mo > 12 || d < 1 || d > daysInMonth(y, mo)) return null;
+		}
 		const t = Date.parse(trimmed);
 		return Number.isNaN(t) ? null : t;
 	}
@@ -200,10 +210,10 @@ export function parseOnceEpoch(s: string, tz: string): number | null {
 
 /**
  * Compile a schedule entry to a cron. One of cron / interval / at is used
- * (priority cron > interval > at). Throws if none (or an invalid form) is present.
- * Note: `once` is a one-shot trigger resolved directly by nextFireEpoch and never
- * reaches this function. The original entry keeps its user-written value; this returns
- * a fresh compiled object.
+ * (priority cron > interval > at); `once` is a one-shot trigger resolved directly by
+ * nextFireEpoch and never reaches this function. Throws if none (or an invalid form)
+ * is present. The original entry keeps its user-written value; this returns a fresh
+ * compiled object.
  */
 export function compileSchedule(e: ScheduleEntry): CompiledCron {
 	let expr: string;

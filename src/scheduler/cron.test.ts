@@ -193,6 +193,17 @@ test("parseOnceEpoch rejects impossible calendar dates that Date.UTC would other
 	assert.notEqual(parseOnceEpoch("2028-02-29T22:00", "Asia/Shanghai"), null);
 });
 
+test("parseOnceEpoch rejects impossible calendar dates in absolute (offset) form too", () => {
+	// Date.parse silently rolls "2026-02-30T22:00:00Z" over to Mar 2; we must reject it.
+	assert.equal(parseOnceEpoch("2026-02-30T22:00:00Z", "UTC"), null);
+	assert.equal(parseOnceEpoch("2026-04-31T22:00:00+08:00", "Asia/Shanghai"), null);
+	// Feb 29 in a non-leap year (with offset) is also impossible.
+	assert.equal(parseOnceEpoch("2026-02-29T22:00:00+08:00", "Asia/Shanghai"), null);
+	// Valid offset dates still parse exactly.
+	assert.equal(parseOnceEpoch("2028-02-29T22:00:00Z", "UTC"), Date.parse("2028-02-29T22:00:00Z"));
+	assert.equal(parseOnceEpoch("2026-08-20T22:00:00+08:00", "UTC"), Date.parse("2026-08-20T22:00:00+08:00"));
+});
+
 test("nextFireEpoch returns the once instant when it is in the future of the watermark", () => {
 	const onceEpoch = Date.parse("2026-08-20T22:00:00+08:00");
 	const after = Date.parse("2026-08-20T10:00:00+08:00");
