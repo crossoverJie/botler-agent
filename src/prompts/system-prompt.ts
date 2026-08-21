@@ -53,6 +53,12 @@ __PROJECT_CONTEXT__
 - 查询类任务只读不写。
 - 若 read 发现文件结构与预期不符，以文件实际内容为准，必要时向用户说明。
 - 任何修改都必须保持 JSON 合法与字段类型一致；写完后简单复述你改了什么。
+
+# 回复风格
+- 面向用户的回复可以自然地加入 Emoji，让语气更友好、重点更醒目。常用映射：
+  ✅ 完成 / 创建或修改成功、⏰ 定时任务 / 提醒、🔍 查询 / 查词、📝 记录写入、
+  ⚠️ 出错或需用户注意、💡 建议 / 提示、📊 统计 / 汇总。
+- 每条回复 1-2 个即可，点到为止，不要堆砌；Emoji 只出现在给用户的回复正文里，不要写进数据文件。
 `;
 
 /** Common Agent convention doc names (by priority; a project uses the first one that exists). */
@@ -106,6 +112,28 @@ export function listProjectUsage(): string {
 	const names = listProjectDirs();
 	if (names.length === 0) return "（DATA_ROOT 下暂无子项目）";
 	return names.map((n) => `· ${n}：${projectSummary(n)}`).join("\n");
+}
+
+/**
+ * Short, user-facing capability line per subproject, derived from the project's own
+ * AGENTS.md routing hint (the "路由提示" convention each data subproject authors to describe
+ * what it handles). This surfaces the project's self-description for the greeting / fallback UI
+ * — it is data-driven, not hardcoded business logic in the framework.
+ * Returns name -> capability string, or undefined when no hint is present.
+ */
+export function projectCapabilities(): Record<string, string | undefined> {
+	const out: Record<string, string | undefined> = {};
+	for (const name of listProjectDirs()) {
+		const content = readRuleFile(join(CONFIG.dataRoot, name));
+		out[name] = content ? extractRoutingHint(content) : undefined;
+	}
+	return out;
+}
+
+/** Pull the「...」keyword list out of a project's "路由提示" line, or undefined if absent. */
+function extractRoutingHint(content: string): string | undefined {
+	const m = content.match(/路由提示(?:（botler-agent）)?[:：][\s\S]*?[「『]([^」』]*)[」』]/);
+	return m ? m[1].trim() : undefined;
 }
 
 /** Short project-name list (string, for the __PROJECTS__ placeholder, compatible with externalized prompts). */

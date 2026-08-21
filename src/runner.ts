@@ -13,9 +13,9 @@ import {
 	loadSystemPrompt,
 	buildRoutePrompt,
 	listProjectDirs,
-	listProjectUsage,
 	SCHEDULER_VIRTUAL_PROJECT,
 } from "./prompts/system-prompt.ts";
+import { isGreeting, greetingReply, fallbackUnknownReply } from "./greeting.ts";
 import { CONFIG } from "./config.ts";
 import { buildCustomProvider } from "./providers.ts";
 import { collectTaskLog, type CollectInput } from "./logging/collect.ts";
@@ -277,6 +277,19 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		};
 	}
 
+	// Greeting short-circuit: a bare greeting has nothing to route to, so skip the routing
+	// LLM call entirely and reply with a friendly welcome (zero extra LLM cost). Programmatic
+	// messages that carry a projectHint, and scheduler-fired tasks, never take this path.
+	if (!ctx.projectHint && ctx.source !== "scheduler" && isGreeting(userMessage)) {
+		const replyText = greetingReply();
+		return {
+			text: replyText,
+			images: [],
+			mutated: false,
+			log: buildMinimalLog({ ctx, startedAt, endedAt: Date.now(), userMessage, replyText, project: null }),
+		};
+	}
+
 	// Phase 1 (routing): a valid projectHint skips the routing LLM call entirely.
 	const hint = ctx.projectHint;
 	let project: string | null;
@@ -296,12 +309,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		routingCandidates = routed.candidates;
 	}
 	if (!project) {
-		const replyText =
-			`I didn't quite catch that — I'm not sure which data subproject to operate on.\n\n` +
-			`I'm your personal data assistant; I can only read/write data and run in-project scripts within the subprojects below. Just tell me what you want, e.g.: "log that I had tomato-and-egg stir-fry for lunch" or "look up the word 'ubiquitous'".\n\n` +
-			`Available subprojects right now:\n${listProjectUsage()}\n\n` +
-			`Also, you can always ask me to "create a scheduled task / remind me every morning…".\n\n` +
-			`Just be a bit more specific about what you need.`;
+		const replyText = fallbackUnknownReply();
 		return {
 			text: replyText,
 			images: [],
