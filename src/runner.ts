@@ -204,6 +204,7 @@ async function routeProject(
 	model: AnyModel,
 	includeScheduler: boolean,
 	images?: ImageContent[],
+	hasImages = false,
 ): Promise<{ project: string | null; usage?: Usage; prompt?: string; candidates: string[] }> {
 	const projects = listProjectDirs();
 	if (projects.length === 0) return { project: null, candidates: [] };
@@ -213,7 +214,7 @@ async function routeProject(
 	// single-project shortcut above intentionally ignores it (the schedule tool stays available
 	// in any execution context, so single-project setups still work).
 	const candidates = includeScheduler ? [...projects, SCHEDULER_VIRTUAL_PROJECT] : projects;
-	const prompt = buildRoutePrompt(userMessage, includeScheduler);
+	const prompt = buildRoutePrompt(userMessage, includeScheduler, hasImages);
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: prompt,
@@ -258,6 +259,7 @@ function buildMinimalLog(opts: {
 		replyText: opts.replyText,
 		images: [],
 		mutated: false,
+		inboundImageCount: opts.ctx.inboundImages?.length ?? 0,
 		messages: [],
 		routingUsage: opts.routingUsage,
 		routing: opts.routing,
@@ -319,7 +321,13 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		routingPrompt = undefined;
 		routingCandidates = [...projects, SCHEDULER_VIRTUAL_PROJECT];
 	} else {
-		const routed = await routeProject(userMessage, model, ctx.source !== "scheduler", imagesContent);
+		const routed = await routeProject(
+			userMessage,
+			model,
+			ctx.source !== "scheduler",
+			imagesContent,
+			inboundImages.length > 0,
+		);
 		project = routed.project;
 		routingUsage = routed.usage;
 		routingPrompt = routed.prompt;

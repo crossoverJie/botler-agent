@@ -75,7 +75,13 @@ export async function downloadInboundImage(item: MessageItem): Promise<InboundIm
 	const img = item.image_item;
 	const media = img?.media;
 	if (!media?.encrypt_query_param && !media?.full_url) {
-		throw new Error("image item has no encrypt_query_param / full_url");
+		// Include the available media/image keys so a decode failure on a real inbound message
+		// is debuggable from the monitor log (the protocol shape is not always exactly as expected).
+		const mediaKeys = Object.keys(media ?? {}).join(",") || "(none)";
+		const imgKeys = Object.keys(img ?? {}).join(",") || "(none)";
+		throw new Error(
+			`image item has no encrypt_query_param / full_url (image_item keys: ${imgKeys}; media keys: ${mediaKeys})`,
+		);
 	}
 	const key = parseInboundAesKey(img?.aeskey, media?.aes_key);
 	const url = media.full_url
