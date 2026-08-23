@@ -34,7 +34,7 @@
 		"dev": "tsx src/index.ts",
 		"init": "tsx src/init.ts",
 		"typecheck": "tsc --noEmit",
-		"test": "tsx --test src/scheduler/cron.test.ts src/scheduler/store.test.ts src/monitor/stats.test.ts src/greeting.test.ts src/channels/wechat/aes-ecb.test.ts src/channels/wechat/download.test.ts",
+		"test": "tsx --test src/scheduler/cron.test.ts src/scheduler/store.test.ts src/monitor/stats.test.ts src/greeting.test.ts src/channels/wechat/aes-ecb.test.ts src/channels/wechat/download.test.ts src/channels/wechat/image-batch.test.ts",
 		"webui": "tsx src/webui/server.ts",
 		"cli": "tsx src/index.ts"
 	},
