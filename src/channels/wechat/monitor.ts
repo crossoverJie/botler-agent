@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { CONFIG } from "../../config.ts";
 import { dispatch, DUPLICATE_SENTINEL } from "../../dispatcher.ts";
 import { recordContact } from "../../push/contacts.ts";
@@ -10,6 +11,7 @@ import {
 	sendMessageWeixin,
 } from "./send-media.ts";
 import { downloadRemoteImageToTemp, uploadImageToWeixin } from "./upload.ts";
+import { downloadInboundImage, type InboundImage } from "./download.ts";
 import { MessageItemType, MessageType, type MessageItem, type WeixinMessage } from "./types.ts";
 import { setChannelUp, setChannelDown } from "../../monitor/stats.ts";
 
@@ -57,10 +59,22 @@ async function processOneMessage(
 	const contextToken = full.context_token;
 	const text = bodyFromItemList(full.item_list);
 
+	// Decode inbound images (best-effort: one failure is warn-logged, the rest still go through).
+	// Each holds the decoded Buffer so the runner can both show it to the model and save it.
+	const inboundImages: InboundImage[] = [];
+	for (const item of full.item_list ?? []) {
+		if (item.type !== MessageItemType.IMAGE) continue;
+		try {
+			inboundImages.push(await downloadInboundImage(item));
+		} catch (e) {
+			console.warn(`[wechat] image decode failed: ${String(e)}`);
+		}
+	}
+
 	// First-deploy observability: log raw metadata so we can confirm what real inbound
 	// messages look like (message_type / from_user_id) before trusting any skip rule.
 	console.log(
-		`[wechat] inbound: from=${fromUserId || "(empty)"} type=${full.message_type ?? "?"} text=${JSON.stringify(text.slice(0, 40))}`,
+		`[wechat] inbound: from=${fromUserId || "(empty)"} type=${full.message_type ?? "?"} text=${JSON.stringify(text.slice(0, 40))} images=${inboundImages.length}`,
 	);
 
 	// Robust skip: no sender. Our own outbound echoes are built with from_user_id=""
@@ -86,7 +100,11 @@ async function processOneMessage(
 		recordContact("wechat", fromUserId);
 	}
 
-	if (!text) return; // v1 text-only: skip pure-media / empty messages
+	// v1 text-only skip becomes "no text AND no image".
+	if (!text && inboundImages.length === 0) return;
+
+	// Image-only message: keep a placeholder so greeting/routing/logs still function.
+	const safeText = text || "[图片]"; // isGreeting() will not match this.
 
 	// Protocol: replying requires echoing this message's context_token. Without it we
 	// cannot reply at all — log loudly instead of silently dropping the ack.
@@ -94,12 +112,23 @@ async function processOneMessage(
 		console.warn(`[wechat] missing context_token, cannot reply to this message (protocol requires echoing it): from=${fromUserId}`);
 	}
 
-	const id = String(full.message_id ?? full.client_id ?? `${fromUserId}:${text.slice(0, 20)}`);
+	// Dedup id: the original fallback `${fromUserId}:${text.slice(0,20)}` is EMPTY for image-only
+	// messages, so two consecutive photos (no message_id/client_id) within 5 min would be
+	// mis-deduplicated. Fold in a short hash of the decoded bytes so each image is distinct.
+	const imageSig = inboundImages.length
+		? crypto
+				.createHash("md5")
+				.update(Buffer.concat(inboundImages.map((i) => i.buffer)))
+				.digest("hex")
+				.slice(0, 8)
+		: "";
+	const id = String(full.message_id ?? full.client_id ?? `${fromUserId}:${safeText}:${imageSig}`);
 	try {
-		const reply = await dispatch(text, {
+		const reply = await dispatch(safeText, {
 			id,
 			source: "wechat",
 			recipient: { source: "wechat", userId: fromUserId },
+			inboundImages,
 		});
 		// Dedup hit returns a sentinel; don't echo it back to the user
 		if (reply.text === DUPLICATE_SENTINEL) return;

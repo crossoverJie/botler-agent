@@ -15,8 +15,11 @@ import { UploadMediaType } from "./types.ts";
  * it is referenced in an outbound IMAGE message item.
  */
 
-/** WeChat media CDN root. Not configurable: there is no known reason to point elsewhere. */
-const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
+/**
+ * WeChat media CDN root, shared by the outbound upload path and the inbound download path.
+ * Not configurable: there is no known reason to point elsewhere.
+ */
+export const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
 
 /** Temp dir for remote images downloaded before upload. */
 const MEDIA_TEMP_DIR = path.join(os.tmpdir(), "botler-agent", "wechat");

@@ -60,6 +60,8 @@ export interface CollectInput {
 	userMessage: string;
 	replyText: string;
 	images: string[];
+	/** Number of inbound images that accompanied this message. */
+	inboundImageCount?: number;
 	mutated: boolean;
 	/** execute-phase agent.state.messages (empty for early-return paths). */
 	messages: AgentMessage[];
@@ -86,6 +88,7 @@ export function collectTaskLog(input: CollectInput): TaskLog {
 		replyText,
 		images,
 		mutated,
+		inboundImageCount,
 	messages,
 	routingUsage,
 	routing,
@@ -209,6 +212,7 @@ export function collectTaskLog(input: CollectInput): TaskLog {
 		systemPrompt,
 		modelCache,
 	};
+	if (inboundImageCount !== undefined) log.inboundImageCount = inboundImageCount;
 
 	if (routing) {
 		log.routing = {
