@@ -108,6 +108,8 @@ export interface TaskLog {
 	userMessage: string;
 	replyText: string;
 	images: string[];
+	/** Number of inbound images that accompanied this message (observability for image-only messages). */
+	inboundImageCount?: number;
 	mutated: boolean;
 	tools: ToolCallLog[];
 	conversation: ConversationEntry[];

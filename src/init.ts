@@ -61,8 +61,9 @@ botler-agent 代码强制，不因本文件内容而改变。
 						baseUrl: "https://your-gateway.example.com/v1",
 						apiKey: "sk-REPLACE_ME",
 						models: [
-							{ id: "your-model-pro", name: "Your Model Pro", reasoning: true, contextWindow: 1048576, maxTokens: 393216 },
-							{ id: "your-model-flash", name: "Your Model Flash", reasoning: false, contextWindow: 1048576, maxTokens: 393216 },
+							// vision defaults to true (image input enabled); set `vision: false` for text-only models.
+							{ id: "your-model-pro", name: "Your Model Pro", reasoning: true, contextWindow: 1048576, maxTokens: 393216, vision: true },
+							{ id: "your-model-flash", name: "Your Model Flash", reasoning: false, contextWindow: 1048576, maxTokens: 393216, vision: true },
 						],
 					},
 				},

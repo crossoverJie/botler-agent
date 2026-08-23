@@ -181,17 +181,21 @@ function schedulerContext(): string {
  * The virtual `__scheduler__` project is included as a candidate for schedule-management messages,
  * unless `includeScheduler` is false (scheduler-fired reminders are never schedule-management requests).
  */
-export function buildRoutePrompt(userMessage: string, includeScheduler = true): string {
+export function buildRoutePrompt(userMessage: string, includeScheduler = true, hasImages = false): string {
 	const schedulerLine = includeScheduler
 		? `- ${SCHEDULER_VIRTUAL_PROJECT}/：仅用于创建/管理定时任务（与数据子项目无关）\n`
+		: "";
+	// Image guidance: routing hints in each project summary are keyword/text based, so tell the
+	// model explicitly that an image is attached and to judge by its content too (e.g. a food
+	// photo should land in the project whose description mentions diet/meals).
+	const imageLine = hasImages
+		? "\n本条消息附带图片。请同时参考图片内容与文字判断所属子项目：图片内容明显匹配某个子项目的描述（如食物照片 → 记录饮食的项目）时选择该项目；无法根据图片与文字确定时输出 UNKNOWN。\n"
 		: "";
 	return `你是路由助手，负责判断用户消息要操作哪个数据子项目。只输出一个项目名（不含斜杠），无法确定时只输出 UNKNOWN。不要使用任何工具。
 
 数据根目录下的子项目：
-${listProjectSummaries()}${schedulerLine}
-用户消息：${userMessage}
-
-判断这条消息属于哪个子项目。只输出项目名（如 my-project）或 UNKNOWN。`;
+${listProjectSummaries()}${schedulerLine}用户消息：${userMessage}
+${imageLine}判断这条消息属于哪个子项目。只输出项目名（如 my-project）或 UNKNOWN。`;
 }
 
 /**
@@ -224,8 +228,8 @@ export function loadSystemPrompt(projectName?: string): string {
 		.replaceAll("__TODAY__", today());
 }
 
-/** Today's date in the local timezone (YYYY-MM-DD). */
-function today(): string {
+/** Today's date in the local timezone (YYYY-MM-DD). Shared with inbound image persistence so file names match the agent's notion of "today". */
+export function today(): string {
 	const d = new Date();
 	const m = String(d.getMonth() + 1).padStart(2, "0");
 	const day = String(d.getDate()).padStart(2, "0");

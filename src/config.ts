@@ -57,6 +57,12 @@ export interface ModelMeta {
 	reasoning: boolean;
 	contextWindow: number;
 	maxTokens: number;
+	/**
+	 * Whether the model accepts image input (vision). Defaults to true, matching pi-ai's
+	 * built-in default of text+image; set false for text-only models. When false, pi-ai
+	 * replaces image content blocks with a placeholder instead of sending them.
+	 */
+	vision?: boolean;
 }
 
 /** Wire protocol for a custom provider (default: OpenAI Chat Completions). */
@@ -95,6 +101,12 @@ export interface Config {
 	 * when they've been quiet this long (clamped to <=24 so the "hours remaining" copy is never negative).
 	 */
 	wechatReminderHours: number;
+	/**
+	 * WeChat image batching window in seconds: a selected photo is delivered immediately, while the
+	 * user may still be typing the caption. Image-bearing messages are buffered this long for a
+	 * follow-up text from the same sender; 0 disables batching (dispatch immediately).
+	 */
+	wechatImageBatchSeconds: number;
 	/** When GIT_PUSH=1, additionally git push after a write task commits (failure is only a warning; default off). */
 	gitPush: boolean;
 	/** When WEBUI_ENABLED=1, start the local task-log UI (binds 127.0.0.1 only). */
@@ -169,6 +181,7 @@ function loadProvidersFile(): CustomProviderConfig[] {
 					reasoning: mm.reasoning === true,
 					contextWindow: Number(mm.contextWindow) || 0,
 					maxTokens: Number(mm.maxTokens) || 0,
+					vision: mm.vision,
 				});
 			}
 			if (models.length === 0) continue;
@@ -217,6 +230,17 @@ function parseWechatReminderHours(): number {
 	return Number.isFinite(n) && n >= 1 ? Math.min(n, 24) : 23;
 }
 
+/**
+ * Parse WECHAT_IMAGE_BATCH_SECONDS. "0" explicitly disables batching; a positive integer sets the
+ * window in seconds; anything invalid falls back to the default 60.
+ */
+function parseWechatImageBatchSeconds(): number {
+	const raw = process.env.WECHAT_IMAGE_BATCH_SECONDS;
+	if (raw === "0") return 0;
+	const n = Number(raw ?? "60");
+	return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 60;
+}
+
 export const CONFIG: Config = {
 	dataRoot: process.env.DATA_ROOT ?? "",
 	provider: process.env.PI_PROVIDER ?? "anthropic",
@@ -231,6 +255,7 @@ export const CONFIG: Config = {
 	wechatEnabled: process.env.WECHAT_ENABLED === "1",
 	wechatAllowFrom: process.env.WECHAT_ALLOW_FROM || undefined,
 	wechatReminderHours: parseWechatReminderHours(),
+	wechatImageBatchSeconds: parseWechatImageBatchSeconds(),
 	gitPush: process.env.GIT_PUSH === "1",
 	webuiEnabled: process.env.WEBUI_ENABLED === "1",
 	webuiPort: Number(process.env.WEBUI_PORT ?? "8900"),

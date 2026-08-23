@@ -6,6 +6,7 @@ import { appendTaskLog } from "./logging/store.ts";
 import { CONFIG } from "./config.ts";
 import type { Recipient } from "./push/types.ts";
 import type { TaskLog, TaskStatus, TokenUsageLog } from "./logging/types.ts";
+import type { InboundImage } from "./channels/wechat/download.ts";
 import {
 	markEnqueued,
 	markStarted,
@@ -26,6 +27,11 @@ export interface DispatchOptions {
 	projectHint?: string;
 	/** Optional recipient: the sender of this message. Tools like schedule inject it as the push target. */
 	recipient?: Recipient;
+	/**
+	 * Inbound images (decoded bytes) to feed the model as vision input AND persist under the
+	 * target subproject. WeChat-only for now. Distinct from DispatchResult.images (outbound).
+	 */
+	inboundImages?: InboundImage[];
 }
 
 export interface DispatchResult {
@@ -148,6 +154,7 @@ export async function dispatch(message: string, opts: DispatchOptions = {}): Pro
 				phase: "execute",
 				projectHint: opts.projectHint,
 				recipient: opts.recipient,
+				inboundImages: opts.inboundImages,
 			});
 			const log = result.log;
 			if (!log) {

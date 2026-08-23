@@ -3,12 +3,13 @@ import { randomUUID } from "node:crypto";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { createModels } from "@earendil-works/pi-ai";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
-import type { AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, Model, Usage } from "@earendil-works/pi-ai";
 // Model is generic; here we use any to denote a model of any provider API
 type AnyModel = Model<any>;
 import { fileTools } from "./tools/index.ts";
 import { setTaskContext } from "./tools/task-context.ts";
 import { safePath } from "./tools/paths.ts";
+import { persistInboundImage, type InboundImage } from "./channels/wechat/download.ts";
 import {
 	loadSystemPrompt,
 	buildRoutePrompt,
@@ -77,6 +78,8 @@ export interface RunLogContext {
 	projectHint?: string;
 	/** Optional recipient (the message sender); injected into the task context for tools like schedule. */
 	recipient?: Recipient;
+	/** Inbound images (decoded bytes) to feed the model as vision input AND persist under the target subproject. */
+	inboundImages?: InboundImage[];
 }
 
 export interface TaskResult {
@@ -121,6 +124,15 @@ function extractImages(text: string): { text: string; images: string[] } {
 		}
 	}
 	return { text: text.replace(IMAGE_REF_RE, "").trim(), images };
+}
+
+/** InboundImage[] -> ImageContent[] for the model (base64 inline vision). */
+function toImageContent(inboundImages: InboundImage[]): ImageContent[] {
+	return inboundImages.map((i) => ({
+		type: "image",
+		data: i.buffer.toString("base64"),
+		mimeType: i.mimeType,
+	}));
 }
 
 /** Take the body of the last assistant message from state; returns empty string if none or on failure. */
@@ -191,6 +203,8 @@ async function routeProject(
 	userMessage: string,
 	model: AnyModel,
 	includeScheduler: boolean,
+	images?: ImageContent[],
+	hasImages = false,
 ): Promise<{ project: string | null; usage?: Usage; prompt?: string; candidates: string[] }> {
 	const projects = listProjectDirs();
 	if (projects.length === 0) return { project: null, candidates: [] };
@@ -200,7 +214,7 @@ async function routeProject(
 	// single-project shortcut above intentionally ignores it (the schedule tool stays available
 	// in any execution context, so single-project setups still work).
 	const candidates = includeScheduler ? [...projects, SCHEDULER_VIRTUAL_PROJECT] : projects;
-	const prompt = buildRoutePrompt(userMessage, includeScheduler);
+	const prompt = buildRoutePrompt(userMessage, includeScheduler, hasImages);
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: prompt,
@@ -209,7 +223,7 @@ async function routeProject(
 		},
 		streamFn: models.streamSimple.bind(models),
 	});
-	await agent.prompt(userMessage);
+	await agent.prompt(userMessage, images);
 	const decision = parseRoute(lastAssistantText(agent.state), candidates);
 	// Routing state is [user, assistant]; the assistant message carries a single clean usage.
 	const assistant = agent.state.messages[agent.state.messages.length - 1];
@@ -245,6 +259,7 @@ function buildMinimalLog(opts: {
 		replyText: opts.replyText,
 		images: [],
 		mutated: false,
+		inboundImageCount: opts.ctx.inboundImages?.length ?? 0,
 		messages: [],
 		routingUsage: opts.routingUsage,
 		routing: opts.routing,
@@ -265,6 +280,9 @@ function buildMinimalLog(opts: {
 export async function runTask(userMessage: string, logCtx?: RunLogContext): Promise<TaskResult> {
 	const ctx: RunLogContext = logCtx ?? { taskId: randomUUID(), source: "cli", phase: "execute" };
 	const startedAt = Date.now();
+	const inboundImages = ctx.inboundImages ?? [];
+	// Base64-encode each inbound image exactly once and reuse it for routing + execution.
+	const imagesContent = toImageContent(inboundImages);
 	const model = resolveModel();
 	const projects = listProjectDirs();
 	if (projects.length === 0) {
@@ -280,7 +298,8 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	// Greeting short-circuit: a bare greeting has nothing to route to, so skip the routing
 	// LLM call entirely and reply with a friendly welcome (zero extra LLM cost). Programmatic
 	// messages that carry a projectHint, and scheduler-fired tasks, never take this path.
-	if (!ctx.projectHint && ctx.source !== "scheduler" && isGreeting(userMessage)) {
+	// A message that carries an image is NEVER a greeting — skip the check so the image is not swallowed.
+	if (!ctx.projectHint && ctx.source !== "scheduler" && inboundImages.length === 0 && isGreeting(userMessage)) {
 		const replyText = greetingReply();
 		return {
 			text: replyText,
@@ -302,14 +321,20 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		routingPrompt = undefined;
 		routingCandidates = [...projects, SCHEDULER_VIRTUAL_PROJECT];
 	} else {
-		const routed = await routeProject(userMessage, model, ctx.source !== "scheduler");
+		const routed = await routeProject(
+			userMessage,
+			model,
+			ctx.source !== "scheduler",
+			imagesContent,
+			inboundImages.length > 0,
+		);
 		project = routed.project;
 		routingUsage = routed.usage;
 		routingPrompt = routed.prompt;
 		routingCandidates = routed.candidates;
 	}
 	if (!project) {
-		const replyText = fallbackUnknownReply();
+		const replyText = fallbackUnknownReply(inboundImages.length > 0);
 		return {
 			text: replyText,
 			images: [],
@@ -326,6 +351,27 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 			}),
 		};
 	}
+
+	// Persist originals under DATA_ROOT/<project>/photos, then tell the agent where they are.
+	// Persistence happens only after a subproject is known — unrouted / unknown-project messages
+	// (returned above) never write a photo into DATA_ROOT, and the virtual __scheduler__ project
+	// is not a data subproject (nothing to persist, avoids a spurious warn). The file is written
+	// by the framework (a transport concern), validated through safePath + an image-extension
+	// whitelist; the agent only ever receives the relative path as text to cite in its record.
+	const savedPaths: string[] = [];
+	if (inboundImages.length > 0 && project !== SCHEDULER_VIRTUAL_PROJECT) {
+		for (const img of inboundImages) {
+			try {
+				savedPaths.push(await persistInboundImage(img, project!));
+			} catch (e) {
+				console.warn(`[runner] persist image failed: ${String(e)}`);
+			}
+		}
+	}
+	const attachmentNote = savedPaths.length
+		? `\n[图片已保存到] ${savedPaths.join(", ")}（可在记录中引用这些相对路径）`
+		: "";
+	const execText = `${userMessage}${attachmentNote}`.trim();
 
 	// Phase 2: execution
 	const systemPrompt = loadSystemPrompt(project);
@@ -370,7 +416,9 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	setTaskContext(ctx.recipient ? { recipient: ctx.recipient } : null);
 	try {
 		markAgentStart();
-		await agent.prompt(userMessage);
+		// Inline vision (decoded bytes) + the saved-path note, so the model can both see the
+		// image and reference its persisted location in the data file.
+		await agent.prompt(execText, imagesContent);
 	} finally {
 		markAgentEnd();
 		setTaskContext(null);
@@ -414,13 +462,17 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 			`To raise the limit, set MAX_TOOL_TURNS in .env (default 20).`;
 	}
 
-	// Whether a data file was modified: scan toolResult messages for the toolName
-	const mutated = state.messages.some(
-		(m) =>
-			m.role === "toolResult" &&
-			typeof (m as { toolName?: string }).toolName === "string" &&
-			["write", "edit"].includes((m as { toolName: string }).toolName),
-	);
+	// Whether a data file was modified: scan toolResult messages for the toolName, or whether
+	// inbound images were persisted (so the photo is committed promptly rather than riding the
+	// next commit of this subproject).
+	const mutated =
+		savedPaths.length > 0 ||
+		state.messages.some(
+			(m) =>
+				m.role === "toolResult" &&
+				typeof (m as { toolName?: string }).toolName === "string" &&
+				["write", "edit"].includes((m as { toolName: string }).toolName),
+		);
 
 	const endedAt = Date.now();
 	const log = collectTaskLog({
@@ -437,6 +489,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		replyText: text,
 		images,
 		mutated,
+		inboundImageCount: inboundImages.length,
 		messages: state.messages,
 		routingUsage,
 		routing: { candidates: routingCandidates, decision: project, prompt: routingPrompt },

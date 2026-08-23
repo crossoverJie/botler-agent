@@ -39,10 +39,19 @@ export function greetingReply(): string {
 	);
 }
 
-/** Static fallback when a message cannot be routed to any subproject. */
-export function fallbackUnknownReply(): string {
+/**
+ * Static fallback when a message cannot be routed to any subproject.
+ * When the message carried inbound images, guide the user explicitly: image content only helps
+ * if the model can see it, so suggest adding a short text hint (and mention the model caveat).
+ */
+export function fallbackUnknownReply(hasImages = false): string {
+	const imageHint = hasImages
+		? "📷 我收到了你发的图片，但当前模型无法识别图片内容，所以我没确定要操作哪个子项目。\n" +
+			"请补充一句文字说明，比如「记一下这顿饭」，让我知道该写到哪个项目。\n\n"
+		: "";
 	return (
 		"😅 我有点没跟上——没太确定你想操作哪个数据子项目。\n\n" +
+		imageHint +
 		"我是你的个人数据助手，只能在下面的子项目里读写数据、运行项目内脚本。想做什么直接说就行，" +
 		"比如记账、查词、记录日常；也可以让我「创建定时任务 / 提醒」。\n\n" +
 		`当前可用的子项目：\n${projectList()}\n\n` +

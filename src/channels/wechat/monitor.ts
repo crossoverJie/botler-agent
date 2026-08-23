@@ -10,6 +10,8 @@ import {
 	sendMessageWeixin,
 } from "./send-media.ts";
 import { downloadRemoteImageToTemp, uploadImageToWeixin } from "./upload.ts";
+import { downloadInboundImage, type InboundImage } from "./download.ts";
+import { ImageBatchCoordinator } from "./image-batch.ts";
 import { MessageItemType, MessageType, type MessageItem, type WeixinMessage } from "./types.ts";
 import { setChannelUp, setChannelDown } from "../../monitor/stats.ts";
 
@@ -18,6 +20,60 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 const BACKOFF_DELAY_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
 const SESSION_EXPIRED_ERRCODE = -14;
+
+/** Image batching window from config, in ms (WECHAT_IMAGE_BATCH_SECONDS × 1000; 0 = disabled). */
+const IMAGE_BATCH_WINDOW_MS = CONFIG.wechatImageBatchSeconds * 1000;
+
+/**
+ * Image batching state machine (pure): owns the per-sender merge / flush decisions.
+ * WeChat delivers a selected photo immediately, while the user may still be typing the text
+ * ("选图即发,文字后到"). The coordinator buffers image-bearing messages for a short window; a
+ * following text from the same sender joins the batch and dispatches as one task, otherwise the
+ * image(s) alone are dispatched when the window expires.
+ */
+const batchCoordinator = new ImageBatchCoordinator(IMAGE_BATCH_WINDOW_MS);
+
+/** Flush timers per sender, owned by the monitor (the coordinator stays pure). */
+const batchTimers = new Map<string, NodeJS.Timeout>();
+
+/** (Re)arm the flush timer for a sender; the window extends whenever a new image joins. */
+function armBatchTimer(sender: string, opts: { baseUrl: string; token?: string }): void {
+	const existing = batchTimers.get(sender);
+	if (existing) clearTimeout(existing);
+	const timer = setTimeout(() => {
+		batchTimers.delete(sender);
+		void flushBatch(sender, opts);
+	}, IMAGE_BATCH_WINDOW_MS);
+	// Do not let a pending flush timer keep the process alive on shutdown.
+	timer.unref?.();
+	batchTimers.set(sender, timer);
+}
+
+/** Cancel a sender's flush timer (called when a caption joins and dispatches immediately). */
+function cancelBatchTimer(sender: string): void {
+	const timer = batchTimers.get(sender);
+	if (timer) {
+		clearTimeout(timer);
+		batchTimers.delete(sender);
+	}
+}
+
+/** Flush a sender's buffered batch (timer fired with no caption): dispatch as one task, send the reply. */
+async function flushBatch(sender: string, opts: { baseUrl: string; token?: string }): Promise<void> {
+	const dispatch = batchCoordinator.flush(sender);
+	if (!dispatch) return;
+	console.log(
+		`[wechat] flushed image batch from ${sender}: ${dispatch.images.length} image(s), text=${JSON.stringify(dispatch.text.slice(0, 40))}`,
+	);
+	await dispatchAndReply({
+		text: dispatch.text,
+		inboundImages: dispatch.images,
+		contextToken: dispatch.contextToken,
+		fromUserId: sender,
+		opts,
+		id: dispatch.id,
+	});
+}
 
 /** Extract plain text from item_list: first TEXT item, else VOICE-to-text. */
 function bodyFromItemList(itemList?: MessageItem[]): string {
@@ -86,7 +142,61 @@ async function processOneMessage(
 		recordContact("wechat", fromUserId);
 	}
 
-	if (!text) return; // v1 text-only: skip pure-media / empty messages
+	// Decode inbound images (best-effort: one failure is warn-logged, the rest still go through).
+	// Each holds the decoded Buffer so the runner can both show it to the model and save it.
+	// Runs AFTER the allowlist check so unauthorized senders never trigger a CDN download/decrypt.
+	const inboundImages: InboundImage[] = [];
+	for (const item of full.item_list ?? []) {
+		if (item.type !== MessageItemType.IMAGE) continue;
+		try {
+			inboundImages.push(await downloadInboundImage(item));
+		} catch (e) {
+			console.warn(`[wechat] image decode failed: ${String(e)}`);
+		}
+	}
+
+	// v1 text-only skip becomes "no text AND no image".
+	if (!text && inboundImages.length === 0) return;
+
+	// Batch window: a selected photo is delivered immediately while the user may still be typing
+	// the caption, so hold image-bearing messages briefly. A following text from the same sender
+	// joins the batch and flushes now; otherwise the image(s) alone are dispatched when the
+	// window expires. WECHAT_IMAGE_BATCH_SECONDS=0 disables batching (dispatch immediately).
+	const action = batchCoordinator.onMessage(fromUserId, { text, images: inboundImages, contextToken });
+
+	if (action.kind === "buffer") {
+		armBatchTimer(fromUserId, opts);
+		console.log(
+			`[wechat] buffered ${inboundImages.length} image(s) from ${fromUserId} awaiting caption (${CONFIG.wechatImageBatchSeconds}s, batch has ${batchCoordinator.pendingImageCount(fromUserId)} image(s))`,
+		);
+		return;
+	}
+
+	// Dispatch now: standalone text, a caption that joined a pending image batch, or an image
+	// dispatch when batching is disabled. A caption join cancels the flush timer.
+	cancelBatchTimer(fromUserId);
+	const messageId = full.message_id != null || full.client_id != null ? String(full.message_id ?? full.client_id) : undefined;
+	await dispatchAndReply({
+		text: action.dispatch.text,
+		inboundImages: action.dispatch.images,
+		contextToken: action.dispatch.contextToken,
+		fromUserId,
+		opts,
+		id: messageId ?? action.dispatch.id,
+	});
+}
+
+/** Dispatch a single task and send the reply back to the sender (text + any outbound images). */
+async function dispatchAndReply(params: {
+	text: string;
+	inboundImages: InboundImage[];
+	contextToken?: string;
+	fromUserId: string;
+	opts: { baseUrl: string; token?: string };
+	/** Dedup id (from the coordinator, or the message's message_id/client_id when present). */
+	id: string;
+}): Promise<void> {
+	const { text, inboundImages, contextToken, fromUserId, opts, id } = params;
 
 	// Protocol: replying requires echoing this message's context_token. Without it we
 	// cannot reply at all — log loudly instead of silently dropping the ack.
@@ -94,12 +204,12 @@ async function processOneMessage(
 		console.warn(`[wechat] missing context_token, cannot reply to this message (protocol requires echoing it): from=${fromUserId}`);
 	}
 
-	const id = String(full.message_id ?? full.client_id ?? `${fromUserId}:${text.slice(0, 20)}`);
 	try {
 		const reply = await dispatch(text, {
 			id,
 			source: "wechat",
 			recipient: { source: "wechat", userId: fromUserId },
+			inboundImages,
 		});
 		// Dedup hit returns a sentinel; don't echo it back to the user
 		if (reply.text === DUPLICATE_SENTINEL) return;
