@@ -57,6 +57,12 @@ export interface ModelMeta {
 	reasoning: boolean;
 	contextWindow: number;
 	maxTokens: number;
+	/**
+	 * Whether the model accepts image input (vision). Defaults to true, matching pi-ai's
+	 * built-in default of text+image; set false for text-only models. When false, pi-ai
+	 * replaces image content blocks with a placeholder instead of sending them.
+	 */
+	vision?: boolean;
 }
 
 /** Wire protocol for a custom provider (default: OpenAI Chat Completions). */
@@ -169,6 +175,7 @@ function loadProvidersFile(): CustomProviderConfig[] {
 					reasoning: mm.reasoning === true,
 					contextWindow: Number(mm.contextWindow) || 0,
 					maxTokens: Number(mm.maxTokens) || 0,
+					vision: mm.vision,
 				});
 			}
 			if (models.length === 0) continue;

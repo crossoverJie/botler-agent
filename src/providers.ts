@@ -15,7 +15,10 @@ function buildModel(providerId: string, baseUrl: string, api: CustomProviderApi,
 		provider: providerId,
 		baseUrl,
 		reasoning: m.reasoning,
-		input: ["text"],
+		// Declare image input support so pi-ai sends image blocks instead of replacing them
+		// with a "(image omitted)" placeholder. Defaults to text+image (pi-ai's built-in
+		// default); set `vision: false` in providers.json for text-only models.
+		input: m.vision === false ? ["text"] : ["text", "image"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: m.contextWindow,
 		maxTokens: m.maxTokens,
