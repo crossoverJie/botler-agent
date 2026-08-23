@@ -5,6 +5,7 @@ import { decryptAesEcb, parseInboundAesKey } from "./aes-ecb.ts";
 import { CDN_BASE_URL } from "./upload.ts";
 import { MessageItemType, type MessageItem } from "./types.ts";
 import { safePath } from "../../tools/paths.ts"; // security boundary for the persisted copy
+import { today } from "../../prompts/system-prompt.ts"; // local-tz date, matches the agent's __TODAY__
 
 /**
  * Inbound image pipeline for the WeChat channel.
@@ -98,8 +99,9 @@ const ALLOWED_EXT = new Set(["jpg", "png", "gif", "webp"]);
  */
 export async function persistInboundImage(img: InboundImage, project: string): Promise<string> {
 	const ext = ALLOWED_EXT.has(img.ext) ? img.ext : "jpg";
-	const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-	const name = `${date}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
+	// Local-timezone date (same as the agent's __TODAY__), so the file name matches the
+	// date the agent writes into its records even for UTC+8 users sending near midnight.
+	const name = `${today()}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
 	const rel = path.join(project, PHOTOS_SUBDIR, name);
 	const abs = safePath(rel); // throws if outside the allowlisted first-level subdir
 	await fs.mkdir(path.dirname(abs), { recursive: true });

@@ -279,6 +279,8 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	const ctx: RunLogContext = logCtx ?? { taskId: randomUUID(), source: "cli", phase: "execute" };
 	const startedAt = Date.now();
 	const inboundImages = ctx.inboundImages ?? [];
+	// Base64-encode each inbound image exactly once and reuse it for routing + execution.
+	const imagesContent = toImageContent(inboundImages);
 	const model = resolveModel();
 	const projects = listProjectDirs();
 	if (projects.length === 0) {
@@ -317,7 +319,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		routingPrompt = undefined;
 		routingCandidates = [...projects, SCHEDULER_VIRTUAL_PROJECT];
 	} else {
-		const routed = await routeProject(userMessage, model, ctx.source !== "scheduler", toImageContent(inboundImages));
+		const routed = await routeProject(userMessage, model, ctx.source !== "scheduler", imagesContent);
 		project = routed.project;
 		routingUsage = routed.usage;
 		routingPrompt = routed.prompt;
@@ -344,15 +346,18 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 
 	// Persist originals under DATA_ROOT/<project>/photos, then tell the agent where they are.
 	// Persistence happens only after a subproject is known — unrouted / unknown-project messages
-	// (returned above) never write a photo into DATA_ROOT. The file is written by the framework
-	// (a transport concern), validated through safePath + an image-extension whitelist; the agent
-	// only ever receives the relative path as text to cite in its record.
+	// (returned above) never write a photo into DATA_ROOT, and the virtual __scheduler__ project
+	// is not a data subproject (nothing to persist, avoids a spurious warn). The file is written
+	// by the framework (a transport concern), validated through safePath + an image-extension
+	// whitelist; the agent only ever receives the relative path as text to cite in its record.
 	const savedPaths: string[] = [];
-	for (const img of inboundImages) {
-		try {
-			savedPaths.push(await persistInboundImage(img, project!));
-		} catch (e) {
-			console.warn(`[runner] persist image failed: ${String(e)}`);
+	if (inboundImages.length > 0 && project !== SCHEDULER_VIRTUAL_PROJECT) {
+		for (const img of inboundImages) {
+			try {
+				savedPaths.push(await persistInboundImage(img, project!));
+			} catch (e) {
+				console.warn(`[runner] persist image failed: ${String(e)}`);
+			}
 		}
 	}
 	const attachmentNote = savedPaths.length
@@ -405,7 +410,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		markAgentStart();
 		// Inline vision (decoded bytes) + the saved-path note, so the model can both see the
 		// image and reference its persisted location in the data file.
-		await agent.prompt(execText, toImageContent(inboundImages));
+		await agent.prompt(execText, imagesContent);
 	} finally {
 		markAgentEnd();
 		setTaskContext(null);

@@ -224,8 +224,8 @@ export function loadSystemPrompt(projectName?: string): string {
 		.replaceAll("__TODAY__", today());
 }
 
-/** Today's date in the local timezone (YYYY-MM-DD). */
-function today(): string {
+/** Today's date in the local timezone (YYYY-MM-DD). Shared with inbound image persistence so file names match the agent's notion of "today". */
+export function today(): string {
 	const d = new Date();
 	const m = String(d.getMonth() + 1).padStart(2, "0");
 	const day = String(d.getDate()).padStart(2, "0");

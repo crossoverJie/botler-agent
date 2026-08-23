@@ -59,22 +59,10 @@ async function processOneMessage(
 	const contextToken = full.context_token;
 	const text = bodyFromItemList(full.item_list);
 
-	// Decode inbound images (best-effort: one failure is warn-logged, the rest still go through).
-	// Each holds the decoded Buffer so the runner can both show it to the model and save it.
-	const inboundImages: InboundImage[] = [];
-	for (const item of full.item_list ?? []) {
-		if (item.type !== MessageItemType.IMAGE) continue;
-		try {
-			inboundImages.push(await downloadInboundImage(item));
-		} catch (e) {
-			console.warn(`[wechat] image decode failed: ${String(e)}`);
-		}
-	}
-
 	// First-deploy observability: log raw metadata so we can confirm what real inbound
 	// messages look like (message_type / from_user_id) before trusting any skip rule.
 	console.log(
-		`[wechat] inbound: from=${fromUserId || "(empty)"} type=${full.message_type ?? "?"} text=${JSON.stringify(text.slice(0, 40))} images=${inboundImages.length}`,
+		`[wechat] inbound: from=${fromUserId || "(empty)"} type=${full.message_type ?? "?"} text=${JSON.stringify(text.slice(0, 40))}`,
 	);
 
 	// Robust skip: no sender. Our own outbound echoes are built with from_user_id=""
@@ -98,6 +86,19 @@ async function processOneMessage(
 	if (contextToken) {
 		updateContext(fromUserId, contextToken);
 		recordContact("wechat", fromUserId);
+	}
+
+	// Decode inbound images (best-effort: one failure is warn-logged, the rest still go through).
+	// Each holds the decoded Buffer so the runner can both show it to the model and save it.
+	// Runs AFTER the allowlist check so unauthorized senders never trigger a CDN download/decrypt.
+	const inboundImages: InboundImage[] = [];
+	for (const item of full.item_list ?? []) {
+		if (item.type !== MessageItemType.IMAGE) continue;
+		try {
+			inboundImages.push(await downloadInboundImage(item));
+		} catch (e) {
+			console.warn(`[wechat] image decode failed: ${String(e)}`);
+		}
 	}
 
 	// v1 text-only skip becomes "no text AND no image".
