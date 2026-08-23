@@ -334,7 +334,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		routingCandidates = routed.candidates;
 	}
 	if (!project) {
-		const replyText = fallbackUnknownReply();
+		const replyText = fallbackUnknownReply(inboundImages.length > 0);
 		return {
 			text: replyText,
 			images: [],
