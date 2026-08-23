@@ -21,6 +21,62 @@ const BACKOFF_DELAY_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
 const SESSION_EXPIRED_ERRCODE = -14;
 
+/** Image batching window from config (ms; 0 = disabled). */
+const IMAGE_BATCH_WINDOW_MS = CONFIG.wechatImageBatchMs;
+
+/** Buffered image-bearing message awaiting a possible caption from the same sender. */
+interface PendingImageBatch {
+	fromUserId: string;
+	images: InboundImage[];
+	texts: string[];
+	contextToken?: string;
+	timer: NodeJS.Timeout;
+}
+
+/**
+ * Per-sender buffered image batches waiting for a caption.
+ * WeChat delivers a selected photo immediately, while the user may still be typing the text
+ * ("选图即发,文字后到"). Image-bearing messages are held here for IMAGE_BATCH_WINDOW_MS; a
+ * following text from the same sender joins the batch and flushes immediately, otherwise the
+ * image(s) alone are dispatched when the window expires.
+ */
+const pendingBatches = new Map<string, PendingImageBatch>();
+
+/** (Re)arm the flush timer for a batch; the window extends whenever a new message joins. */
+function armBatchTimer(batch: PendingImageBatch, opts: { baseUrl: string; token?: string }): void {
+	clearTimeout(batch.timer);
+	batch.timer = setTimeout(() => {
+		void flushBatch(batch.fromUserId, opts);
+	}, IMAGE_BATCH_WINDOW_MS);
+	// Do not let a pending flush timer keep the process alive on shutdown.
+	batch.timer.unref?.();
+}
+
+/** Flush a buffered batch: join its texts, dispatch as one task, send the reply. */
+async function flushBatch(fromUserId: string, opts: { baseUrl: string; token?: string }): Promise<void> {
+	const batch = pendingBatches.get(fromUserId);
+	if (!batch) return;
+	pendingBatches.delete(fromUserId);
+	clearTimeout(batch.timer);
+	const text = batch.texts.join("\n");
+	const imageSig = crypto
+		.createHash("md5")
+		.update(Buffer.concat(batch.images.map((i) => i.buffer)))
+		.digest("hex")
+		.slice(0, 8);
+	await dispatchAndReply({
+		text,
+		inboundImages: batch.images,
+		contextToken: batch.contextToken,
+		fromUserId: batch.fromUserId,
+		opts,
+		id: `${batch.fromUserId}:batch:${imageSig}:${text.slice(0, 20)}`,
+	});
+	console.log(
+		`[wechat] flushed image batch from ${batch.fromUserId}: ${batch.images.length} image(s), text=${JSON.stringify(text.slice(0, 40))}`,
+	);
+}
+
 /** Extract plain text from item_list: first TEXT item, else VOICE-to-text. */
 function bodyFromItemList(itemList?: MessageItem[]): string {
 	if (!itemList?.length) return "";
@@ -104,6 +160,69 @@ async function processOneMessage(
 	// v1 text-only skip becomes "no text AND no image".
 	if (!text && inboundImages.length === 0) return;
 
+	// Batch window: a selected photo is delivered immediately while the user may still be typing
+	// the caption, so hold image-bearing messages briefly. A following text from the same sender
+	// joins the batch and flushes now; otherwise the image(s) alone are dispatched when the
+	// window expires. WECHAT_IMAGE_BATCH_MS=0 disables batching (dispatch immediately).
+	if (inboundImages.length > 0 && IMAGE_BATCH_WINDOW_MS > 0) {
+		const existing = pendingBatches.get(fromUserId);
+		if (existing) {
+			existing.images.push(...inboundImages);
+			if (text) existing.texts.push(text);
+			if (contextToken) existing.contextToken = contextToken;
+			armBatchTimer(existing, opts);
+		} else {
+			const batch: PendingImageBatch = {
+				fromUserId,
+				images: inboundImages,
+				texts: text ? [text] : [],
+				contextToken,
+				timer: undefined as unknown as NodeJS.Timeout,
+			};
+			pendingBatches.set(fromUserId, batch);
+			armBatchTimer(batch, opts);
+		}
+		console.log(
+			`[wechat] buffered ${inboundImages.length} image(s) from ${fromUserId} awaiting caption (${IMAGE_BATCH_WINDOW_MS}ms, batch has ${existing?.images.length ?? inboundImages.length} image(s))`,
+		);
+		return;
+	}
+
+	// Text-only message: if a pending image batch exists from this sender, the text is the
+	// caption — join it and flush now. Otherwise dispatch immediately as a standalone text task.
+	if (text) {
+		const existing = pendingBatches.get(fromUserId);
+		if (existing) {
+			existing.texts.push(text);
+			if (contextToken) existing.contextToken = contextToken;
+			clearTimeout(existing.timer);
+			await flushBatch(fromUserId, opts);
+			return;
+		}
+	}
+
+	await dispatchAndReply({
+		text,
+		inboundImages,
+		contextToken,
+		fromUserId,
+		opts,
+		id: full.message_id != null || full.client_id != null ? String(full.message_id ?? full.client_id) : undefined,
+	});
+}
+
+/** Dispatch a single task and send the reply back to the sender (text + any outbound images). */
+async function dispatchAndReply(params: {
+	text: string;
+	inboundImages: InboundImage[];
+	contextToken?: string;
+	fromUserId: string;
+	opts: { baseUrl: string; token?: string };
+	/** Dedup id; defaults to `${fromUserId}:${text}:${imageSig}` (image-only messages need the hash to stay distinct). */
+	id?: string;
+}): Promise<void> {
+	const { text, inboundImages, contextToken, fromUserId, opts } = params;
+
 	// Image-only message: keep a placeholder so greeting/routing/logs still function.
 	const safeText = text || "[图片]"; // isGreeting() will not match this.
 
@@ -113,9 +232,9 @@ async function processOneMessage(
 		console.warn(`[wechat] missing context_token, cannot reply to this message (protocol requires echoing it): from=${fromUserId}`);
 	}
 
-	// Dedup id: the original fallback `${fromUserId}:${text.slice(0,20)}` is EMPTY for image-only
-	// messages, so two consecutive photos (no message_id/client_id) within 5 min would be
-	// mis-deduplicated. Fold in a short hash of the decoded bytes so each image is distinct.
+	// Dedup id: the fallback `${fromUserId}:${text.slice(0,20)}` is EMPTY for image-only messages,
+	// so two consecutive photos (no message_id/client_id) within 5 min would be mis-deduplicated.
+	// Fold in a short hash of the decoded bytes so each image is distinct.
 	const imageSig = inboundImages.length
 		? crypto
 				.createHash("md5")
@@ -123,7 +242,8 @@ async function processOneMessage(
 				.digest("hex")
 				.slice(0, 8)
 		: "";
-	const id = String(full.message_id ?? full.client_id ?? `${fromUserId}:${safeText}:${imageSig}`);
+	const id = params.id ?? `${fromUserId}:${safeText}:${imageSig}`;
+
 	try {
 		const reply = await dispatch(safeText, {
 			id,
