@@ -102,11 +102,11 @@ export interface Config {
 	 */
 	wechatReminderHours: number;
 	/**
-	 * WeChat image batching window in ms: a selected photo is delivered immediately, while the
+	 * WeChat image batching window in seconds: a selected photo is delivered immediately, while the
 	 * user may still be typing the caption. Image-bearing messages are buffered this long for a
 	 * follow-up text from the same sender; 0 disables batching (dispatch immediately).
 	 */
-	wechatImageBatchMs: number;
+	wechatImageBatchSeconds: number;
 	/** When GIT_PUSH=1, additionally git push after a write task commits (failure is only a warning; default off). */
 	gitPush: boolean;
 	/** When WEBUI_ENABLED=1, start the local task-log UI (binds 127.0.0.1 only). */
@@ -231,14 +231,14 @@ function parseWechatReminderHours(): number {
 }
 
 /**
- * Parse WECHAT_IMAGE_BATCH_MS. "0" explicitly disables batching; a positive integer sets the
- * window; anything invalid falls back to the default 5000ms.
+ * Parse WECHAT_IMAGE_BATCH_SECONDS. "0" explicitly disables batching; a positive integer sets the
+ * window in seconds; anything invalid falls back to the default 60.
  */
-function parseWechatImageBatchMs(): number {
-	const raw = process.env.WECHAT_IMAGE_BATCH_MS;
+function parseWechatImageBatchSeconds(): number {
+	const raw = process.env.WECHAT_IMAGE_BATCH_SECONDS;
 	if (raw === "0") return 0;
-	const n = Number(raw ?? "5000");
-	return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 5000;
+	const n = Number(raw ?? "60");
+	return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 60;
 }
 
 export const CONFIG: Config = {
@@ -255,7 +255,7 @@ export const CONFIG: Config = {
 	wechatEnabled: process.env.WECHAT_ENABLED === "1",
 	wechatAllowFrom: process.env.WECHAT_ALLOW_FROM || undefined,
 	wechatReminderHours: parseWechatReminderHours(),
-	wechatImageBatchMs: parseWechatImageBatchMs(),
+	wechatImageBatchSeconds: parseWechatImageBatchSeconds(),
 	gitPush: process.env.GIT_PUSH === "1",
 	webuiEnabled: process.env.WEBUI_ENABLED === "1",
 	webuiPort: Number(process.env.WEBUI_PORT ?? "8900"),

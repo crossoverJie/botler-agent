@@ -21,8 +21,8 @@ const BACKOFF_DELAY_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
 const SESSION_EXPIRED_ERRCODE = -14;
 
-/** Image batching window from config (ms; 0 = disabled). */
-const IMAGE_BATCH_WINDOW_MS = CONFIG.wechatImageBatchMs;
+/** Image batching window from config, in ms (WECHAT_IMAGE_BATCH_SECONDS × 1000; 0 = disabled). */
+const IMAGE_BATCH_WINDOW_MS = CONFIG.wechatImageBatchSeconds * 1000;
 
 /** Buffered image-bearing message awaiting a possible caption from the same sender. */
 interface PendingImageBatch {
@@ -163,7 +163,7 @@ async function processOneMessage(
 	// Batch window: a selected photo is delivered immediately while the user may still be typing
 	// the caption, so hold image-bearing messages briefly. A following text from the same sender
 	// joins the batch and flushes now; otherwise the image(s) alone are dispatched when the
-	// window expires. WECHAT_IMAGE_BATCH_MS=0 disables batching (dispatch immediately).
+	// window expires. WECHAT_IMAGE_BATCH_SECONDS=0 disables batching (dispatch immediately).
 	if (inboundImages.length > 0 && IMAGE_BATCH_WINDOW_MS > 0) {
 		const existing = pendingBatches.get(fromUserId);
 		if (existing) {
@@ -183,7 +183,7 @@ async function processOneMessage(
 			armBatchTimer(batch, opts);
 		}
 		console.log(
-			`[wechat] buffered ${inboundImages.length} image(s) from ${fromUserId} awaiting caption (${IMAGE_BATCH_WINDOW_MS}ms, batch has ${existing?.images.length ?? inboundImages.length} image(s))`,
+			`[wechat] buffered ${inboundImages.length} image(s) from ${fromUserId} awaiting caption (${CONFIG.wechatImageBatchSeconds}s, batch has ${existing?.images.length ?? inboundImages.length} image(s))`,
 		);
 		return;
 	}
