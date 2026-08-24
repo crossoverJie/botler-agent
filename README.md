@@ -20,6 +20,21 @@ A deliberately **lightweight** alternative to heavyweight agent frameworks:
 - **Token-thrifty** — every task is a fresh, short-lived Agent with no cross-task memory; routing uses only a tiny project-name + summary prompt, and only the selected subproject's conventions are loaded. No giant system prompts, no chasing long contexts — most tasks cost a fraction of a general-assistant call.
 - **Focused on simple vertical tasks** — not a general-purpose chatbot. It shines at small, repetitive, well-scoped jobs (meal logging, vocabulary lookups, reminders), each described by its own `AGENTS.md`.
 
+## How botler-agent compares
+
+| | **botler-agent** | **General-purpose agents** (OpenClaw / WorkBuddy) | **Coding agents** (Claude Code / Codex) |
+|---|---|---|---|
+| **Positioning** | Lightweight personal data assistant | Broad task automation | Software engineering in a codebase |
+| **Install footprint** | A single `tsx` process, installed in seconds — no heavy runtime | Large bundles carrying many features you may never use | Heavy; expects a full dev environment |
+| **Built-in tools** | Only 5 controlled tools (`read / write / edit / run / schedule`) | Many built-in, often complex tools | Full shell, filesystem, and command access |
+| **File operations** | Path allowlist — only first-level subdirs of `DATA_ROOT` | Broad file access | Reads/writes across the whole workspace |
+| **Permissions on your machine** | Extremely restrained — no arbitrary shell | More open | Highly open (run commands, modify code) |
+| **Interaction** | Mobile-first: chat from WeChat / Telegram / Feishu | Multi-surface | Desktop / terminal-centric |
+| **Best at** | Lightweight daily logging (meals, vocab, reminders) | General automation | Writing, refactoring, and debugging code |
+
+- **vs. general-purpose agents**: botler stays lean. It has no bloated installer piling on redundant capabilities, no kitchen-sink toolset, and safer, scope-limited file access.
+- **vs. coding agents**: botler deliberately does *less*. It is built for quick, lightweight record-keeping on your phone — not for operating on your computer — so it asks for almost no privileges over your machine and needs no complex tooling.
+
 ## Installation
 
 **Option A — clone from GitHub (recommended)**
