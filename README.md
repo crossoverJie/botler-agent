@@ -1,5 +1,7 @@
 # botler-agent
 
+> 🌐 [中文文档](README-ZH.md)
+
 <p align="center">
   <img src="docs/images/IMG_0592.PNG" alt="botler-agent running screenshot 1" width="32%">
   <img src="docs/images/IMG_0593.PNG" alt="botler-agent running screenshot 2" width="32%">
@@ -22,18 +24,20 @@ A deliberately **lightweight** alternative to heavyweight agent frameworks:
 
 ## How botler-agent compares
 
-| | **botler-agent** | **General-purpose agents** (OpenClaw / WorkBuddy) | **Coding agents** (Claude Code / Codex) |
-|---|---|---|---|
-| **Positioning** | Lightweight personal data assistant | Broad task automation | Software engineering in a codebase |
-| **Install footprint** | A single `tsx` process, installed in seconds — no heavy runtime | Large bundles carrying many features you may never use | Heavy; expects a full dev environment |
-| **Built-in tools** | Only 5 controlled tools (`read / write / edit / run / schedule`) | Many built-in, often complex tools | Full shell, filesystem, and command access |
-| **File operations** | Path allowlist — only first-level subdirs of `DATA_ROOT` | Broad file access | Reads/writes across the whole workspace |
-| **Permissions on your machine** | Extremely restrained — no arbitrary shell | More open | Highly open (run commands, modify code) |
-| **Interaction** | Mobile-first: chat from WeChat / Telegram / Feishu | Multi-surface | Desktop / terminal-centric |
-| **Best at** | Lightweight daily logging (meals, vocab, reminders) | General automation | Writing, refactoring, and debugging code |
+| | **botler-agent** | **General-purpose agents** (OpenClaw / WorkBuddy) | **Coding agents** (Claude Code / Codex) | **Cloud chatbots** (Doubao / Yuanbao / ChatGPT) |
+|---|---|---|---|---|
+| **Positioning** | Lightweight personal data assistant | Broad task automation | Software engineering in a codebase | Conversational Q&A service |
+| **Install footprint** | A single `tsx` process, installed in seconds — no heavy runtime | Large bundles carrying many features you may never use | Heavy; expects a full dev environment | Web / app — nothing to install |
+| **Built-in tools** | Only 5 controlled tools (`read / write / edit / run / schedule`) | Many built-in, often complex tools | Full shell, filesystem, and command access | Chat only — no file tools |
+| **File operations** | Path allowlist — only first-level subdirs of `DATA_ROOT` | Broad file access | Reads/writes across the whole workspace | None — cloud only |
+| **Permissions on your machine** | Extremely restrained — no arbitrary shell | More open | Highly open (run commands, modify code) | N/A (remote cloud service) |
+| **Interaction** | Mobile-first: chat from WeChat / Telegram / Feishu | Multi-surface | Desktop / terminal-centric | Web / app chat |
+| **Best at** | Lightweight daily logging (meals, vocab, reminders) | General automation | Writing, refactoring, and debugging code | Conversational Q&A, drafting, brainstorming |
+| **Data storage** | Local-first: lives in your own `DATA_ROOT`, structured on demand | Depends on the platform | In the codebase / repo | Cloud-only, usually unstructured markdown-like chat history |
 
 - **vs. general-purpose agents**: botler stays lean. It has no bloated installer piling on redundant capabilities, no kitchen-sink toolset, and safer, scope-limited file access.
 - **vs. coding agents**: botler deliberately does *less*. It is built for quick, lightweight record-keeping on your phone — not for operating on your computer — so it asks for almost no privileges over your machine and needs no complex tooling.
+- **vs. cloud chatbots**: chatbots keep your data in their cloud as loose, unstructured chat history that is hard to maintain or reuse over the long run. botler stores everything **locally** under your control — you can shape it into structured data whenever you want, so the output stays stable and is far better suited to long-term, dependable maintenance.
 
 ## Installation
 
@@ -238,6 +242,10 @@ Schema — exactly one of `cron` / `interval` / `at` / `once`:
 ## WebUI
 
 Set `WEBUI_ENABLED=1` to start a local task-log UI (binds `127.0.0.1` only, port `WEBUI_PORT`, default 8900). It reads the per-day JSONL logs under `task-logs/`, including a Monitor view (same data as the `/metrics` endpoint). The only write action is deleting task logs.
+
+<p align="center">
+  <img src="docs/images/webui-tasklog.png" alt="botler-agent WebUI task log view" width="85%">
+</p>
 
 ## Monitor
 

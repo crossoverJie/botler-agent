@@ -262,6 +262,10 @@ Schema——`cron` / `interval` / `at` / `once` 四选一：
 
 设 `WEBUI_ENABLED=1` 启动本地任务日志 WebUI（仅绑定 `127.0.0.1`，端口 `WEBUI_PORT`，默认 8900）。它读取 `task-logs/` 下每日 JSONL 日志，含监控视图（数据与 `/metrics` 一致）。唯一的写操作是删除任务日志。
 
+<p align="center">
+  <img src="docs/images/webui-tasklog.png" alt="botler-agent WebUI 任务日志界面" width="85%">
+</p>
+
 ## 监控
 
 默认启动一个本地健康/指标服务，监听 `127.0.0.1:MONITOR_PORT`（默认 8899，避开 3000=飞书 / 8900=webui），暴露 `/healthz`（JSON）、`/metrics`（Prometheus 文本）、`/healthz/history`（趋势采样）。设 `MONITOR_ENABLED=0` 只关闭独立 scrape 端口；WebUI 监控视图由 WebUI 进程自身采样，不受影响。
