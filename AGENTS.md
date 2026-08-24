@@ -57,7 +57,7 @@ scheduler (scheduler/engine.ts) → dispatch(schedule.message, {id, source:"sche
 | `src/init.ts` | Initialize `~/.botler-agent/` (.env + providers.json + system-prompt.md templates); existing files not overwritten |
 | `src/config.ts` | Two-level `.env` loading (user-level > source-level) + providers.json loading + `CONFIG` construction + `USER_CONFIG_DIR` |
 | `src/dispatcher.ts` | Dedup, sequential queue, validation retry, commit orchestration (**never rejects**) |
-| `src/runner.ts` | Build Agent, run task, extract final reply, decide whether it mutated |
+| `src/runner.ts` | Build Agent, run task, extract final reply, decide whether it mutated; greeting short-circuit (`greeting.ts`) + image-aware routing |
 | `src/providers.ts` | Build a custom provider config into a pi-ai `Provider` (openai-completions) |
 | `src/prompts/system-prompt.ts` | Built-in generic default prompt + `loadSystemPrompt()` (externalized first + placeholder injection) |
 | `src/tools/paths.ts` | **Security boundary**: `safePath()` allowlist check + `projectOf()` |
@@ -68,7 +68,7 @@ scheduler (scheduler/engine.ts) → dispatch(schedule.message, {id, source:"sche
 | `src/safety/validate.ts` | Post-write check that all data JSON is valid (catches edit breaking syntax), returns a self-contained `fix` instruction |
 | `src/safety/git.ts` | Iterate first-level subdirs of `DATA_ROOT`, commit each independent git repo only if changed (optional push) |
 | `src/channels/{telegram,feishu}.ts` | Channel adapters: grammy long polling / Feishu webhook |
-| `src/channels/wechat/*` | WeChat iLink channel: QR login (`login.ts`), long-poll monitor (`monitor.ts`), media send/upload, context_token persistence (`context.ts`), owner renewal reminder loop (`reminder.ts`) |
+| `src/channels/wechat/*` | WeChat iLink channel: QR login (`login.ts`), long-poll monitor (`monitor.ts`), media send/upload, context_token persistence (`context.ts`), owner renewal reminder loop (`reminder.ts`), inbound image download + persist (`download.ts`) and per-sender image batching (`image-batch.ts`) |
 
 ## Key implementation details (read before changing)
 
@@ -131,13 +131,28 @@ This is the only relaxation of the "no bash for the agent" red line: the agent c
 
 ### 8. Scheduler, the schedule tool, and push delivery (`scheduler/*` + `push/*` + `tools/schedule.ts`)
 
-Scheduled tasks live in `~/.botler-agent/schedules.json` (`schedulesFile`): each entry is one of cron / interval / at, plus timezone / message / optional project / retry / silentHours / recipient. They are created from chat via the `schedule` tool, from the WebUI, or by hand-editing the file — all the same store, and a save immediately wakes the scheduler loop.
+Scheduled tasks live in `~/.botler-agent/schedules.json` (`schedulesFile`): each entry is one of cron / interval / at / once, plus timezone / message / optional project / retry / silentHours / recipient. They are created from chat via the `schedule` tool, from the WebUI, or by hand-editing the file — all the same store, and a save immediately wakes the scheduler loop.
 
 - The `schedule` tool is a **narrow, deliberate exception** to the DATA_ROOT allowlist: it takes no file-path parameter, always writes the fixed `schedules.json` through `saveSchedules` (full normalization + 10KB message cap + atomic write + backup), and the push recipient is injected by the framework (task-context), never guessed by the model. `safePath` itself is untouched.
 - `saveSchedules` fires a saved listener (`setSchedulesSavedListener`) that the engine registers with `reloadSchedules` — keeping the dependency store → engine one-way avoids the engine → dispatcher → runner → tools → schedule → engine cycle.
 - The engine fires due entries into `dispatch` (source `scheduler`, id `schedule:<id>:<epoch>` to bypass dedup). If the entry has a `recipient`, the result is pushed via `deliver()`: primary channel first, then fallback `telegram → feishu → wechat`, only over channels that are configured and have a recorded contact address. WeChat pushes strip markdown (same as the reply path) and are the only ones that also send images.
+- **`once` trigger (one-shot)**: a schedule entry may carry `once` — an absolute ISO 8601 datetime (`"2026-08-20T22:00:00+08:00"` or with a `Z`/offset) — instead of `cron`/`interval`/`at`. It fires exactly once at that instant and then becomes inert (`nextFireEpoch` returns `Infinity` after the watermark passes). `silentHours` is intentionally **not** applied to `once` — an explicit, exact instant. `cron.ts` resolves `once` before `compileSchedule()` (which has no `once` case and would otherwise reject the entry).
 - **Routing**: messages about creating/managing schedules route to the virtual project `__scheduler__` (aliases: `scheduler`, or containing the Chinese keywords 定时 / 提醒 / 日程 — matched only AFTER real-project matches so data messages are never stolen). `loadSystemPrompt("__scheduler__")` returns the base prompt plus a scheduling-duties section instead of a data subproject's conventions. The `schedule` tool is in `fileTools`, so it works in any execution context (a single-project setup routes schedule messages to the data project but the tool still works).
 - **WeChat renewal reminders**: the monitor records each allowed sender's `context_token` (+ `contacts.json` address). `wechat/reminder.ts` checks the owner's quiet time against `WECHAT_REMINDER_HOURS` (0 = off, 1-24, default 23) and nudges them via `deliver()` before the 24h window expires; `lastRemindedAt` prevents repeat nudges per quiet stretch. Re-login (`clearAccount`) drops old tokens and contacts.
+
+### 9. WeChat inbound images (vision input)
+
+The WeChat channel can receive images the user sends and feed them to the model as vision input.
+
+- **Download + persist** (`download.ts`): `downloadInboundImage()` fetches the image bytes and sniffs the MIME to pick an extension; `persistInboundImage(img, project)` writes it under `DATA_ROOT/<project>/photos/<date>-<rand>.<ext>` **through `safePath`** (first-level allowlist) plus an image-extension whitelist, so the file can never escape `DATA_ROOT` or be written with a non-image extension. It returns the relative path so the agent can cite/operate on it. The date uses the agent's local `__TODAY__` timezone so filenames match the records.
+- **Batching** (`image-batch.ts` + `monitor.ts`): WeChat delivers a selected photo immediately while the user may still be typing the caption ("选图即发，文字后到"). `ImageBatchCoordinator` holds image-bearing messages for a window (`WECHAT_IMAGE_BATCH_SECONDS` × 1000 ms; `0` disables) so a following text from the same sender joins as ONE task (caption + vision), and multiple photos in the window merge. The coordinator is pure/unit-tested; the monitor owns the flush timer and dispatch. Setting `WECHAT_IMAGE_BATCH_SECONDS=0` dispatches each image immediately.
+- **Image-aware routing** (`runner.ts` + `greeting.ts`): `buildRoutePrompt` gets a `hasImages` flag; a message carrying images is **never** treated as a bare greeting (so the image is not swallowed). If routing cannot resolve a project AND the message had images, `fallbackUnknownReply(hasImages=true)` returns a Chinese hint telling the user to add a short text description (since the model may not be able to read the image). Providers must declare image-input support (see `providers.ts` fix) or images never reach the model.
+
+### 10. Greeting short-circuit + Chinese routing fallback (`greeting.ts`)
+
+- `isGreeting(msg)` strips whitespace/punctuation/symbols/combining marks (incl. full-width spaces and trailing emoji like 👋/❤️) and matches a small Chinese/English greeting set (你好/您好/喂/哈喽/嗨/hi/hello/hey/在吗…). A bare greeting has no subproject to route to.
+- `runner.ts` short-circuits: when there is no `projectHint`, the source is not `scheduler`, there are no inbound images, and `isGreeting` is true, it returns `greetingReply()` **without** calling the routing LLM — a deterministic, zero-cost Chinese welcome that lists available subprojects (`projectCapabilities()`). This keeps greetings free and avoids the confusing English `UNKNOWN` template.
+- `fallbackUnknownReply()` is the Chinese fallback when a (non-greeting) message cannot be routed to any subproject; it lists subprojects and, when `hasImages`, adds the image-specific guidance above. Both functions emit user-facing Chinese chat text (the intentional exception to the English-only rule for code/comments/logs).
 
 ## Conventions
 

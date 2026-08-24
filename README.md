@@ -1,5 +1,11 @@
 # botler-agent
 
+<p align="center">
+  <img src="docs/images/IMG_0592.PNG" alt="botler-agent running screenshot 1" width="32%">
+  <img src="docs/images/IMG_0593.PNG" alt="botler-agent running screenshot 2" width="32%">
+  <img src="docs/images/IMG_0594.PNG" alt="botler-agent running screenshot 3" width="32%">
+</p>
+
 A general-purpose, lightweight personal agent framework: it receives messages from **Telegram / Feishu / WeChat (iLink)**, autonomously completes short tasks within each data subproject under the **data root (`DATA_ROOT`)**, and sends the results back to the user. Optionally runs scheduled tasks (via an in-process scheduler) and exposes a local WebUI plus a health/metrics monitor.
 
 - **The framework only defines boundaries**: an allowlist of operable directories, five tools (`read / write / edit / run / schedule`, where `run` only executes existing in-project scripts and `schedule` only writes the fixed externalized `schedules.json`; neither is an arbitrary shell), post-write JSON validity checks, and automatic git commit on changes.
@@ -172,7 +178,9 @@ Once the system prompt is externalized, you (or the AI assistant) can customize 
 
 - **Telegram** (`grammy`, long polling): simplest, preferred. Requires `TELEGRAM_BOT_TOKEN`; on the mainland China network a `TG_PROXY` is required to connect to the API.
 - **Feishu** (event-subscription webhook with decryption): requires `FEISHU_APP_ID` / `FEISHU_APP_SECRET`; optional `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY`, listens on `FEISHU_PORT` (default 3000).
-- **WeChat (iLink / ClawBot official Bot API)**: text-only DM channel. Enable with `WECHAT_ENABLED=1` after logging in via `npm start -- wechat-login` (prints a QR code in the terminal; scan it with WeChat — credentials saved to `~/.botler-agent/wechat/account.json`). The account owner (the QR scanner) is always allowed; `WECHAT_ALLOW_FROM` can allowlist extra `ilink_user_id`s. A renewal reminder (`WECHAT_REMINDER_HOURS`) nudges the owner to refresh the 24h `context_token` window.
+- **WeChat (iLink / ClawBot official Bot API)**: DM channel. Enable with `WECHAT_ENABLED=1` after logging in via `npm start -- wechat-login` (prints a QR code in the terminal; scan it with WeChat — credentials saved to `~/.botler-agent/wechat/account.json`). The account owner (the QR scanner) is always allowed; `WECHAT_ALLOW_FROM` can allowlist extra `ilink_user_id`s. A renewal reminder (`WECHAT_REMINDER_HOURS`) nudges the owner to refresh the 24h `context_token` window.
+  - **Inbound images as vision input**: WeChat can receive images you send. They are decoded and fed to the model as vision input, and the originals are persisted under `DATA_ROOT/<project>/photos/`. Because WeChat delivers a selected photo immediately while you may still be typing the caption ("选图即发，文字后到"), inbound image messages are held for a short window (`WECHAT_IMAGE_BATCH_SECONDS`, default 60s; `0` disables) so a following text joins the batch as one task; multiple photos in the window also merge. If the configured model cannot read images, the agent replies in Chinese asking you to add a short text hint.
+  - **Greeting short-circuit**: a bare greeting (e.g. 你好 / hi) skips the routing LLM call entirely and gets a deterministic Chinese welcome that lists the available subprojects — zero model cost.
 
 Only the WeChat channel sends images; other channels deliver text only (image markdown is stripped from the reply).
 
@@ -180,7 +188,7 @@ Only the WeChat channel sends images; other channels deliver text only (image ma
 
 Set `SCHEDULER_ENABLED=1` to run the in-process scheduler. Each entry fires into `dispatch` (bypassing dedup) and the result can be pushed back to the user if a `recipient` is set. Entries are created from chat (the `schedule` tool), the WebUI, or by hand-editing `schedules.json` — all the same store, and a save immediately wakes the firing loop.
 
-Schema — exactly one of `cron` / `interval` / `at`:
+Schema — exactly one of `cron` / `interval` / `at` / `once`:
 
 ```json
 {
@@ -203,6 +211,7 @@ Schema — exactly one of `cron` / `interval` / `at`:
 - `cron`: 5-field expression (`min hour day-of-month month day-of-week`).
 - `interval`: simple `"5m"` / `"2h"` / `"1d"` (minute granularity, wall-clock aligned).
 - `at`: daily fixed `"HH:MM"` (local to `timezone`).
+- `once`: one-shot absolute ISO 8601 datetime (e.g. `"2026-08-20T22:00:00+08:00"` or `"2026-08-20T14:00:00Z"`). Fires **exactly once** at that instant, then becomes inert. `silentHours` is intentionally **not** applied — a one-shot reminder is an explicit, exact instant.
 - `timezone`: IANA timezone; default `Asia/Shanghai`.
 - `message`: instruction fired back to the Agent (goes through normal routing/execution).
 - `project`: optional routing hint; a valid subproject name skips the routing LLM call.
@@ -246,6 +255,7 @@ By default a local health/metrics server runs on `127.0.0.1:MONITOR_PORT` (defau
 | `WECHAT_ENABLED` | `=1` to start the WeChat iLink channel (requires a completed `wechat-login`) |
 | `WECHAT_ALLOW_FROM` | Optional comma-separated extra `ilink_user_id` allowlist (owner always allowed) |
 | `WECHAT_REMINDER_HOURS` | WeChat renewal reminder threshold: `0`=off, `1`-`24`=remind owner after N hours (default 23) |
+| `WECHAT_IMAGE_BATCH_SECONDS` | WeChat inbound-image batching window in seconds: `0`=disable batching (dispatch immediately), positive integer holds images briefly so a follow-up caption merges into one task (default 60) |
 | `GIT_PUSH` | `=1` additionally git push after commit (default off; push failure is only a warning) |
 | `WEBUI_ENABLED` | `=1` to start the local task-log WebUI (binds `127.0.0.1`) |
 | `WEBUI_PORT` | WebUI listening port, default `8900` |

@@ -1,5 +1,11 @@
 # botler-agent
 
+<p align="center">
+  <img src="docs/images/IMG_0592.PNG" alt="botler-agent 运行截图 1" width="32%">
+  <img src="docs/images/IMG_0593.PNG" alt="botler-agent 运行截图 2" width="32%">
+  <img src="docs/images/IMG_0594.PNG" alt="botler-agent 运行截图 3" width="32%">
+</p>
+
 通用轻量个人 Agent 框架：从 **Telegram / 飞书 / 微信（iLink）** 接收消息，在**数据根目录（`DATA_ROOT`）**内的各数据子项目中自主完成短任务，并把结果回发给用户。可选运行定时任务（内置调度器），并提供本地 WebUI 与健康度监控。
 
 - **框架只定义边界**：可操作目录白名单、只提供 `read / write / edit / run / schedule` 五个工具（run 仅限项目内已有脚本，schedule 只写固定的外置 `schedules.json`，二者都不是任意 shell）、写后校验 JSON 合法、有改动自动 git commit。
@@ -195,7 +201,9 @@ Scheduler ──► dispatch(schedule.message) ──►（同上流水线）
 
 - **Telegram**（`grammy`，长轮询）：最简单，首选。需要 `TELEGRAM_BOT_TOKEN`；大陆网络下需配置 `TG_PROXY` 才能连接 API。
 - **飞书**（事件订阅 webhook，含解密）：需要 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`；可选 `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY`，监听 `FEISHU_PORT`（默认 3000）。
-- **微信（iLink / ClawBot 官方 Bot API）**：仅文本私聊渠道。先用 `npm start -- wechat-login` 登录（终端打印二维码，用微信扫码——凭据存入 `~/.botler-agent/wechat/account.json`），再设 `WECHAT_ENABLED=1` 启用。账号主号（扫码者）始终允许；`WECHAT_ALLOW_FROM` 可额外放行 `ilink_user_id`。续期提醒（`WECHAT_REMINDER_HOURS`）会在主号 24h `context_token` 窗口临近过期前提醒其刷新。
+- **微信（iLink / ClawBot 官方 Bot API）**：私聊渠道。先用 `npm start -- wechat-login` 登录（终端打印二维码，用微信扫码——凭据存入 `~/.botler-agent/wechat/account.json`），再设 `WECHAT_ENABLED=1` 启用。账号主号（扫码者）始终允许；`WECHAT_ALLOW_FROM` 可额外放行 `ilink_user_id`。续期提醒（`WECHAT_REMINDER_HOURS`）会在主号 24h `context_token` 窗口临近过期前提醒其刷新。
+  - **入站图片即视觉输入**：微信可接收你发来的图片，解码后作为视觉输入喂给模型，并把原图持久化到 `DATA_ROOT/<project>/photos/`。由于微信「选图即发、文字后到」，入站图片会在一个短暂窗口内暂存（`WECHAT_IMAGE_BATCH_SECONDS`，默认 60s；设 `0` 关闭），让随后补发的文字作为同一条任务的描述合并进入；窗口内的多张图片也会合并。若当前模型无法读图，代理会用中文回复，请你补一句文字说明。
+  - **问候短路**：仅含问候（如 你好 / hi）的消息会跳过路由 LLM 调用，直接给出一份零开销的中文欢迎语，列出当前可用子项目。
 
 只有微信渠道会发送图片；其他渠道仅发文本（回复中的图片 markdown 会被去除）。
 
@@ -203,7 +211,7 @@ Scheduler ──► dispatch(schedule.message) ──►（同上流水线）
 
 设 `SCHEDULER_ENABLED=1` 运行进程内调度器。每个条目触发时进入 `dispatch`（绕过去重），若设置了 `recipient` 还会把结果回推给用户。条目可由聊天（`schedule` 工具）、WebUI 或手改 `schedules.json` 创建——都是同一份存储，写入会立即唤醒触发循环。
 
-Schema——`cron` / `interval` / `at` 三选一：
+Schema——`cron` / `interval` / `at` / `once` 四选一：
 
 ```json
 {
@@ -226,6 +234,7 @@ Schema——`cron` / `interval` / `at` 三选一：
 - `cron`：5 字段表达式（`分 时 日 月 周`）。
 - `interval`：简单 `"5m"` / `"2h"` / `"1d"`（按分钟粒度、对齐墙钟）。
 - `at`：每日固定 `"HH:MM"`（按 `timezone` 本地时间）。
+- `once`：一次性绝对时间，ISO 8601 格式（如 `"2026-08-20T22:00:00+08:00"` 或 `"2026-08-20T14:00:00Z"`）。在那一瞬间**只触发一次**，之后永久失效。`silentHours` 对此类**有意不生效**——一次性提醒是用户指定的精确时刻。
 - `timezone`：IANA 时区；默认 `Asia/Shanghai`。
 - `message`：触发时发回给 Agent 的指令（走正常路由/执行）。
 - `project`：可选路由提示；有效的子项目名可跳过路由 LLM 调用。
@@ -302,6 +311,7 @@ src/
 | `WECHAT_ENABLED` | `=1` 启动微信 iLink 渠道（需先完成 `wechat-login`） |
 | `WECHAT_ALLOW_FROM` | 可选逗号分隔的额外 `ilink_user_id` 白名单（主号始终允许） |
 | `WECHAT_REMINDER_HOURS` | 微信续期提醒阈值：`0`=关闭，`1`-`24`=主号静默 N 小时后提醒（默认 23） |
+| `WECHAT_IMAGE_BATCH_SECONDS` | 微信入站图片批处理窗口（秒）：`0`=关闭批处理（立即分发），正整数则短暂暂存图片，让随后补发的文字合并为同一条任务（默认 60） |
 | `GIT_PUSH` | `=1` 时提交后额外 git push（默认关，push 失败仅告警） |
 | `WEBUI_ENABLED` | `=1` 启动本地任务日志 WebUI（仅绑定 127.0.0.1） |
 | `WEBUI_PORT` | WebUI 监听端口，默认 `8900` |
