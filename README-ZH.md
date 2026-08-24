@@ -35,6 +35,8 @@
 - **对比通用 Agent**：botler 更轻。没有臃肿的安装包堆砌冗余能力，没有大而全的工具集，文件访问也更克制、更安全。
 - **对比 Coding Agent**：botler 刻意「做减法」。它面向手机端的轻量记录，而不是去操作你的电脑——因此对机器的权限要求极低，也不需要复杂的工具。
 
+**自定义结构化数据**：botler-agent 不规定固定 schema。每个 `DATA_ROOT` 下的子项目自带 `AGENTS.md`（格式与约定）与数据文件，结构由你按自己的需求定义。如果想看具体的结构化数据布局范例（饮食/营养记录、日常记录、个人记账、旅行见闻），可参考开源模板集 [`botler-agent-app`](https://github.com/crossoverJie/botler-agent-app)。
+
 ## 安装
 
 **方式 A — 从 GitHub clone（推荐）**

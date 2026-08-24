@@ -39,6 +39,8 @@ A deliberately **lightweight** alternative to heavyweight agent frameworks:
 - **vs. coding agents**: botler deliberately does *less*. It is built for quick, lightweight record-keeping on your phone — not for operating on your computer — so it asks for almost no privileges over your machine and needs no complex tooling.
 - **vs. cloud chatbots**: chatbots keep your data in their cloud as loose, unstructured chat history that is hard to maintain or reuse over the long run. botler stores everything **locally** under your control — you can shape it into structured data whenever you want, so the output stays stable and is far better suited to long-term, dependable maintenance.
 
+**Custom structured data**: botler-agent enforces no fixed schema. Each subproject under `DATA_ROOT` brings its own `AGENTS.md` (format + conventions) and data files, so you define the structure that fits your life. For concrete, ready-to-use examples of structured-data layouts — nutrition/meal tracking, daily logs, personal accounting, travel events — see the open-source template set [`botler-agent-app`](https://github.com/crossoverJie/botler-agent-app).
+
 ## Installation
 
 **Option A — clone from GitHub (recommended)**
