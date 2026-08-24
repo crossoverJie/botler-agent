@@ -92,6 +92,29 @@ npm start -- wechat-login
 # 7. (Optional) Enable the scheduler / WebUI / monitor via the .env switches (SCHEDULER_ENABLED / WEBUI_ENABLED / MONITOR_ENABLED)
 ```
 
+## Example data templates
+
+This repo bundles an open-source **data template set** as a git submodule at the repo root: [`botler-agent-app`](https://github.com/crossoverJie/botler-agent-app). It contains the *format and conventions* (not real data) of four ready-to-use subprojects — `cook` (nutrition/meal tracking), `daily-log` (daily-life logs), `ledger` (personal accounting), and `travel` (travel events). Each ships an `AGENTS.md` describing its schema plus synthetic `*.sample.json` files.
+
+> The `botler-agent-app` submodule is **discovery-only**: botler-agent reads `DATA_ROOT`, a separate location from this framework repo, so it never operates on the in-repo submodule. Clone `botler-agent-app` into your own `DATA_ROOT` to actually use it.
+
+Clone with the submodule:
+
+```bash
+git clone --recurse-submodules <this-repo>
+# or, after a plain clone:
+git submodule update --init --recursive
+```
+
+Use it as your data root (botler-agent loads each subproject's `AGENTS.md` at runtime):
+
+```bash
+export DATA_ROOT=/path/to/botler-agent-app   # or copy selected subproject folders here
+npm start
+```
+
+See [`botler-agent-app/README.md`](botler-agent-app/README.md) for the per-subproject schema and customization notes.
+
 ## Architecture
 
 ```

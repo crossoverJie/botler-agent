@@ -88,6 +88,29 @@ npm start -- wechat-login
 # 7.（可选）通过 .env 开关启用调度器 / WebUI / 监控（SCHEDULER_ENABLED / WEBUI_ENABLED / MONITOR_ENABLED）
 ```
 
+## 示例数据模板
+
+本仓库在根目录以 git submodule 形式附带了一套开源的**数据模板集**：[`botler-agent-app`](https://github.com/crossoverJie/botler-agent-app)。它包含 4 个开箱即用的数据子项目的**格式与约定**（非真实数据）——`cook`（饮食/营养记录）、`daily-log`（日常记录）、`ledger`（个人记账）、`travel`（旅行见闻）。每个子项目都带有说明其 schema 的 `AGENTS.md` 以及合成的 `*.sample.json` 示例文件。
+
+> 根目录下的 `botler-agent-app` submodule **仅用于展示/发现**：botler-agent 读取的是独立的 `DATA_ROOT`，并不读取框架仓库内的这个 submodule。要把模板真正用起来，需把 `botler-agent-app` 克隆进你自己的 `DATA_ROOT`。
+
+带 submodule 一起克隆：
+
+```bash
+git clone --recurse-submodules <本仓库>
+# 或者普通克隆后：
+git submodule update --init --recursive
+```
+
+把它作为你的数据根目录使用（botler-agent 运行时会加载每个子项目的 `AGENTS.md`）：
+
+```bash
+export DATA_ROOT=/path/to/botler-agent-app   # 或只复制你需要的子项目文件夹到这里
+npm start
+```
+
+各子项目的 schema 与定制说明见 [`botler-agent-app/README.md`](botler-agent-app/README.md)。
+
 ## 架构
 
 ```
