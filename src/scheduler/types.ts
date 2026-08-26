@@ -45,6 +45,13 @@ export interface ScheduleEntry {
 	retry?: ScheduleRetry;
 	/** Optional do-not-disturb window; fires landing inside it are deferred to the window end. */
 	silentHours?: SilentHours;
+	/**
+	 * China legal-workday gating for cron/interval/at triggers: when "workday", the entry fires
+	 * only on legal workdays — skips statutory holidays (法定假日) and includes 调休 makeup workdays
+	 * (补班). The cron's date fields are ignored; only the hour:minute(s) matter. Cannot be combined
+	 * with `once`.
+	 */
+	holidayMode?: "workday";
 	/** Optional push recipient; when set, the fire result is pushed back to this address (with channel fallback). */
 	recipient?: Recipient;
 }

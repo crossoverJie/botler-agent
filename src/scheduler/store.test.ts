@@ -187,3 +187,28 @@ test("normalizeSchedules accepts a list containing an expired once alongside oth
 	assert.equal(out.length, 2);
 	assert.equal(out[0].once, "2000-01-01T00:00:00Z");
 });
+
+// ---------------------------------------------------------------------------
+// holidayMode ("workday" gating)
+// ---------------------------------------------------------------------------
+
+test("normalizeEntry with holidayMode:workday succeeds and ignores impossible date fields", () => {
+	// "0 18 31 2 *" would be rejected by the normal compiler (Feb 31 never occurs), but in workday
+	// mode the date fields are neutralized, so it is accepted and holidayMode is preserved.
+	const e = normalizeEntry({ id: "wd1", message: "m", cron: "0 18 31 2 *", holidayMode: "workday" });
+	assert.equal(e.holidayMode, "workday");
+	assert.equal(e.cron, "0 18 31 2 *");
+});
+
+test("normalizeEntry rejects holidayMode:workday combined with once", () => {
+	assert.throws(
+		() => normalizeEntry({ id: "wd2", message: "m", once: "2026-08-20T22:00:00+08:00", holidayMode: "workday" }),
+		/cannot be combined with once/,
+	);
+});
+
+test("normalizeEntry with holidayMode:off omits the field entirely", () => {
+	const e = normalizeEntry({ id: "wd3", message: "m", at: "08:00", holidayMode: "off" });
+	assert.equal(e.holidayMode, undefined);
+	assert.equal(e.at, "08:00");
+});

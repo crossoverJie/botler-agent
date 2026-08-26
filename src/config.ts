@@ -117,6 +117,10 @@ export interface Config {
 	schedulerEnabled: boolean;
 	/** Path to the scheduler config file. Default: ~/.botler-agent/schedules.json. */
 	schedulesFile: string;
+	/** Path to the cached China legal-holiday calendar (for holidayMode:"workday" schedules). Default: ~/.botler-agent/holidays.json. */
+	holidaysFile: string;
+	/** HTTP source for the holiday calendar; the `{year}` placeholder is substituted. Default: NateScarlet/holiday-cn. */
+	holidayApiUrl: string;
 	/** Directory for task-log JSONL files (outside DATA_ROOT, does not break app/data separation). */
 	logDir: string;
 	/** When MONITOR_ENABLED !== "0", start the local health/metrics server (binds 127.0.0.1 only). Always on by default. */
@@ -261,6 +265,10 @@ export const CONFIG: Config = {
 	webuiPort: Number(process.env.WEBUI_PORT ?? "8900"),
 	schedulerEnabled: process.env.SCHEDULER_ENABLED === "1",
 	schedulesFile: process.env.BOTLER_SCHEDULES_FILE ?? join(USER_CONFIG_DIR, "schedules.json"),
+	holidaysFile: process.env.BOTLER_HOLIDAYS_FILE ?? join(USER_CONFIG_DIR, "holidays.json"),
+	holidayApiUrl:
+		process.env.BOTLER_HOLIDAY_API_URL ??
+		"https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/{year}.json",
 	logDir: process.env.BOTLER_LOG_DIR ?? join(USER_CONFIG_DIR, "task-logs"),
 	maxToolTurns: parseMaxToolTurns(),
 	monitorEnabled: process.env.MONITOR_ENABLED !== "0",

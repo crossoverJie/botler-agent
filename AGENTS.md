@@ -131,7 +131,9 @@ This is the only relaxation of the "no bash for the agent" red line: the agent c
 
 ### 8. Scheduler, the schedule tool, and push delivery (`scheduler/*` + `push/*` + `tools/schedule.ts`)
 
-Scheduled tasks live in `~/.botler-agent/schedules.json` (`schedulesFile`): each entry is one of cron / interval / at / once, plus timezone / message / optional project / retry / silentHours / recipient. They are created from chat via the `schedule` tool, from the WebUI, or by hand-editing the file — all the same store, and a save immediately wakes the scheduler loop.
+Scheduled tasks live in `~/.botler-agent/schedules.json` (`schedulesFile`): each entry is one of cron / interval / at / once, plus timezone / message / optional project / retry / silentHours / `holidayMode` / recipient. They are created from chat via the `schedule` tool, from the WebUI, or by hand-editing the file — all the same store, and a save immediately wakes the scheduler loop.
+
+- **`holidayMode: "workday"`** (China legal-workday gating): when set on a cron / interval / at entry, it fires **only on China legal workdays** — skips statutory holidays (法定假日) and **includes 调休 makeup workdays** (补班). The cron's date fields are ignored; only its `hour:minute`(s) matter. `holidayMode: "off"` / absent = normal cron behavior. Cannot be combined with `once`. The calendar is fetched (startup + every 24h) from `BOTLER_HOLIDAY_API_URL` into `BOTLER_HOLIDAYS_FILE`; any outage keeps cached data and degrades to plain Mon–Fri.
 
 - The `schedule` tool is a **narrow, deliberate exception** to the DATA_ROOT allowlist: it takes no file-path parameter, always writes the fixed `schedules.json` through `saveSchedules` (full normalization + 10KB message cap + atomic write + backup), and the push recipient is injected by the framework (task-context), never guessed by the model. `safePath` itself is untouched.
 - `saveSchedules` fires a saved listener (`setSchedulesSavedListener`) that the engine registers with `reloadSchedules` — keeping the dependency store → engine one-way avoids the engine → dispatcher → runner → tools → schedule → engine cycle.
