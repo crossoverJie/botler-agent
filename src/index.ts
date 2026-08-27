@@ -76,7 +76,7 @@ async function main(): Promise<void> {
 	}
 
 	if (CONFIG.schedulerEnabled) {
-		startScheduler();
+		void startScheduler();
 		started = true;
 	}
 

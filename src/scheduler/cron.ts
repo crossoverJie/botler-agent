@@ -13,6 +13,7 @@
  */
 
 import type { ScheduleEntry } from "./types.ts";
+import { isLegalWorkday, loadHolidays, type HolidayData } from "./holidays.ts";
 
 /** A wall-clock time (no timezone); second is usually 0 for scheduling. */
 export interface WallClock {
@@ -127,6 +128,26 @@ export function compileCron(expr: string): CompiledCron {
 	};
 	assertDayReachable(c, expr);
 	return c;
+}
+
+/**
+ * Neutralize a workday-mode cron's date fields: keep minute/hour, replace day-of-month / month /
+ * day-of-week with `*`. A workday schedule fires on "every legal workday at HH:MM", so the date
+ * fields are meaningless and must not be validated (e.g. "0 18 31 2 *" — Feb 31 never occurs — is
+ * accepted in workday mode and would otherwise be rejected by `assertDayReachable`).
+ */
+function neutralizeWorkdayCron(cron: string): string {
+	const f = cron.trim().split(/\s+/);
+	if (f.length !== 5) throw new Error(`cron requires 5 fields, got ${f.length}: "${cron}"`);
+	return `${f[0]} ${f[1]} * * *`;
+}
+
+/**
+ * Compile a workday-mode cron: validates only minute/hour (via the neutralized expression);
+ * date fields are ignored. Returns a `CompiledCron` so the time fields can be reused directly.
+ */
+export function compileWorkdayCron(cron: string): CompiledCron {
+	return compileCron(neutralizeWorkdayCron(cron));
 }
 
 /**
@@ -295,6 +316,60 @@ export function wallToEpoch(w: WallClock, tz: string): number {
 }
 
 // ---------------------------------------------------------------------------
+// Workday-mode (China legal workday) next-fire calculation
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the (hour, minute) fields of a workday entry. For a cron we compile the neutralized
+ * expression (date fields ignored, validating only minute/hour); for interval/at we fall back to
+ * the standard compile. Returns the raw sorted arrays so callers can enumerate every time-of-day.
+ */
+function workdayTimeFields(e: ScheduleEntry): { hour: number[]; minute: number[] } {
+	if (e.cron) {
+		const c = compileWorkdayCron(e.cron);
+		return { hour: c.hour, minute: c.minute };
+	}
+	const c = compileSchedule(e);
+	return { hour: c.hour, minute: c.minute };
+}
+
+/**
+ * Next fire epoch for a `holidayMode:"workday"` entry: strictly after `afterEpoch`, on a China legal
+ * workday, at one of the entry's time-of-day slots. Enumerates ALL (h,m) pairs (sorted by time-of-day)
+ * so a cron like `"0 8,18 * * *"` fires at both 08:00 and 18:00. After applying silent-hours, re-checks
+ * the deferred day: if the deferral crossed into a non-workday, the slot is skipped and the search
+ * continues. `data` defaults to the live cached calendar (re-read every call), so a manual edit to
+ * holidays.json takes effect on the next recompute. Throws if no match within 3 years.
+ */
+export function nextWorkdayFireEpoch(
+	e: ScheduleEntry,
+	afterEpoch: number,
+	data: HolidayData = loadHolidays(),
+): number {
+	const tz = e.timezone || DEFAULT_TZ;
+	const { hour, minute } = workdayTimeFields(e);
+	const times: Array<{ h: number; m: number }> = [];
+	for (const h of hour) for (const m of minute) times.push({ h, m });
+	times.sort((a, b) => a.h * 60 + a.m - (b.h * 60 + b.m));
+
+	const start = epochToWall(afterEpoch, tz);
+	for (let i = 0; i < 366 * 3; i++) {
+		const dw = i === 0 ? start : addDays(start, i);
+		if (!isLegalWorkday(data, dw.year, dw.month, dw.day)) continue;
+		for (const { h, m } of times) {
+			const cand = wallToEpoch({ ...dw, hour: h, minute: m, second: 0 }, tz);
+			if (cand <= afterEpoch) continue;
+			const final = e.silentHours ? applySilentHours(e, cand, tz) : cand;
+			const fw = epochToWall(final, tz);
+			// A silent-hours deferral may have crossed into a non-workday; if so, do not fire there.
+			if (!isLegalWorkday(data, fw.year, fw.month, fw.day)) continue;
+			return final;
+		}
+	}
+	throw new Error("nextWorkdayFireEpoch: no match within 3 years");
+}
+
+// ---------------------------------------------------------------------------
 // Next-fire calculation
 // ---------------------------------------------------------------------------
 
@@ -379,6 +454,9 @@ export function nextFireEpoch(e: ScheduleEntry, afterEpoch: number): number {
 		if (t === null) throw new Error(`schedule "${e.id}" invalid once "${e.once}"`);
 		return t > afterEpoch ? t : Infinity;
 	}
+	// Workday mode: fire only on China legal workdays. The cron's date fields are ignored — only
+	// its hour:minute(s) matter — and holidays / makeup workdays are supplied by the cached calendar.
+	if (e.holidayMode === "workday") return nextWorkdayFireEpoch(e, afterEpoch);
 	const cron = compileSchedule(e);
 	const tz = e.timezone || DEFAULT_TZ;
 	const wall = epochToWall(afterEpoch, tz);

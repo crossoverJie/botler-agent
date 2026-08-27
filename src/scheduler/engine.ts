@@ -26,6 +26,7 @@ import { dispatch } from "../dispatcher.ts";
 import { deliver } from "../push/deliver.ts";
 import { loadSchedules, setSchedulesSavedListener } from "./store.ts";
 import { nextFireEpoch } from "./cron.ts";
+import { ensureHolidays, setHolidaysSavedListener, loadHolidays } from "./holidays.ts";
 import type { ScheduleEntry } from "./types.ts";
 import { stats } from "../monitor/stats.ts";
 
@@ -160,9 +161,21 @@ async function loop(): Promise<void> {
 	}
 }
 
-/** Start the scheduler. No-op unless SCHEDULER_ENABLED=1. CLI mode never calls this. */
-export function startScheduler(): void {
+/**
+ * Start the scheduler. No-op unless SCHEDULER_ENABLED=1. CLI mode never calls this.
+ * Async: on startup it ensures the holiday calendar is warm (blocking only when the cache is
+ * missing current/next year — bounded ~20s for two serial 10s fetches), then starts the 24h
+ * refresh loop and the fire loop. Never throws (ensureHolidays swallows errors).
+ */
+export async function startScheduler(): Promise<void> {
 	if (!CONFIG.schedulerEnabled) return;
 	console.log(`[scheduler] started (config: ${CONFIG.schedulesFile})`);
+	setHolidaysSavedListener(reloadSchedules); // register before any refresh (C1)
+	const y = new Date().getFullYear();
+	const d = loadHolidays();
+	const missing = !d[String(y)] || !d[String(y + 1)]; // lazy blocking only when cache is incomplete (R3)
+	if (missing) await ensureHolidays();
+	else void ensureHolidays(); // refresh in the background, saved-listener wakes the loop when fresh data lands
+	setInterval(ensureHolidays, 24 * 3600_000); // periodic refresh (R1)
 	void loop();
 }

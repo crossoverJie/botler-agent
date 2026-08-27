@@ -871,6 +871,10 @@ function openSchedModal(id){
       <div>from <input id="m-sh-from" value="${esc(e.silentHours?.from||"")}" placeholder="22:00" style="width:80px" ${mode==="once"?"disabled":""}/> to <input id="m-sh-to" value="${esc(e.silentHours?.to||"")}" placeholder="07:00" style="width:80px" ${mode==="once"?"disabled":""}/> (supports crossing midnight; ignored for once)</div>
     </div>
     <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Legal workday only</div>
+      <div><label><input type="checkbox" id="m-hm" ${e.holidayMode==="workday"?"checked":""} ${mode==="once"?"disabled":""}/> China legal workday (skip 法定假, include 调休补班)</label></div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
       <div class="flabel">Failure retry (optional)</div>
       <div>count <input id="m-retry-max" type="number" value="${esc(e.retry?.max??0)}" style="width:70px"/> interval(ms) <input id="m-retry-ms" type="number" value="${esc(e.retry?.backoffMs??0)}" style="width:90px"/></div>
     </div>
@@ -889,6 +893,8 @@ function openSchedModal(id){
       const once = m.querySelector('input[name="m-mode"]:checked').value === "once";
       m.querySelector("#m-sh-from").disabled = once;
       m.querySelector("#m-sh-to").disabled = once;
+      m.querySelector("#m-hm").disabled = once;
+      if (once) m.querySelector("#m-hm").checked = false; // workday gating is incompatible with once
     };
   });
   m.querySelector("#m-preview").onclick = async ()=>{
@@ -897,6 +903,7 @@ function openSchedModal(id){
     const tz = m.querySelector("#m-tz").value.trim()||"Asia/Shanghai";
     const body = { timezone: tz };
     body[mode] = spec;
+    if (m.querySelector("#m-hm").checked) body.holidayMode = "workday";
     try { const r = await cfgWrite("/api/config/schedules/preview", body, "POST"); if(r.error) return m.querySelector("#m-preview-out").textContent="Error: "+r.error; m.querySelector("#m-preview-out").textContent = (r.next===null||r.next===0) ? "Next fire: (expired / no upcoming fire)" : "Next fire: " + fmtTime(r.next); }
     catch(e){ m.querySelector("#m-preview-out").textContent = "Error: "+e.message; }
   };
@@ -937,6 +944,7 @@ function openSchedModal(id){
     if(project) entry.project = project; else delete entry.project;
     if(shFrom && shTo) entry.silentHours = { from:shFrom, to:shTo }; else delete entry.silentHours;
     if(rmax>0) entry.retry = { max:rmax, backoffMs:rms }; else delete entry.retry;
+    if(m.querySelector("#m-hm").checked) entry.holidayMode = "workday"; else delete entry.holidayMode;
     if(id){ // edit: replace, keep enabled + recipient
       const old = schedules.find(x=>x.id===id);
       entry.enabled = old? old.enabled : true;

@@ -249,6 +249,7 @@ export function startWebui(): void {
 						at?: string;
 						once?: string;
 						timezone?: string;
+						holidayMode?: "workday";
 					};
 					try {
 						const e = {
@@ -256,6 +257,7 @@ export function startWebui(): void {
 							enabled: true,
 							timezone: b.timezone || "Asia/Shanghai",
 							message: "",
+							...(b.holidayMode ? { holidayMode: b.holidayMode } : {}),
 							...(b.cron ? { cron: b.cron } : {}),
 							...(b.interval ? { interval: b.interval } : {}),
 							...(b.at ? { at: b.at } : {}),

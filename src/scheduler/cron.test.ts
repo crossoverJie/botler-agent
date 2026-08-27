@@ -1,16 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	compileCron,
 	compileSchedule,
+	compileWorkdayCron,
 	nextCronWall,
 	wallToEpoch,
 	epochToWall,
 	nextFireEpoch,
+	nextWorkdayFireEpoch,
 	parseOnceEpoch,
 	type WallClock,
 	type CompiledCron,
 } from "./cron.ts";
+import { isLegalWorkday, loadHolidays, type HolidayData } from "./holidays.ts";
+import { CONFIG } from "../config.ts";
 import type { ScheduleEntry } from "./types.ts";
 
 function entry(trigger: Partial<ScheduleEntry>): ScheduleEntry {
@@ -237,4 +244,133 @@ test("nextFireEpoch accepts a once-only entry without any cron/interval/at", () 
 test("nextFireEpoch throws on an invalid once value", () => {
 	const e = entry({ once: "not-a-date" });
 	assert.throws(() => nextFireEpoch(e, 0), /invalid once/);
+});
+
+// ---------------------------------------------------------------------------
+// China legal-workday gating (holidayMode: "workday")
+// ---------------------------------------------------------------------------
+
+const workdayData: HolidayData = {
+	"2026": {
+		// A statutory holiday on a weekday (Mon 2026-01-05) — must be skipped.
+		holidays: ["2026-01-05"],
+		// A 调休 makeup workday on a Sunday (2026-01-11 is a Sunday) — must fire.
+		workdays: ["2026-01-11"],
+	},
+};
+
+test("isLegalWorkday handles holidays, makeup workdays, weekday/weekend fallback", () => {
+	// Statutory holiday (Mon) -> false. (2026-01-05 is a Monday.)
+	assert.equal(isLegalWorkday(workdayData, 2026, 1, 5), false);
+	// Makeup workday on a Sunday -> true. (2026-01-11 is a Sunday.)
+	assert.equal(isLegalWorkday(workdayData, 2026, 1, 11), true);
+	// Plain weekday (Wed 2026-01-07) -> true.
+	assert.equal(isLegalWorkday(workdayData, 2026, 1, 7), true);
+	// Plain weekend (Sat 2026-01-10) -> false.
+	assert.equal(isLegalWorkday(workdayData, 2026, 1, 10), false);
+});
+
+test("isLegalWorkday falls back to Mon-Fri when year data is missing", () => {
+	const empty: HolidayData = {};
+	// 2026-01-05 is Monday -> true; 2026-01-10 is Saturday -> false.
+	assert.equal(isLegalWorkday(empty, 2026, 1, 5), true);
+	assert.equal(isLegalWorkday(empty, 2026, 1, 10), false);
+});
+
+test("loadHolidays rejects malformed year entries instead of returning them (robustness gap)", () => {
+	// A malformed-but-parseable file must NOT be returned as-is: isLegalWorkday would otherwise
+	// call (undefined|123).includes(...) at fire time and throw on every workday entry.
+	const orig = CONFIG.holidaysFile;
+	const tmp = join(tmpdir(), `botler-holidays-test-${process.pid}.json`);
+	try {
+		for (const bad of [
+			JSON.stringify({ "2026": {} }),
+			JSON.stringify({ "2026": { holidays: 123 } }),
+			JSON.stringify({ "2026": { holidays: [], workdays: "x" } }),
+			JSON.stringify({ "2026": { holidays: [] } }), // missing workdays key
+		]) {
+			writeFileSync(tmp, bad, "utf8");
+			CONFIG.holidaysFile = tmp;
+			assert.deepEqual(loadHolidays(), {}, `malformed calendar should be ignored: ${bad}`);
+		}
+		// A well-formed file (even with no special days) is accepted.
+		writeFileSync(tmp, JSON.stringify({ "2026": { holidays: [], workdays: [] } }), "utf8");
+		CONFIG.holidaysFile = tmp;
+		assert.deepEqual(loadHolidays(), { "2026": { holidays: [], workdays: [] } });
+	} finally {
+		CONFIG.holidaysFile = orig;
+		try { unlinkSync(tmp); } catch { /* ignore */ }
+	}
+});
+
+test("compileWorkdayCron ignores date fields and validates only time fields", () => {
+	// Feb 31 never occurs, but in workday mode the date fields are neutralized -> OK.
+	const c = compileWorkdayCron("0 18 31 2 *");
+	assert.deepEqual(c.minute, [0]);
+	assert.deepEqual(c.hour, [18]);
+	// Invalid hour/minute still rejected.
+	assert.throws(() => compileWorkdayCron("99 18 * * *"), /out of range/);
+});
+
+test("nextWorkdayFireEpoch skips a holiday and lands on the next workday", () => {
+	// Start just before a weekday holiday (2026-01-05 Mon); the next workday fire should be 2026-01-06 18:00.
+	const after = wallToEpoch(w(2026, 1, 4, 0, 0), "Asia/Shanghai");
+	const next = nextWorkdayFireEpoch(entry({ cron: "0 18 * * *", timezone: "Asia/Shanghai", holidayMode: "workday" }), after, workdayData);
+	const wall = epochToWall(next, "Asia/Shanghai");
+	assert.equal(wall.year, 2026);
+	assert.equal(wall.month, 1);
+	assert.equal(wall.day, 6); // skipped the 5th (holiday), fired the 6th
+	assert.equal(wall.hour, 18);
+});
+
+test("nextWorkdayFireEpoch fires on a makeup workday (Sunday)", () => {
+	// Start 2026-01-10 (Sat, a weekend with no makeup) so the next workday fire is the 补班 Sunday 2026-01-11.
+	const after = wallToEpoch(w(2026, 1, 10, 0, 0), "Asia/Shanghai");
+	const next = nextWorkdayFireEpoch(entry({ cron: "0 18 * * *", timezone: "Asia/Shanghai", holidayMode: "workday" }), after, workdayData);
+	const wall = epochToWall(next, "Asia/Shanghai");
+	assert.deepEqual([wall.year, wall.month, wall.day], [2026, 1, 11]);
+});
+
+test("nextWorkdayFireEpoch supports multiple times (0 8,18 * * *)", () => {
+	// From 2026-01-06 12:00, the next slot is 18:00 same day; a slot at 08:00 also exists the next workday.
+	const after = wallToEpoch(w(2026, 1, 6, 12, 0), "Asia/Shanghai");
+	const e = entry({ cron: "0 8,18 * * *", timezone: "Asia/Shanghai", holidayMode: "workday" });
+	const first = nextWorkdayFireEpoch(e, after, workdayData);
+	const fw = epochToWall(first, "Asia/Shanghai");
+	assert.equal(fw.hour, 18); // 08:00 already passed today
+	assert.equal(fw.day, 6);
+	const second = nextWorkdayFireEpoch(e, first, workdayData);
+	const sw = epochToWall(second, "Asia/Shanghai");
+	assert.equal(sw.hour, 8); // 08:00 the next workday (the 7th; the 5th was a holiday)
+	assert.equal(sw.day, 7);
+});
+
+test("nextWorkdayFireEpoch accepts an impossible date field (0 18 31 2 *)", () => {
+	// Date fields are ignored in workday mode, so this never trips assertDayReachable.
+	const after = wallToEpoch(w(2026, 1, 1, 0, 0), "Asia/Shanghai");
+	const next = nextWorkdayFireEpoch(entry({ cron: "0 18 31 2 *", timezone: "Asia/Shanghai", holidayMode: "workday" }), after, workdayData);
+	const wall = epochToWall(next, "Asia/Shanghai");
+	assert.equal(wall.hour, 18);
+	// It must be a legal workday (not the 05th holiday).
+	assert.notEqual(`${wall.year}-${String(wall.month).padStart(2, "0")}-${String(wall.day).padStart(2, "0")}`, "2026-01-05");
+});
+
+test("nextWorkdayFireEpoch does not fire on a non-workday the silentHours deferral crossed into", () => {
+	// Daily 23:00 with silentHours 22:00-07:00 defers to next 07:00. If that fall lands on a weekend
+	// (no makeup), the workday gate must skip it and keep searching for the next real workday.
+	const data: HolidayData = {
+		"2026": { holidays: [], workdays: [] }, // no special days -> pure Mon-Fri
+	};
+	// Start Fri 2026-01-09 20:00. The Fri 23:00 fire is deferred to Sat 07:00, but Sat is not a
+	// workday, so it must be skipped; the next fire is the Mon 23:00 deferred to Tue 07:00.
+	const after = wallToEpoch(w(2026, 1, 9, 20, 0), "Asia/Shanghai");
+	const e = entry({ cron: "0 23 * * *", timezone: "Asia/Shanghai", holidayMode: "workday", silentHours: { from: "22:00", to: "07:00" } });
+	const next = nextWorkdayFireEpoch(e, after, data);
+	const wall = epochToWall(next, "Asia/Shanghai");
+	// Deferred to 07:00, and on a workday (Tue 2026-01-13). Not Sat/Sun.
+	assert.equal(wall.year, 2026);
+	assert.equal(wall.month, 1);
+	assert.equal(wall.day, 13);
+	assert.equal(wall.hour, 7);
+	assert.ok([1, 2, 3, 4, 5].includes(new Date(Date.UTC(2026, 0, 13)).getUTCDay()));
 });

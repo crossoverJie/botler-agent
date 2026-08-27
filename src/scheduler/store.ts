@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { CONFIG } from "../config.ts";
-import { compileSchedule, isValidTimezone, parseOnceEpoch } from "./cron.ts";
+import { compileSchedule, compileWorkdayCron, isValidTimezone, parseOnceEpoch } from "./cron.ts";
 import { writeConfigFile } from "../webui/config-store.ts";
 import type { Recipient } from "../push/types.ts";
 import type { ScheduleEntry } from "./types.ts";
@@ -138,9 +138,23 @@ export function normalizeEntry(item: unknown): ScheduleEntry {
 		entry.recipient = { source, userId } as Recipient;
 	}
 
-	// Final sanity: cron/interval/at entries must compile. once entries are resolved directly
-	// by nextFireEpoch and do not go through the cron compiler.
-	if (!hasOnce) compileSchedule(entry);
+	// holidayMode (workday gating) — sequence matters (Ordering pit):
+	// (1) accept the literal value; MUST precede the sanity compile below so the block reads it.
+	if (o.holidayMode === "workday") entry.holidayMode = "workday";
+	// (2) reject the incompatible combination. Reads entry.holidayMode, which step (1) has already
+	// set, so this must follow step (1).
+	if (hasOnce && entry.holidayMode === "workday") {
+		throw new Error(`schedule "${id}" holidayMode:"workday" cannot be combined with once`);
+	}
+	// (3) final sanity compile. For a workday+cron entry we compile the neutralized expression
+	// (date fields ignored) — otherwise the standard compiler would reject e.g. "0 18 31 2 *".
+	if (!hasOnce) {
+		if (entry.holidayMode === "workday" && entry.cron) {
+			compileWorkdayCron(entry.cron);
+		} else {
+			compileSchedule(entry);
+		}
+	}
 	return entry;
 }
 

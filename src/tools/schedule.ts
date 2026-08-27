@@ -42,6 +42,12 @@ const schema = Type.Object({
 	project: Type.Optional(
 		Type.String({ description: "Routing hint (data subproject name); when set, the routing LLM is skipped on fire and the project runs directly" }),
 	),
+	holidayMode: Type.Optional(
+		Type.Union([Type.Literal("workday"), Type.Literal("off")], {
+			description:
+				"China legal-workday gating for cron/interval/at triggers. 'workday' = fire only on China legal workdays (skip 法定假日, include 调休补班; cron date fields are ignored, only hour:minute(s) matter). 'off' / absent = normal cron behavior. Cannot be combined with 'once'.",
+		}),
+	),
 });
 
 type ScheduleArgs = {
@@ -54,6 +60,7 @@ type ScheduleArgs = {
 	once?: string;
 	timezone?: string;
 	project?: string;
+	holidayMode?: "workday" | "off";
 };
 
 function triggerOf(e: ScheduleEntry): string {
@@ -101,6 +108,7 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			const next = e.enabled ? nextFireOf(e) : null;
 			const rec = e.recipient ? ` push=${e.recipient.source}:${e.recipient.userId}` : "";
 			const proj = e.project ? ` project=${e.project}` : "";
+			const hm = e.holidayMode ? ` holidayMode=${e.holidayMode}` : "";
 			const fire = !e.enabled
 				? " disabled"
 				: next
@@ -108,7 +116,7 @@ export const scheduleTool: AgentTool<typeof schema> = {
 					: e.once
 						? " (expired)"
 						: "";
-			return `- ${e.id} [${e.enabled ? "enabled" : "disabled"}] ${triggerOf(e)} tz=${e.timezone}${proj}${rec}${fire}`;
+			return `- ${e.id} [${e.enabled ? "enabled" : "disabled"}] ${triggerOf(e)} tz=${e.timezone}${proj}${rec}${hm}${fire}`;
 		});
 		return textResult(`Scheduled tasks (${entries.length}):\n${lines.join("\n")}`, { count: entries.length });
 		}
@@ -147,6 +155,8 @@ export const scheduleTool: AgentTool<typeof schema> = {
 				[triggers[0][0]]: triggers[0][1],
 			};
 			if (args.project?.trim()) raw.project = args.project.trim();
+			// holidayMode only ever carries "workday" from the agent; "off" is the default and is omitted.
+			if (args.holidayMode === "workday") raw.holidayMode = "workday";
 			// recipient is injected by the framework from the current message sender (CLI has none).
 			if (ctx?.recipient) raw.recipient = ctx.recipient;
 
@@ -198,6 +208,10 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			patch.timezone = args.timezone;
 		}
 		if (args.project !== undefined) patch.project = args.project.trim() || undefined;
+		// holidayMode: "workday" enables gating; "off" (or unset) clears it. Never carries other values.
+		if (args.holidayMode !== undefined) {
+			patch.holidayMode = args.holidayMode === "workday" ? "workday" : undefined;
+		}
 		// Swapping the trigger must drop the previous trigger field(s), or the entry would
 		// become invalid (normalizeSchedules would reject the leftover second trigger).
 		// Empty strings count as "not provided" (same rule as create), so a model passing
