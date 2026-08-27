@@ -1,0 +1,135 @@
+name: Release
+
+# Git-tag based release. Triggered by pushing a `v*` tag (produced by
+# `make release VERSION=...`) or manually via workflow_dispatch for recovery.
+#
+# Borrowed from pi/.github/workflows/build-binaries.yml:
+#   - draft-then-publish: a GitHub Release is created as a DRAFT first, and only
+#     flipped to published after validation passes, so a half-finished release is
+#     never made public.
+#   - cleanup-draft-on-failure: any failure after the draft is created deletes it.
+#   - concurrency keyed on the tag (cancel-in-progress: false) so two release
+#     runs can never clobber each other.
+#   - minimal top-level permissions, escalated per job.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v0.2.0). Use only for recovery.'
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+  stage-release:
+    runs-on: ubuntu-latest
+    needs: validate
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          existing="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "${existing}" == "false" ]]; then
+            echo "::error::GitHub Release ${RELEASE_TAG} is already published. Refusing to mutate a public release."
+            exit 1
+          fi
+          if [[ "${existing}" == "true" ]]; then
+            gh release delete "${RELEASE_TAG}" --yes
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            --verify-tag \
+            --draft \
+            --generate-notes
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs: stage-release
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          existing="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "${existing}" == "" ]]; then
+            echo "::error::Draft GitHub Release ${RELEASE_TAG} does not exist."
+            exit 1
+          fi
+          if [[ "${existing}" == "false" ]]; then
+            echo "::error::GitHub Release ${RELEASE_TAG} is already published."
+            exit 1
+          fi
+
+          gh release edit "${RELEASE_TAG}" --draft=false
+
+  cleanup-draft:
+    runs-on: ubuntu-latest
+    needs: [validate, stage-release, publish-release]
+    # Only when a draft was successfully staged but a later job failed.
+    if: ${{ always() && needs.stage-release.result == 'success' && (needs.validate.result != 'success' || needs.publish-release.result != 'success') }}
+    permissions:
+      contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Delete draft GitHub Release on failure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          existing="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "${existing}" == "true" ]]; then
+            gh release delete "${RELEASE_TAG}" --yes
+          fi

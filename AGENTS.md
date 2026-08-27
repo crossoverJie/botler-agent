@@ -21,8 +21,16 @@ npm install            # install dependencies
 npm run init           # initialize ~/.botler-agent/ (.env template + providers.json template + system-prompt.md template)
 npm start              # run: no args starts the persistent channel; a message arg enters CLI mode
 npm start -- "message" # CLI mode: process a single message directly (local debugging)
+npm run restart        # stop + pull latest code (git main) + npm install + restart in background
+npm run restart -- stable  # same, but check out the latest GitHub release tag (falls back to main if none yet)
 npm run typecheck      # tsc --noEmit type check (must pass before committing)
 npm test               # node:test suite (scheduler cron + store)
+
+# Process control is also available directly via scripts/botlerctl.sh:
+#   bash scripts/botlerctl.sh {restart|start|stop|status|logs} [main|stable]
+# Implementation: nohup + .botler.pid (gitignored), log to botler.log.
+# IMPORTANT: this script only touches the repo dir — never DATA_ROOT or ~/.botler-agent/.
+# Self-restart triggered *from chat* is NOT supported by the agent's toolset (see Common change scenarios).
 ```
 
 > Environment variables are in `.env.example`; the real config goes in `~/.botler-agent/.env`. `.env` is gitignored — do not commit real credentials.
