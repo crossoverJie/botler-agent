@@ -247,6 +247,15 @@ Schema — exactly one of `cron` / `interval` / `at` / `once`:
       "recipient": { "source": "wechat", "userId": "wxid_xxx" },
       "retry": { "max": 1, "backoffMs": 60000 },
       "silentHours": { "from": "23:00", "to": "07:00" }
+    },
+    {
+      "id": "workday-standup",
+      "enabled": true,
+      "cron": "0 9,18 * * *",
+      "timezone": "Asia/Shanghai",
+      "message": "提醒我复盘今天的工作",
+      "holidayMode": "workday",
+      "recipient": { "source": "wechat", "userId": "wxid_xxx" }
     }
   ]
 }
@@ -261,6 +270,7 @@ Schema — exactly one of `cron` / `interval` / `at` / `once`:
 - `project`: optional routing hint; a valid subproject name skips the routing LLM call.
 - `recipient`: optional; when set, the fire result is pushed via `deliver()` — primary channel first, then `telegram → feishu → wechat` fallback over channels that are configured and have a recorded contact. WeChat pushes strip markdown and are the only ones that also send images.
 - `retry` / `silentHours`: optional failure retry and do-not-disturb window (fires landing inside it are deferred to the window end).
+- `holidayMode: "workday"`: **China legal-workday gating** for `cron` / `interval` / `at` triggers. The entry fires **only on China legal workdays** — it skips statutory holidays (法定假日) and fires on 调休 makeup workdays (补班). The cron's date fields are ignored; only its `hour:minute`(s) matter, so `0 9,18 * * *` fires at 09:00 and 18:00 on every workday. Cannot be combined with `once`. The calendar is fetched (at startup + every 24h) from `BOTLER_HOLIDAY_API_URL` into `BOTLER_HOLIDAYS_FILE`; any outage keeps the cached data and degrades to plain Mon–Fri.
 
 **Routing**: messages about creating/managing schedules (or containing the Chinese keywords 定时 / 提醒 / 日程) route to the virtual `__scheduler__` project; the `schedule` tool is in `fileTools`, so it works in any execution context.
 
@@ -312,6 +322,8 @@ By default a local health/metrics server runs on `127.0.0.1:MONITOR_PORT` (defau
 | `MONITOR_PORT` | Health/metrics server port, default `8899` (avoid 3000 / 8900) |
 | `SCHEDULER_ENABLED` | `=1` to run the in-process scheduler that fires `schedules.json` entries |
 | `BOTLER_SCHEDULES_FILE` | Schedule config file (default `~/.botler-agent/schedules.json`) |
+| `BOTLER_HOLIDAY_API_URL` | China legal-holiday calendar source for `holidayMode:"workday"`; the `{year}` placeholder is substituted (default `https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/{year}.json`) |
+| `BOTLER_HOLIDAYS_FILE` | Cached holiday calendar file (default `~/.botler-agent/holidays.json`) |
 | `MAX_TOOL_TURNS` | Max tool-call turns per task (default 20; the model is hinted to wrap up as the limit approaches, then hard-stopped) |
 
 ## How it works

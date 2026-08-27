@@ -266,6 +266,15 @@ Schema——`cron` / `interval` / `at` / `once` 四选一：
       "recipient": { "source": "wechat", "userId": "wxid_xxx" },
       "retry": { "max": 1, "backoffMs": 60000 },
       "silentHours": { "from": "23:00", "to": "07:00" }
+    },
+    {
+      "id": "workday-standup",
+      "enabled": true,
+      "cron": "0 9,18 * * *",
+      "timezone": "Asia/Shanghai",
+      "message": "提醒我复盘今天的工作",
+      "holidayMode": "workday",
+      "recipient": { "source": "wechat", "userId": "wxid_xxx" }
     }
   ]
 }
@@ -280,6 +289,7 @@ Schema——`cron` / `interval` / `at` / `once` 四选一：
 - `project`：可选路由提示；有效的子项目名可跳过路由 LLM 调用。
 - `recipient`：可选；设置后触发结果通过 `deliver()` 推送——先主渠道，再按 `telegram → feishu → wechat` 兜底（仅在已配置且有已记录联系地址的渠道上）。微信推送会去掉 markdown，且是唯一同时发送图片的渠道。
 - `retry` / `silentHours`：可选失败重试与免打扰窗口（落在窗口内的触发延后到窗口结束）。
+- `holidayMode: "workday"`：**中国法定工作日门控**，仅作用于 `cron` / `interval` / `at` 触发。该条目**只在法定工作日触发**——跳过法定假日（法定假日），并在调休补班日（补班）正常触发。cron 的日期字段被忽略，只使用「时刻」（`hour:minute`），因此 `0 9,18 * * *` 会在每个工作日的 09:00 与 18:00 各触发一次。不可与 `once` 组合。日历在启动 + 每 24h 从 `BOTLER_HOLIDAY_API_URL` 拉取并缓存到 `BOTLER_HOLIDAYS_FILE`；任何拉取失败都保留缓存数据，并退化为普通周一至周五。
 
 **路由**：创建/管理定时任务的消息（或含中文关键词 定时 / 提醒 / 日程）会路由到虚拟项目 `__scheduler__`；`schedule` 工具属于 `fileTools`，因此在任何执行上下文中都可用。
 
@@ -364,6 +374,8 @@ src/
 | `MONITOR_PORT` | 健康/指标服务端口，默认 `8899`（避开 3000 / 8900） |
 | `SCHEDULER_ENABLED` | `=1` 运行进程内调度器，触发 `schedules.json` 条目 |
 | `BOTLER_SCHEDULES_FILE` | 调度配置文件（默认 `~/.botler-agent/schedules.json`） |
+| `BOTLER_HOLIDAY_API_URL` | `holidayMode:"workday"` 用的中国法定节假日日历源；`{year}` 占位符会被替换（默认 `https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/{year}.json`） |
+| `BOTLER_HOLIDAYS_FILE` | 缓存的节假日日历文件（默认 `~/.botler-agent/holidays.json`） |
 | `MAX_TOOL_TURNS` | 单任务最大工具轮次（默认 20；临近上限时提示收尾，达到上限强制停止） |
 
 ## 工作原理
