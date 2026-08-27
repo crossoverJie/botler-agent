@@ -27,10 +27,18 @@ release: check-clean
 	@test -n "$(VERSION)" || { echo "error: pass VERSION=x.y.z (e.g. make release VERSION=0.2.0)"; exit 1; }
 	@echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$$' \
 		|| { echo "error: VERSION must be semver (e.g. 0.2.0)"; exit 1; }
-	@sed -i.bak -E 's/^([[:space:]]*"version"[[:space:]]*:[[:space:]]*")[^"]*(".*)$$/\1$(VERSION)\2/' package.json \
-		&& rm -f package.json.bak
-	@git add package.json
-	@git commit -m "release: v$(VERSION)"
+# Bump + commit only when the version actually changes, so the first release
+# (version already at the target) just tags the current HEAD instead of failing
+# on an empty commit.
+	@CUR=$$(node -p "require('./package.json').version"); \
+	if [ "$$CUR" != "$(VERSION)" ]; then \
+		sed -i.bak -E 's/^([[:space:]]*"version"[[:space:]]*:[[:space:]]*")[^"]*(".*)$$/\1$(VERSION)\2/' package.json \
+			&& rm -f package.json.bak; \
+		git add package.json; \
+		git commit -m "release: v$(VERSION)"; \
+	else \
+		echo "version unchanged ($(VERSION)): skipping version-bump commit"; \
+	fi
 	@git tag -a "$(TAG_PREFIX)$(VERSION)" -m "v$(VERSION)"
 	@git push origin HEAD --tags
 	@echo "pushed v$(VERSION); the Release workflow will validate and publish the GitHub Release."
