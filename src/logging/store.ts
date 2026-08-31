@@ -42,6 +42,8 @@ export interface LogQuery {
 	to?: number;
 	project?: string;
 	source?: string;
+	scheduleId?: string;
+	phase?: TaskLog["phase"];
 	q?: string;
 	limit?: number;
 	offset?: number;
@@ -51,6 +53,35 @@ export interface LogPage {
 	logs: TaskLog[];
 	total: number;
 }
+
+/**
+ * Scheduler dispatches use taskId `schedule:<id>:<epoch>`. Use a greedy capture so ids that
+ * themselves contain ":" are extracted correctly.
+ */
+export function scheduleIdFromTaskId(taskId: string): string | undefined {
+	const m = /^schedule:(.+):\d+$/.exec(taskId);
+	return m?.[1];
+}
+
+export function matchesLogQuery(log: TaskLog, q: LogQuery): boolean {
+	if (q.project && log.project !== q.project) return false;
+	if (q.source && log.source !== q.source) return false;
+	if (q.phase && log.phase !== q.phase) return false;
+	if (q.scheduleId && scheduleIdFromTaskId(log.taskId) !== q.scheduleId) return false;
+	if (q.q) {
+		const needle = q.q.toLowerCase();
+		if (
+			!log.userMessage.toLowerCase().includes(needle) &&
+			!log.replyText.toLowerCase().includes(needle) &&
+			!(log.project ?? "").toLowerCase().includes(needle)
+		) {
+			return false;
+		}
+	}
+	return true;
+}
+
+export type LogScan = Omit<LogQuery, "limit" | "offset">;
 
 function loadDayFile(file: string): TaskLog[] {
 	const abs = join(CONFIG.logDir, file);
@@ -83,23 +114,29 @@ function dayFilesInRange(from?: number, to?: number): string[] {
 	return files.sort().reverse();
 }
 
-export function queryLogs(q: LogQuery): LogPage {
-	const files = dayFilesInRange(q.from, q.to);
-	const all: TaskLog[] = [];
-	for (const f of files) all.push(...loadDayFile(f));
-
-	let filtered = all;
-	if (q.project) filtered = filtered.filter((l) => l.project === q.project);
-	if (q.source) filtered = filtered.filter((l) => l.source === q.source);
-	if (q.q) {
-		const needle = q.q.toLowerCase();
-		filtered = filtered.filter(
-			(l) =>
-				l.userMessage.toLowerCase().includes(needle) ||
-				l.replyText.toLowerCase().includes(needle) ||
-				(l.project ?? "").toLowerCase().includes(needle),
-		);
+/**
+ * Single-pass visitor for aggregation paths. It still reads each day file, but does not keep
+ * every matching TaskLog in memory.
+ *
+ * V1 deliberately reuses loadDayFile(), which currently materializes one day's file as a
+ * TaskLog[] via readFileSync. That caps memory at the largest single-day file, not the whole
+ * history, and matches the existing WebUI log query. If a future install produces very large
+ * single-day files, replace this with a line-streaming reader without changing call sites.
+ */
+export function scanLogs(q: LogScan, visit: (log: TaskLog) => void): void {
+	for (const f of dayFilesInRange(q.from, q.to)) {
+		for (const l of loadDayFile(f)) {
+			if (matchesLogQuery(l, q)) visit(l);
+		}
 	}
+}
+
+/**
+ * Pure filter/sort/page helper. Kept separate from the file reading so the schedule filtering
+ * logic can be tested with fixture TaskLog[] values without touching CONFIG.logDir.
+ */
+export function filterAndPageLogs(all: TaskLog[], q: LogQuery): LogPage {
+	const filtered = all.filter((l) => matchesLogQuery(l, q));
 
 	// Already sorted desc by file; stable sort by startedAt desc to be safe across a day boundary.
 	filtered.sort((a, b) => b.startedAt - a.startedAt);
@@ -109,6 +146,13 @@ export function queryLogs(q: LogQuery): LogPage {
 	const limit = q.limit ?? 50;
 	const logs = filtered.slice(offset, offset + limit);
 	return { logs, total };
+}
+
+export function queryLogs(q: LogQuery): LogPage {
+	const files = dayFilesInRange(q.from, q.to);
+	const all: TaskLog[] = [];
+	for (const f of files) all.push(...loadDayFile(f));
+	return filterAndPageLogs(all, q);
 }
 
 export function getLog(id: string): TaskLog | undefined {
