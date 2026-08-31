@@ -17,7 +17,7 @@
 刻意做**轻**，区别于重型 Agent 框架：
 
 - **轻量** — 只有五个工具，无重型运行时 / 守护进程，一个 `tsx` 进程即可，秒级安装。
-- **省 token** — 每个任务都是全新短命 Agent，无跨任务记忆；路由只用「项目名 + 摘要」小提示词，只加载被选中子项目的约定。没有巨型 system prompt、不追长上下文，多数任务成本只有通用助手的零头。
+- **省 token** — 每个任务都是全新短命 Agent，仅复用受限的最近可见对话窗口；路由只用「项目名 + 摘要」小提示词，只加载被选中子项目的约定。没有巨型 system prompt、不追长上下文，多数任务成本只有通用助手的零头。
 - **聚焦垂直简单任务** — 不是通用聊天机器人，擅长小、重复、边界清晰的活（饮食记录、生词查询、定时提醒），每个由自己的 `AGENTS.md` 描述。
 
 ## botler-agent 与同类对比
@@ -239,8 +239,8 @@ Scheduler ──► dispatch(schedule.message) ──►（同上流水线）
 
 ## 渠道
 
-- **Telegram**（`grammy`，长轮询）：最简单，首选。需要 `TELEGRAM_BOT_TOKEN`；大陆网络下需配置 `TG_PROXY` 才能连接 API。
-- **飞书**（事件订阅 webhook，含解密）：需要 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`；可选 `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY`，监听 `FEISHU_PORT`（默认 3000）。
+- **Telegram**（`grammy`，长轮询）：最简单，首选。需要 `TELEGRAM_BOT_TOKEN`；大陆网络下需配置 `TG_PROXY` 才能连接 API。可设置 `TELEGRAM_ALLOW_FROM`（逗号分隔的 Telegram 用户 id 或用户名）限制发送者；留空则全部放行。
+- **飞书**（事件订阅 webhook，含解密）：需要 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`；可选 `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY`，监听 `FEISHU_PORT`（默认 3000）。可设置 `FEISHU_ALLOW_FROM`（逗号分隔的发送者 `open_id`/`user_id`/`union_id` 或 chat id）限制发送者；留空则全部放行。
 - **微信（iLink / ClawBot 官方 Bot API）**：私聊渠道。先用 `npm start -- wechat-login` 登录（终端打印二维码，用微信扫码——凭据存入 `~/.botler-agent/wechat/account.json`），再设 `WECHAT_ENABLED=1` 启用。账号主号（扫码者）始终允许；`WECHAT_ALLOW_FROM` 可额外放行 `ilink_user_id`。续期提醒（`WECHAT_REMINDER_HOURS`）会在主号 24h `context_token` 窗口临近过期前提醒其刷新。
   - **入站图片即视觉输入**：微信可接收你发来的图片，解码后作为视觉输入喂给模型，并把原图持久化到 `DATA_ROOT/<project>/photos/`。由于微信「选图即发、文字后到」，入站图片会在一个短暂窗口内暂存（`WECHAT_IMAGE_BATCH_SECONDS`，默认 60s；设 `0` 关闭），让随后补发的文字作为同一条任务的描述合并进入；窗口内的多张图片也会合并。若当前模型无法读图，代理会用中文回复，请你补一句文字说明。
   - **问候短路**：仅含问候（如 你好 / hi）的消息会跳过路由 LLM 调用，直接给出一份零开销的中文欢迎语，列出当前可用子项目。
@@ -358,10 +358,12 @@ src/
 | `~/.botler-agent/providers.json` | 自定义 OpenAI-completions / Anthropic-messages 网关（每个 provider 含 baseUrl / apiKey / models）；旧版兜底：`CUSTOM_BASE_URL` / `CUSTOM_API_KEY` 环境变量 |
 | `TELEGRAM_BOT_TOKEN` | Telegram BotFather token；留空则不启动 Telegram |
 | `TG_PROXY` | 大陆网络下 Telegram API 需要代理（如 `http://127.0.0.1:7890`） |
+| `TELEGRAM_ALLOW_FROM` | 可选逗号分隔的 Telegram 发送者白名单（用户 id 或用户名）；留空则全部放行 |
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书应用凭据；留空则不启动飞书 |
 | `FEISHU_VERIFICATION_TOKEN` | 飞书事件订阅 URL 校验 token（可选） |
 | `FEISHU_ENCRYPT_KEY` | 飞书消息加密 key；不填则只处理明文事件 |
 | `FEISHU_PORT` | 飞书 webhook 监听端口，默认 `3000` |
+| `FEISHU_ALLOW_FROM` | 可选逗号分隔的飞书发送者白名单（`open_id`/`user_id`/`union_id` 或 chat id）；留空则全部放行 |
 | `WECHAT_ENABLED` | `=1` 启动微信 iLink 渠道（需先完成 `wechat-login`） |
 | `WECHAT_ALLOW_FROM` | 可选逗号分隔的额外 `ilink_user_id` 白名单（主号始终允许） |
 | `WECHAT_REMINDER_HOURS` | 微信续期提醒阈值：`0`=关闭，`1`-`24`=主号静默 N 小时后提醒（默认 23） |
@@ -377,6 +379,10 @@ src/
 | `BOTLER_HOLIDAY_API_URL` | `holidayMode:"workday"` 用的中国法定节假日日历源；`{year}` 占位符会被替换（默认 `https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/{year}.json`） |
 | `BOTLER_HOLIDAYS_FILE` | 缓存的节假日日历文件（默认 `~/.botler-agent/holidays.json`） |
 | `MAX_TOOL_TURNS` | 单任务最大工具轮次（默认 20；临近上限时提示收尾，达到上限强制停止） |
+| `CONVERSATION_CONTEXT_ENABLED` | `=0` 关闭最近对话上下文注入（默认开启） |
+| `CONVERSATION_CONTEXT_TURNS` | 每个 IM 会话保留的最近可见轮数（默认 5；`0` 关闭注入） |
+| `CONVERSATION_TURN_MAX_CHARS` | 每条存储的用户/助手消息最大字符数（默认 4000） |
+| `CONVERSATION_CONTEXT_MAX_CHARS` | 注入上下文的全窗口字符上限；超限时从最旧轮开始丢弃（默认 12000） |
 
 ## 工作原理
 

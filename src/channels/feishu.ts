@@ -3,7 +3,9 @@ import { createHash, createDecipheriv } from "node:crypto";
 import { CONFIG } from "../config.ts";
 import { dispatch } from "../dispatcher.ts";
 import { IM_SESSION_KEY } from "../conversation/store.ts";
+import { recordContact } from "../push/contacts.ts";
 import { setChannelUp, setChannelDown } from "../monitor/stats.ts";
+import { isAllowedSender } from "./allowlist.ts";
 
 const FEISHU_API = "https://open.feishu.cn/open-apis";
 
@@ -158,6 +160,20 @@ export function startFeishu(): void {
 				const chatId = message.chat_id;
 				const messageId = message.message_id;
 				const messageType = message.message_type;
+				const senderId = event.event.sender?.sender_id;
+				const senderIdentities = [
+					chatId ? String(chatId) : undefined,
+					senderId?.open_id,
+					senderId?.user_id,
+					senderId?.union_id,
+				];
+				if (!isAllowedSender(CONFIG.feishuAllowFrom, senderIdentities)) {
+					console.log(
+						`[feishu] ignoring sender outside allowlist: chat=${chatId ?? "(unknown)"} sender=${senderId?.open_id ?? senderId?.user_id ?? "(unknown)"}`,
+					);
+					sendJson(res, 200, {});
+					return;
+				}
 				let text = "";
 				if (messageType === "text") {
 					try {
@@ -167,10 +183,16 @@ export function startFeishu(): void {
 					}
 				}
 				if (text) {
-					const reply = await dispatch(text, { id: messageId, source: "feishu", sessionKey: IM_SESSION_KEY });
+					recordContact("feishu", String(chatId));
+					const reply = await dispatch(text, {
+						id: messageId,
+						source: "feishu",
+						recipient: { source: "feishu", userId: String(chatId) },
+						sessionKey: IM_SESSION_KEY,
+					});
 					// Text-only channel: an images-only reply still needs a non-empty body
 					const body = reply.text || "(image generated, but the Feishu channel does not support sending images yet)";
-					await replyFeishu(chatId, body).catch((e) =>
+					await replyFeishu(String(chatId), body).catch((e) =>
 						console.error("[feishu] Failed to reply:", e instanceof Error ? e.message : e),
 					);
 				}

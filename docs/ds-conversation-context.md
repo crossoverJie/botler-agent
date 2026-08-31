@@ -127,8 +127,7 @@ im
       "ts": 1787793138548,
       "project": "cook",
       "user": "确认写入午餐记录",
-      "assistant": "已写入今天午餐记录：600 卡路里。",
-      "imageRefs": []
+      "assistant": "已写入今天午餐记录：600 卡路里。"
     }
   ]
 }
@@ -140,9 +139,10 @@ im
 - `project`：执行阶段最终路由到的项目名；如果本轮未识别出项目但产生了最终回复，则为 `null`。
 - `user`：用户本轮输入文本。
 - `assistant`：Bot 本轮最终回复文本。
-- `imageRefs`：历史图片引用路径（通常为项目内相对路径）。不保存 base64，也不生成图片摘要；后续如需继续使用该图片，由用户再次要求 Botler 识别。
 
-每个 `user` 和 `assistant` 字段都做字符上限截断，防止单轮超长回复占据整个窗口。
+每个 `user` 和 `assistant` 字段都做单条字符上限截断；注入模型时，整个最近对话块还受
+`CONVERSATION_CONTEXT_MAX_CHARS` 总量上限约束，超限时从最旧轮开始丢弃。历史不保存
+base64、图片摘要或图片引用路径；后续如需继续使用某张图片，由用户再次要求 Botler 识别。
 
 ### 4.3 写入与权限
 
@@ -235,7 +235,6 @@ export interface ConversationTurn {
   project: string | null;
   user: string;
   assistant: string;
-  imageRefs: string[];
 }
 
 export function loadRecentTurns(
@@ -258,7 +257,6 @@ export function clearSession(sessionKey: string): void;
 
 ```ts
 sessionKey?: string;
-recentTurns?: ConversationTurn[];
 ```
 
 ### 6.3 渠道传递会话信息
@@ -284,6 +282,7 @@ Scheduler 和 CLI 不传。
 CONVERSATION_CONTEXT_ENABLED=1
 CONVERSATION_CONTEXT_TURNS=5
 CONVERSATION_TURN_MAX_CHARS=4000
+CONVERSATION_CONTEXT_MAX_CHARS=12000
 ```
 
 默认值：
@@ -292,9 +291,13 @@ CONVERSATION_TURN_MAX_CHARS=4000
 enabled = true
 maxTurns = 5
 maxCharsPerMessage = 4000
+maxCharsPerContext = 12000
 ```
 
 `CONVERSATION_TURN_MAX_CHARS` 是单条 `user` 或 `assistant` 消息上限，不是 N 轮总上限；先保持 4000，如果后续观察到正常回复被截断，再调高。
+
+`CONVERSATION_CONTEXT_MAX_CHARS` 是注入上下文的总字符上限；当最近 N 轮超过该值时，从
+最旧一轮开始丢弃，避免叠加项目约定文档后挤爆长系统提示词。
 
 不新增 TTL 配置。
 
@@ -307,6 +310,7 @@ maxCharsPerMessage = 4000
 | 模型误判 | 用户纠正，纠正消息进入上下文，后续可修正 |
 | 历史超过 N 轮 | 最旧一轮滚动丢弃 |
 | 昨天问、今天确认 | 没有 TTL，仍可继续 |
+| greeting / 无数据子项目短路回复 | 不写入历史 |
 | Scheduler 消息 | 不加载用户聊天上下文 |
 | Self-heal | 不读取、不写入聊天上下文 |
 | CLI 调试 | 默认不启用上下文 |
@@ -319,10 +323,12 @@ maxCharsPerMessage = 4000
 - 最近 N 轮加载顺序。
 - 超过 N 轮后旧轮淘汰。
 - 单条消息字符截断。
+- 最近对话总量超过 `CONVERSATION_CONTEXT_MAX_CHARS` 时从最旧轮开始丢弃。
 - `phase === "self-heal"` 不读取、不写入。
 - `duplicate`、`validation-failed`、`error` 不写入。
 - `unknown-project` 且存在最终 assistant 回复时写入，`project` 为 `null`。
 - Scheduler/CLI 不加载历史。
+- greeting / 无数据子项目短路回复不写入历史。
 - 历史路由提示能包含旧任务信息。
 - 多项目历史下，“确认”能路由到最近一个有 `project` 的轮。
 - 上下文注入后的 token 增长不会导致长系统提示词被截断；必要时截断历史或降低 N。

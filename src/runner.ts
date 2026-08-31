@@ -25,6 +25,7 @@ import type { ModelCacheStats, TaskLog } from "./logging/types.ts";
 import {
 	formatRecentTurns,
 	loadRecentTurns,
+	shouldLoadRecentTurns,
 	type ConversationTurn,
 } from "./conversation/store.ts";
 import { markModelCache, markAgentStart, markAgentEnd, stats } from "./monitor/stats.ts";
@@ -87,8 +88,6 @@ export interface RunLogContext {
 	inboundImages?: InboundImage[];
 	/** Fixed conversation session key for IM messages; absent for scheduler / CLI / self-heal. */
 	sessionKey?: string;
-	/** Preloaded recent turns (used by tests); when absent, the runner loads them from the store. */
-	recentTurns?: ConversationTurn[];
 }
 
 export interface TaskResult {
@@ -100,8 +99,8 @@ export interface TaskResult {
 	mutated: boolean;
 	/** Collected task log; the dispatcher overrides `status` then appends it (undefined only on early throw). */
 	log?: TaskLog;
-	/** Persisted inbound-image relative paths, used by the dispatcher when recording the visible turn. */
-	conversationImageRefs?: string[];
+	/** False for deterministic short-circuit replies that should not consume a conversation slot. */
+	recordConversationTurn?: boolean;
 }
 
 const IMAGE_REF_RE = /!\[[^\]]*\]\(([^)]*)\)/g;
@@ -293,15 +292,14 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	const ctx: RunLogContext = logCtx ?? { taskId: randomUUID(), source: "cli", phase: "execute" };
 	const startedAt = Date.now();
 	const inboundImages = ctx.inboundImages ?? [];
-	const recentTurns =
-		ctx.recentTurns !== undefined
-			? ctx.recentTurns
-			: CONFIG.conversationContextEnabled &&
-					ctx.phase === "execute" &&
-					ctx.source !== "scheduler" &&
-					ctx.sessionKey
-				? loadRecentTurns(ctx.sessionKey, CONFIG.conversationContextTurns)
-				: [];
+	const recentTurns = shouldLoadRecentTurns({
+		enabled: CONFIG.conversationContextEnabled,
+		phase: ctx.phase,
+		source: ctx.source,
+		sessionKey: ctx.sessionKey,
+	})
+		? loadRecentTurns(ctx.sessionKey!, CONFIG.conversationContextTurns)
+		: [];
 	// Base64-encode each inbound image exactly once and reuse it for routing + execution.
 	const imagesContent = toImageContent(inboundImages);
 	const model = resolveModel();
@@ -313,6 +311,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 			images: [],
 			mutated: false,
 			log: buildMinimalLog({ ctx, startedAt, endedAt: Date.now(), userMessage, replyText, project: null }),
+			recordConversationTurn: false,
 		};
 	}
 
@@ -327,6 +326,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 			images: [],
 			mutated: false,
 			log: buildMinimalLog({ ctx, startedAt, endedAt: Date.now(), userMessage, replyText, project: null }),
+			recordConversationTurn: false,
 		};
 	}
 
@@ -523,5 +523,5 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		modelCache: snapshotModelCache(),
 	});
 
-	return { text, images, mutated, log, conversationImageRefs: savedPaths };
+	return { text, images, mutated, log };
 }

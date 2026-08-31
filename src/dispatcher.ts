@@ -68,19 +68,23 @@ function appendVisibleTurn(
 	status: TaskStatus,
 ): void {
 	if (!CONFIG.conversationContextEnabled) return;
-	if (!shouldRecordTurn("execute", status, sessionKey)) return;
+	if (!shouldRecordTurn("execute", status, sessionKey, result?.recordConversationTurn !== false)) return;
 	const log = result?.log;
 	if (!log) return;
-	const assistant = (log.replyText || result?.text || "").trim();
+	// Store the clean user-facing reply. For auto-fixed runs `log.replyText` carries the
+	// framework decoration "(auto-fixed and saved)", which is task-log metadata, not the
+	// visible assistant turn that should be reused as conversation context.
+	const assistant = (result?.text || log.replyText || "").trim();
 	if (!assistant) return;
 	appendTurn(
 		sessionKey!,
 		{
 			ts: log.startedAt,
 			project: log.project,
+			// The model sees an additional image-persisted note appended by the framework;
+			// history deliberately stores only the original user text, not that transport note.
 			user: message,
 			assistant,
-			imageRefs: result?.conversationImageRefs ?? [],
 		},
 		CONFIG.conversationContextTurns,
 	);

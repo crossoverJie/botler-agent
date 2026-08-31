@@ -6,7 +6,7 @@
  * thinking, tool calls, or tool results are stored here; those remain in task-logs.
  */
 
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG } from "../config.ts";
 
@@ -22,8 +22,6 @@ export interface ConversationTurn {
 	user: string;
 	/** User-visible final Bot reply text. */
 	assistant: string;
-	/** Inbound-image references persisted by this turn. */
-	imageRefs: string[];
 }
 
 const SESSION_KEY_RE = /^[a-z0-9_-]+$/i;
@@ -35,14 +33,6 @@ function sessionFile(sessionKey: string): string {
 
 function normalizeProject(value: unknown): string | null {
 	return typeof value === "string" && value ? value : null;
-}
-
-function normalizeImageRefs(value: unknown): string[] {
-	if (!Array.isArray(value)) return [];
-	return value
-		.filter((item): item is string => typeof item === "string")
-		.map((item) => item.trim())
-		.filter(Boolean);
 }
 
 function normalizeTurn(value: unknown): ConversationTurn | null {
@@ -58,7 +48,6 @@ function normalizeTurn(value: unknown): ConversationTurn | null {
 		project: normalizeProject(raw.project),
 		user,
 		assistant,
-		imageRefs: normalizeImageRefs(raw.imageRefs),
 	};
 }
 
@@ -97,6 +86,14 @@ export function appendTurn(sessionKey: string, turn: ConversationTurn, maxTurns:
 			encoding: "utf8",
 			mode: 0o600,
 		});
+		// fsync before rename so a hard kill cannot leave a zero-length `.tmp` file that
+		// looks like the intended destination while the original was already removed.
+		const fd = openSync(tmp, "r+");
+		try {
+			fsyncSync(fd);
+		} finally {
+			closeSync(fd);
+		}
 		renameSync(tmp, file);
 	} catch (e) {
 		// Conversation history must never break the main dispatch flow.
@@ -122,15 +119,30 @@ export function clearSession(sessionKey: string): void {
  */
 export function formatRecentTurns(
 	turns: readonly ConversationTurn[],
-	opts: { includeProject?: boolean } = {},
+	opts: { includeProject?: boolean; maxChars?: number } = {},
 ): string {
 	if (turns.length === 0) return "";
-	return turns
-		.map((turn) => {
-			const project = opts.includeProject && turn.project ? `（项目：${turn.project}）` : "";
-			return `${project}用户：${turn.user}\nBot：${turn.assistant}`;
-		})
-		.join("\n");
+	const maxChars = opts.maxChars ?? CONFIG.conversationContextMaxChars;
+	if (!Number.isFinite(maxChars) || maxChars <= 0) return "";
+	const separator = "\n\n---\n\n";
+	const rendered = turns.map((turn) => {
+		const project = opts.includeProject && turn.project ? `（项目：${turn.project}）` : "";
+		return `${project}用户：${turn.user}\nBot：${turn.assistant}`;
+	});
+	// Keep the newest turns within the whole-window cap, dropping the oldest turns first.
+	const kept: string[] = [];
+	let used = 0;
+	for (let i = rendered.length - 1; i >= 0; i--) {
+		const piece = rendered[i];
+		const add = kept.length === 0 ? piece : `${separator}${piece}`;
+		if (used + add.length > maxChars) {
+			if (kept.length === 0) kept.push(piece.slice(0, maxChars));
+			break;
+		}
+		kept.unshift(piece);
+		used += add.length;
+	}
+	return kept.join(separator);
 }
 
 export type RecordableTaskStatus = "success" | "auto-fixed" | "unknown-project";
@@ -140,7 +152,26 @@ export function shouldRecordTurn(
 	phase: "execute" | "self-heal",
 	status: string,
 	sessionKey?: string,
+	recordable = true,
 ): status is RecordableTaskStatus {
-	if (phase !== "execute" || !sessionKey) return false;
+	if (!recordable || phase !== "execute" || !sessionKey) return false;
 	return status === "success" || status === "auto-fixed" || status === "unknown-project";
+}
+
+export interface RecentTurnLoadContext {
+	enabled: boolean;
+	phase: "execute" | "self-heal";
+	source: string;
+	sessionKey?: string;
+}
+
+/** Whether the runner should load the shared IM conversation for this run. */
+export function shouldLoadRecentTurns(ctx: RecentTurnLoadContext): boolean {
+	return (
+		ctx.enabled &&
+		ctx.phase === "execute" &&
+		ctx.source !== "scheduler" &&
+		ctx.source !== "cli" &&
+		Boolean(ctx.sessionKey)
+	);
 }
