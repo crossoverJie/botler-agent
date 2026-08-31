@@ -32,6 +32,7 @@ import {
 import { loadSchedules, saveSchedules } from "../scheduler/store.ts";
 import { reloadSchedules } from "../scheduler/engine.ts";
 import { nextFireEpoch } from "../scheduler/cron.ts";
+import { scheduleOverview, scheduleRuns, scheduleRunStats } from "../scheduler/history.ts";
 import { loadAccount, resolveAccount } from "../channels/wechat/account.ts";
 import { getContext } from "../channels/wechat/context.ts";
 import { reminderStatus } from "../channels/wechat/reminder.ts";
@@ -196,6 +197,17 @@ export function startWebui(): void {
 				if (!requireUiHeader(req, res)) return;
 				const body = (await readJsonBody(req)) as CleanupOptions;
 				return json(res, cleanupLogs(body));
+			}
+
+			const schedRunsMatch = path.match(/^\/api\/schedules\/([^/]+)\/runs$/);
+			const schedStatsMatch = path.match(/^\/api\/schedules\/([^/]+)\/stats$/);
+
+			if (path === "/api/schedules/overview") return json(res, scheduleOverview());
+			if (schedRunsMatch) {
+				return json(res, scheduleRuns(decodeURIComponent(schedRunsMatch[1]), parseQuery(url)));
+			}
+			if (schedStatsMatch) {
+				return json(res, scheduleRunStats(decodeURIComponent(schedStatsMatch[1])));
 			}
 
 			// ---- Config endpoints (WebUI) ----
