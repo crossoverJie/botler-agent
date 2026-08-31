@@ -107,7 +107,7 @@
   .field .verr { color:var(--err); font-size:11px; }
   .banner { background:var(--warn-bg); border:1px solid var(--warn); color:var(--warn-fg); border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:13px; display:none; }
   textarea.code { font-family:var(--font-mono); min-height:340px; width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:10px; font-size:12.5px; line-height:1.5; }
-  .sched-row { display:grid; grid-template-columns:auto 160px 1fr 150px auto; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); }
+  .sched-row { display:grid; grid-template-columns:auto 150px minmax(180px,1fr) 150px 150px auto; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); }
   .sched-summary { font-size:12px; color:var(--muted); }
   .eye { background:#fff; border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:4px 8px; cursor:pointer; font-size:12px; }
 
@@ -162,6 +162,7 @@
     <span class="host" id="host"></span>
     <div class="view-switch" role="tablist">
       <button type="button" class="view-btn active" data-view="logs-view">Task logs</button>
+      <button type="button" class="view-btn" data-view="schedules-view">Schedules</button>
       <button type="button" class="view-btn" data-view="stats-view">Stats</button>
       <button type="button" class="view-btn" data-view="monitor-view">Monitor</button>
       <button type="button" class="view-btn" data-view="config-view">Config</button>
@@ -188,6 +189,18 @@
         <div id="disk-summary"></div>
         <div id="disk-files"></div>
       </div>
+    </div>
+
+    <!-- ============ SCHEDULES VIEW ============ -->
+    <div id="schedules-view" class="wrap" style="display:none">
+      <div class="cards" id="sched-cards"></div>
+      <div class="muted" style="margin:0 0 12px;font-size:12px">History is retained as long as task logs are kept.</div>
+      <div class="row-actions" style="margin-bottom:10px">
+        <button class="btn" id="sched-add">+ Add</button>
+        <button class="btn ghost" id="sched-reload">Refresh</button>
+      </div>
+      <div id="sched-list"></div>
+      <div id="sched-history" style="display:none"></div>
     </div>
 
     <!-- ============ STATS VIEW ============ -->
@@ -224,16 +237,6 @@
           <button class="btn ghost" id="wx-refresh">Refresh</button>
         </div>
         <div id="wechat-status"></div>
-      </div>
-
-      <div class="panel">
-        <h2>Scheduled tasks</h2>
-        <div class="hint">At fire time, builds a message into dispatch (reusing dedup / queue / validation / commit). Takes effect immediately.</div>
-        <div class="row-actions" style="margin-bottom:10px">
-          <button class="btn" id="sched-add">+ Add</button>
-          <button class="btn ghost" id="sched-reload">Refresh</button>
-        </div>
-        <div id="sched-list"></div>
       </div>
 
       <div class="panel">
@@ -301,6 +304,7 @@ document.querySelectorAll(".view-btn").forEach(btn=>btn.onclick=()=>{
   document.querySelectorAll(".view-btn").forEach(x=>x.classList.remove("active"));
   btn.classList.add("active");
   document.getElementById("logs-view").style.display = btn.dataset.view==="logs-view"?"block":"none";
+  document.getElementById("schedules-view").style.display = btn.dataset.view==="schedules-view"?"block":"none";
   document.getElementById("stats-view").style.display = btn.dataset.view==="stats-view"?"block":"none";
   document.getElementById("monitor-view").style.display = btn.dataset.view==="monitor-view"?"block":"none";
   document.getElementById("config-view").style.display = btn.dataset.view==="config-view"?"block":"none";
@@ -308,6 +312,7 @@ document.querySelectorAll(".view-btn").forEach(btn=>btn.onclick=()=>{
   clearInterval(monitorTimer);
   monitorTimer = null;
   if(btn.dataset.view==="config-view") loadConfig();
+  if(btn.dataset.view==="schedules-view") loadSchedulesView();
   if(btn.dataset.view==="stats-view") loadStats();
   if(btn.dataset.view==="monitor-view") startMonitorTimer();
 });
@@ -775,60 +780,156 @@ document.getElementById("sp-save").onclick = async ()=>{
 };
 
 // ---- schedules ----
+let schedHistory = { id: null, offset: 0, limit: 20, total: 0 };
+
 function scheduleSummary(e){
   if(e.cron) return "cron: "+e.cron;
   if(e.interval) return "interval: "+e.interval;
   if(e.at) return "at: "+e.at+" (daily)";
-  if(e.once) return "once: "+e.once;
+  if(e.once){
+    const d = new Date(e.once);
+    return "once: " + (isNaN(d.getTime()) ? e.once : d.toLocaleString());
+  }
   return "(no trigger)";
 }
-function renderSchedules(lastExec){
-  if(!schedules.length){ document.getElementById("sched-list").innerHTML='<div class="muted">No scheduled tasks yet. Click "Add" to create one.</div>'; return; }
+
+function renderScheduleCards(){
+  const total = schedules.length;
+  const enabled = schedules.filter(e=>e.enabled).length;
+  const withNext = schedules.filter(e=>e.nextFireAt).length;
+  document.getElementById("sched-cards").innerHTML = [
+    ["Total", total],
+    ["Enabled", enabled],
+    ["Scheduled", withNext],
+    ["Disabled", total-enabled]
+  ].map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+}
+
+function renderSchedules(){
+  if(!schedules.length){
+    document.getElementById("sched-list").innerHTML='<div class="muted">No scheduled tasks yet. Click "Add" to create one.</div>';
+    return;
+  }
   document.getElementById("sched-list").innerHTML = schedules.map(e=>{
-    const last = lastExec[e.id];
-    const lastStr = last? `${fmtTime(last.startedAt)} · ${statusBadge(last.status)}` : "—";
+    const last = e.lastRun
+      ? `${fmtTime(e.lastRun.startedAt)} · ${statusBadge(e.lastRun.status)}`
+      : "—";
+    const next = e.nextFireAt ? `${fmtTime(e.nextFireAt)}` : "—";
     return `<div class="sched-row">
       <label><input type="checkbox" class="sched-enable" data-id="${esc(e.id)}" ${e.enabled?"checked":""}/> ${esc(e.id)}</label>
       <div class="sched-summary">${esc(scheduleSummary(e))}<br/>tz:${esc(e.timezone||"Asia/Shanghai")}${e.project?("<br/>project:"+esc(e.project)):""}</div>
       <div class="sched-summary">${esc((e.message||"").slice(0,60))}</div>
-      <div class="muted" style="font-size:12px">Last: ${lastStr}</div>
+      <div class="muted" style="font-size:12px">Next: ${next}</div>
+      <div class="muted" style="font-size:12px">Last: ${last}</div>
       <div class="row-actions">
+        <button class="btn ghost sched-history" data-id="${esc(e.id)}">History</button>
         <button class="btn ghost sched-edit" data-id="${esc(e.id)}">Edit</button>
         <button class="btn danger sched-del" data-id="${esc(e.id)}">Delete</button>
       </div>
     </div>`;
   }).join("");
+
   document.querySelectorAll(".sched-enable").forEach(c=>c.onchange=async()=>{
     const id=c.dataset.id; const e=schedules.find(x=>x.id===id); if(!e) return;
-    e.enabled = c.checked;
+    e.enabled=c.checked;
     await persistSchedules();
   });
+  document.querySelectorAll(".sched-history").forEach(b=>b.onclick=()=>openSchedHistory(b.dataset.id));
   document.querySelectorAll(".sched-edit").forEach(b=>b.onclick=()=>openSchedModal(b.dataset.id));
   document.querySelectorAll(".sched-del").forEach(b=>b.onclick=async()=>{
     if(!confirm("Confirm deleting scheduled task "+b.dataset.id+"?")) return;
-    schedules = schedules.filter(x=>x.id!==b.dataset.id);
+    schedules=schedules.filter(x=>x.id!==b.dataset.id);
     await persistSchedules();
   });
 }
-async function persistSchedules(){
-  try { const r = await cfgWrite("/api/config/schedules", { schedules }); if(r.error) return toast("Error: "+r.error); toast("Saved; takes effect immediately"); await loadSchedulesView(); }
-  catch(e){ toast("Save failed: "+e.message); }
-}
+
 async function loadSchedulesView(){
-  const data = await cfgGet("/api/config/schedules");
-  schedules = data || [];
-  // aggregate last execution per schedule id from scheduler-source logs
-  let lastExec = {};
+  schedules = await getJSON("/api/schedules/overview") || [];
+  renderScheduleCards();
+  renderSchedules();
+}
+
+function scheduleEntryForSave(e){
+  // V1 blacklist is enough because overview adds only these two computed fields.
+  // If ScheduleOverviewItem gains more computed fields later, switch this to an explicit whitelist.
+  const { nextFireAt, lastRun, ...entry } = e;
+  return entry;
+}
+
+async function persistSchedules(){
+  const payload = schedules.map(scheduleEntryForSave);
   try {
-    const logs = await cfgGet("/api/logs?source=scheduler&limit=500");
-    for(const l of (logs.logs||[])){
-      const m = (l.taskId||"").match(/^schedule:([^:]+):/);
-      if(!m) continue;
-      const id = m[1];
-      if(!lastExec[id] || l.startedAt > lastExec[id].startedAt) lastExec[id] = l;
-    }
-  } catch(_){}
-  renderSchedules(lastExec);
+    const r = await cfgWrite("/api/config/schedules", { schedules: payload });
+    if(r.error) return toast("Error: "+r.error);
+    toast("Saved; takes effect immediately");
+    await loadSchedulesView();
+  } catch(e){
+    toast("Save failed: "+e.message);
+  }
+}
+
+async function loadSchedStats(){
+  if(!schedHistory.id) return;
+  const s = await getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/stats`);
+  const success = s.byStatus.success || 0;
+  const failed = (s.byStatus.error || 0) + (s.byStatus["validation-failed"] || 0);
+  document.getElementById("sched-stats").innerHTML = [
+    ["Runs", s.totalRuns],
+    ["Success", success],
+    ["Failed", failed],
+    ["Avg duration", fmtDur(s.avgDurationMs)],
+    ["Output tokens", s.token.output],
+  ].map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+}
+
+async function loadSchedHistory(){
+  if(!schedHistory.id) return;
+  const p = new URLSearchParams();
+  p.set("limit", schedHistory.limit);
+  p.set("offset", schedHistory.offset);
+  const data = await getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/runs?${p}`);
+  schedHistory.total = data.total;
+  const rows = data.logs.map(l=>{
+    return `<tr class="row" data-log="${esc(l.id)}">
+      <td>${fmtTime(l.startedAt)}</td>
+      <td>${statusBadge(l.status)}</td>
+      <td>${l.phase==="self-heal"?'<span class="badge b-auto-fixed">self-heal</span>':""}</td>
+      <td>${esc(l.project||"—")}</td>
+      <td>${fmtDur(l.durationMs)}</td>
+      <td>${l.usage.total}</td>
+      <td>${esc((l.replyText||"").slice(0,80))}</td>
+    </tr>`;
+  }).join("");
+  const bodyRows = data.logs.length ? rows : '<tr><td colspan="7" class="muted">No records</td></tr>';
+
+  document.getElementById("sched-history").style.display="block";
+  document.getElementById("sched-history").innerHTML = `
+    <div class="section-title">History: ${esc(schedHistory.id)}</div>
+    <div class="cards" id="sched-stats"></div>
+    <table>
+      <thead><tr><th>Time</th><th>Status</th><th>Phase</th><th>Project</th><th>Duration</th><th>Tokens</th><th>Reply</th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+    <div class="pager">
+      <button class="ghost" id="sh-prev" ${schedHistory.offset<=0?"disabled":""}>← Prev</button>
+      <span class="muted">Page ${Math.floor(schedHistory.offset/schedHistory.limit)+1} · ${schedHistory.total} total</span>
+      <button class="ghost" id="sh-next" ${schedHistory.offset+schedHistory.limit>=schedHistory.total?"disabled":""}>Next →</button>
+    </div>`;
+
+  document.querySelectorAll("#sched-history tr.row").forEach(tr=>tr.onclick=()=>showDetail(tr.dataset.log));
+  document.getElementById("sh-prev").onclick=()=>{ schedHistory.offset=Math.max(0,schedHistory.offset-schedHistory.limit); loadSchedHistory(); };
+  document.getElementById("sh-next").onclick=()=>{
+    const nextOffset = schedHistory.offset + schedHistory.limit;
+    if(nextOffset >= schedHistory.total) return;
+    schedHistory.offset = nextOffset;
+    loadSchedHistory();
+  };
+  await loadSchedStats();
+}
+
+function openSchedHistory(id){
+  schedHistory = { id, offset:0, limit:20, total:0 };
+  loadSchedHistory();
 }
 
 function openSchedModal(id){
@@ -1009,11 +1110,10 @@ async function loadConfig(){
   document.getElementById("sp-text").value = c.systemPrompt || "";
   document.getElementById("sp-count").textContent = `${(c.systemPrompt||"").length} chars`;
   renderWechatStatus(c.wechat);
-  await loadSchedulesView();
   await loadBackups();
 }
 
-// ---- wire config buttons ----
+// ---- wire schedules buttons ----
 document.getElementById("sched-add").onclick = ()=>openSchedModal(null);
 document.getElementById("sched-reload").onclick = async ()=>{ await loadSchedulesView(); toast("Refreshed"); };
 
