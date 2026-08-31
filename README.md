@@ -19,7 +19,7 @@ A general-purpose, lightweight personal agent framework: it receives messages fr
 A deliberately **lightweight** alternative to heavyweight agent frameworks:
 
 - **Lightweight** — only five tools, no heavy runtime or daemon; a single `tsx` process, installed in seconds.
-- **Token-thrifty** — every task is a fresh, short-lived Agent with no cross-task memory; routing uses only a tiny project-name + summary prompt, and only the selected subproject's conventions are loaded. No giant system prompts, no chasing long contexts — most tasks cost a fraction of a general-assistant call.
+- **Token-thrifty** — every task is a fresh, short-lived Agent; only a bounded recent-visible-conversation window is reused across IM turns. Routing uses a tiny project-name + summary prompt, and only the selected subproject's conventions are loaded. No giant system prompts, no chasing long contexts — most tasks cost a fraction of a general-assistant call.
 - **Focused on simple vertical tasks** — not a general-purpose chatbot. It shines at small, repetitive, well-scoped jobs (meal logging, vocabulary lookups, reminders), each described by its own `AGENTS.md`.
 
 ## How botler-agent compares
@@ -220,8 +220,8 @@ Once the system prompt is externalized, you (or the AI assistant) can customize 
 
 ## Channels
 
-- **Telegram** (`grammy`, long polling): simplest, preferred. Requires `TELEGRAM_BOT_TOKEN`; on the mainland China network a `TG_PROXY` is required to connect to the API.
-- **Feishu** (event-subscription webhook with decryption): requires `FEISHU_APP_ID` / `FEISHU_APP_SECRET`; optional `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY`, listens on `FEISHU_PORT` (default 3000).
+- **Telegram** (`grammy`, long polling): simplest, preferred. Requires `TELEGRAM_BOT_TOKEN`; on the mainland China network a `TG_PROXY` is required to connect to the API. Set `TELEGRAM_ALLOW_FROM` (comma-separated Telegram user ids or usernames) to restrict senders; leave empty to allow all.
+- **Feishu** (event-subscription webhook with decryption): requires `FEISHU_APP_ID` / `FEISHU_APP_SECRET`; optional `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY`, listens on `FEISHU_PORT` (default 3000). Set `FEISHU_ALLOW_FROM` (comma-separated sender `open_id`/`user_id`/`union_id` or chat ids) to restrict senders; leave empty to allow all.
 - **WeChat (iLink / ClawBot official Bot API)**: DM channel. Enable with `WECHAT_ENABLED=1` after logging in via `npm start -- wechat-login` (prints a QR code in the terminal; scan it with WeChat — credentials saved to `~/.botler-agent/wechat/account.json`). The account owner (the QR scanner) is always allowed; `WECHAT_ALLOW_FROM` can allowlist extra `ilink_user_id`s. A renewal reminder (`WECHAT_REMINDER_HOURS`) nudges the owner to refresh the 24h `context_token` window.
   - **Inbound images as vision input**: WeChat can receive images you send. They are decoded and fed to the model as vision input, and the originals are persisted under `DATA_ROOT/<project>/photos/`. Because WeChat delivers a selected photo immediately while you may still be typing the caption ("选图即发，文字后到"), inbound image messages are held for a short window (`WECHAT_IMAGE_BATCH_SECONDS`, default 60s; `0` disables) so a following text joins the batch as one task; multiple photos in the window also merge. If the configured model cannot read images, the agent replies in Chinese asking you to add a short text hint.
   - **Greeting short-circuit**: a bare greeting (e.g. 你好 / hi) skips the routing LLM call entirely and gets a deterministic Chinese welcome that lists the available subprojects — zero model cost.
@@ -306,10 +306,12 @@ By default a local health/metrics server runs on `127.0.0.1:MONITOR_PORT` (defau
 | `~/.botler-agent/providers.json` | Custom OpenAI-completions / Anthropic-messages gateways (baseUrl / apiKey / models per provider); legacy fallback: `CUSTOM_BASE_URL` / `CUSTOM_API_KEY` env vars |
 | `TELEGRAM_BOT_TOKEN` | Telegram BotFather token; left empty to disable Telegram |
 | `TG_PROXY` | Telegram API needs a proxy on the mainland China network (e.g. `http://127.0.0.1:7890`) |
+| `TELEGRAM_ALLOW_FROM` | Optional comma-separated Telegram sender allowlist (user ids or usernames); empty = allow all |
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | Feishu app credentials; left empty to disable Feishu |
 | `FEISHU_VERIFICATION_TOKEN` | Feishu event subscription URL verification token (optional) |
 | `FEISHU_ENCRYPT_KEY` | Feishu message encryption key; if empty, only plaintext events are processed |
 | `FEISHU_PORT` | Feishu webhook listening port, default `3000` |
+| `FEISHU_ALLOW_FROM` | Optional comma-separated Feishu sender allowlist (`open_id`/`user_id`/`union_id` or chat id); empty = allow all |
 | `WECHAT_ENABLED` | `=1` to start the WeChat iLink channel (requires a completed `wechat-login`) |
 | `WECHAT_ALLOW_FROM` | Optional comma-separated extra `ilink_user_id` allowlist (owner always allowed) |
 | `WECHAT_REMINDER_HOURS` | WeChat renewal reminder threshold: `0`=off, `1`-`24`=remind owner after N hours (default 23) |
@@ -325,6 +327,10 @@ By default a local health/metrics server runs on `127.0.0.1:MONITOR_PORT` (defau
 | `BOTLER_HOLIDAY_API_URL` | China legal-holiday calendar source for `holidayMode:"workday"`; the `{year}` placeholder is substituted (default `https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/{year}.json`) |
 | `BOTLER_HOLIDAYS_FILE` | Cached holiday calendar file (default `~/.botler-agent/holidays.json`) |
 | `MAX_TOOL_TURNS` | Max tool-call turns per task (default 20; the model is hinted to wrap up as the limit approaches, then hard-stopped) |
+| `CONVERSATION_CONTEXT_ENABLED` | `=0` disables recent-conversation injection (default enabled) |
+| `CONVERSATION_CONTEXT_TURNS` | Number of recent visible turns kept per IM session (default 5; `0` disables injection) |
+| `CONVERSATION_TURN_MAX_CHARS` | Max characters kept per stored user/assistant message (default 4000) |
+| `CONVERSATION_CONTEXT_MAX_CHARS` | Whole-window character cap for injected context; oldest turns are dropped first (default 12000) |
 
 ## How it works
 

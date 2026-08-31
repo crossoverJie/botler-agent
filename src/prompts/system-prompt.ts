@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG, USER_CONFIG_DIR } from "../config.ts";
+import { formatRecentTurns, type ConversationTurn } from "../conversation/store.ts";
 
 /**
  * Built-in generic default system prompt: only describes boundaries and generic working principles, with no specific business schema.
@@ -9,7 +10,9 @@ import { CONFIG, USER_CONFIG_DIR } from "../config.ts";
  */
 export const DEFAULT_SYSTEM_PROMPT = `你是运行在个人数据目录下的轻量助手。你只在 __DATA_ROOT__ 目录内的各数据子项目中工作，禁止访问目录外的任何文件或执行命令。
 
-你的能力：通过 read / write / edit / run 四个工具读写白名单内的 JSON 文件、执行项目内脚本，完成各数据子项目中的短任务；还可以用 schedule 工具创建 / 管理定时任务。每条消息都是一次独立任务，没有跨任务记忆。
+你的能力：通过 read / write / edit / run 四个工具读写白名单内的 JSON 文件、执行项目内脚本，完成各数据子项目中的短任务；还可以用 schedule 工具创建 / 管理定时任务。
+
+你拥有最近若干轮用户可见对话作为上下文。当前消息如果明显是新的独立任务，请忽略旧历史并按新任务处理；如果它是上一轮任务的确认、补充或纠正，请结合历史继续处理。无法确定时向用户确认。
 
 # 当前环境
 - 今天日期：__TODAY__（YYYY-MM-DD，本地时区；涉及「今天/昨天」等相对日期的任务以它为准）。
@@ -182,7 +185,12 @@ function schedulerContext(): string {
  * The virtual `__scheduler__` project is included as a candidate for schedule-management messages,
  * unless `includeScheduler` is false (scheduler-fired reminders are never schedule-management requests).
  */
-export function buildRoutePrompt(userMessage: string, includeScheduler = true, hasImages = false): string {
+export function buildRoutePrompt(
+	userMessage: string,
+	includeScheduler = true,
+	hasImages = false,
+	recentTurns: readonly ConversationTurn[] = [],
+): string {
 	const schedulerLine = includeScheduler
 		? `- ${SCHEDULER_VIRTUAL_PROJECT}/：仅用于创建/管理定时任务（与数据子项目无关）\n`
 		: "";
@@ -192,11 +200,17 @@ export function buildRoutePrompt(userMessage: string, includeScheduler = true, h
 	const imageLine = hasImages
 		? "\n本条消息附带图片。请同时参考图片内容与文字判断所属子项目：图片内容明显匹配某个子项目的描述（如食物照片 → 记录饮食的项目）时选择该项目；无法根据图片与文字确定时输出 UNKNOWN。\n"
 		: "";
+	const historyBlock = recentTurns.length
+		? `\n最近对话：\n${formatRecentTurns(recentTurns, { includeProject: true })}\n`
+		: "";
+	const historyInstruction = recentTurns.length
+		? "\n如果当前消息是上一轮任务的简短确认或补充，优先沿用最近对话对应的项目；如果当前消息明显是一个新的独立任务，忽略旧历史并按新任务判断；无法确定时输出 UNKNOWN。\n"
+		: "";
 	return `你是路由助手，负责判断用户消息要操作哪个数据子项目。只输出一个项目名（不含斜杠），无法确定时只输出 UNKNOWN。不要使用任何工具。
 
 数据根目录下的子项目：
-${listProjectSummaries()}${schedulerLine}用户消息：${userMessage}
-${imageLine}判断这条消息属于哪个子项目。只输出项目名（如 my-project）或 UNKNOWN。`;
+${listProjectSummaries()}${schedulerLine}${historyBlock}用户消息：${userMessage}
+${imageLine}${historyInstruction}判断这条消息属于哪个子项目。只输出项目名（如 my-project）或 UNKNOWN。`;
 }
 
 /**

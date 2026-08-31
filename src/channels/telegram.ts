@@ -3,7 +3,9 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { CONFIG } from "../config.ts";
 import { dispatch } from "../dispatcher.ts";
 import { recordContact } from "../push/contacts.ts";
+import { IM_SESSION_KEY } from "../conversation/store.ts";
 import { setChannelUp, setChannelDown } from "../monitor/stats.ts";
+import { isAllowedSender } from "./allowlist.ts";
 
 /** Module-level bot instance (set by startTelegram); used by push delivery. */
 let bot: Bot | null = null;
@@ -69,14 +71,22 @@ export function startTelegram(): void {
 			console.log("[tg] Ignored non-text / no-chat message");
 			return;
 		}
+		const fromId = ctx.from?.id !== undefined ? String(ctx.from.id) : undefined;
+		const username = ctx.from?.username;
+		const chatIdText = String(chatId);
+		if (!isAllowedSender(CONFIG.telegramAllowFrom, [fromId, username, chatIdText])) {
+			console.log(`[tg] Ignoring sender outside allowlist: from=${fromId ?? username ?? "(unknown)"} chat=${chatIdText}`);
+			return;
+		}
 		console.log(`[tg] Processing chat=${chatId} msg=${messageId}: ${JSON.stringify(text.slice(0, 60))}`);
 		try {
 			// Remember this address so push delivery can fall back to Telegram when the primary channel fails.
-			recordContact("telegram", String(chatId));
+			recordContact("telegram", chatIdText);
 			const reply = await dispatch(text, {
 				id: `${chatId}:${messageId}`,
 				source: "telegram",
-				recipient: { source: "telegram", userId: String(chatId) },
+				recipient: { source: "telegram", userId: chatIdText },
+				sessionKey: IM_SESSION_KEY,
 			});
 			// Text-only channel: images the agent produced are not sent here, so an
 			// images-only reply still needs a non-empty body (Telegram rejects empty text).

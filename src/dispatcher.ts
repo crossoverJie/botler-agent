@@ -4,6 +4,7 @@ import { validateState } from "./safety/validate.ts";
 import { commitIfChanged } from "./safety/git.ts";
 import { appendTaskLog } from "./logging/store.ts";
 import { CONFIG } from "./config.ts";
+import { appendTurn, shouldRecordTurn } from "./conversation/store.ts";
 import type { Recipient } from "./push/types.ts";
 import type { TaskLog, TaskStatus, TokenUsageLog } from "./logging/types.ts";
 import type { InboundImage } from "./channels/wechat/download.ts";
@@ -32,6 +33,8 @@ export interface DispatchOptions {
 	 * target subproject. WeChat-only for now. Distinct from DispatchResult.images (outbound).
 	 */
 	inboundImages?: InboundImage[];
+	/** Fixed conversation session key for IM channels; omitted for scheduler / CLI. */
+	sessionKey?: string;
 }
 
 export interface DispatchResult {
@@ -55,6 +58,36 @@ let chain: Promise<unknown> = Promise.resolve();
 function truncate(s: string, n = 60): string {
 	const flat = s.replace(/\s+/g, " ").trim();
 	return flat.length > n ? `${flat.slice(0, n)}…` : flat;
+}
+
+/** Append the user-visible turn when the execute phase completed with a recordable status. */
+function appendVisibleTurn(
+	sessionKey: string | undefined,
+	message: string,
+	result: TaskResult | undefined,
+	status: TaskStatus,
+): void {
+	if (!CONFIG.conversationContextEnabled) return;
+	if (!shouldRecordTurn("execute", status, sessionKey, result?.recordConversationTurn !== false)) return;
+	const log = result?.log;
+	if (!log) return;
+	// Store the clean user-facing reply. For auto-fixed runs `log.replyText` carries the
+	// framework decoration "(auto-fixed and saved)", which is task-log metadata, not the
+	// visible assistant turn that should be reused as conversation context.
+	const assistant = (result?.text || log.replyText || "").trim();
+	if (!assistant) return;
+	appendTurn(
+		sessionKey!,
+		{
+			ts: log.startedAt,
+			project: log.project,
+			// The model sees an additional image-persisted note appended by the framework;
+			// history deliberately stores only the original user text, not that transport note.
+			user: message,
+			assistant,
+		},
+		CONFIG.conversationContextTurns,
+	);
 }
 
 const ZERO_USAGE: TokenUsageLog = {
@@ -155,6 +188,7 @@ export async function dispatch(message: string, opts: DispatchOptions = {}): Pro
 				projectHint: opts.projectHint,
 				recipient: opts.recipient,
 				inboundImages: opts.inboundImages,
+				sessionKey: opts.sessionKey,
 			});
 			const log = result.log;
 			if (!log) {
@@ -231,6 +265,7 @@ export async function dispatch(message: string, opts: DispatchOptions = {}): Pro
 			return out(errText, [], "error");
 		} finally {
 			// Single unified exit accounting: always fires, regardless of which branch returned.
+			appendVisibleTurn(opts.sessionKey, message, result, finalStatus);
 			markFinished();
 			recordStatus(finalStatus);
 			stats.lastDispatchDurationMs = Date.now() - dispatchStartedAt;

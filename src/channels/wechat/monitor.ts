@@ -1,5 +1,6 @@
 import { CONFIG } from "../../config.ts";
 import { dispatch, DUPLICATE_SENTINEL } from "../../dispatcher.ts";
+import { IM_SESSION_KEY } from "../../conversation/store.ts";
 import { recordContact } from "../../push/contacts.ts";
 import { getUpdates } from "./api.ts";
 import { loadSyncBuf, saveSyncBuf, resolveAccount } from "./account.ts";
@@ -210,6 +211,7 @@ async function dispatchAndReply(params: {
 			source: "wechat",
 			recipient: { source: "wechat", userId: fromUserId },
 			inboundImages,
+			sessionKey: IM_SESSION_KEY,
 		});
 		// Dedup hit returns a sentinel; don't echo it back to the user
 		if (reply.text === DUPLICATE_SENTINEL) return;

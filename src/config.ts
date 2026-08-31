@@ -87,11 +87,15 @@ export interface Config {
 	/** Custom OpenAI-completions providers (from ~/.botler-agent/providers.json, with a legacy CUSTOM_* env fallback). */
 	customProviders: CustomProviderConfig[];
 	telegramToken?: string;
+	/** Optional comma-separated Telegram sender allowlist (user ids or usernames); empty = allow all. */
+	telegramAllowFrom?: string;
 	feishuAppId?: string;
 	feishuAppSecret?: string;
 	feishuVerificationToken?: string;
 	feishuEncryptKey?: string;
 	feishuPort: number;
+	/** Optional comma-separated Feishu allowlist (sender open_id/user_id/union_id or chat_id); empty = allow all. */
+	feishuAllowFrom?: string;
 	/** When WECHAT_ENABLED=1, start the WeChat iLink long-poll channel (requires a completed wechat-login). */
 	wechatEnabled: boolean;
 	/** Optional comma-separated extra ilink_user_id allowlist; the account owner (QR scanner) is always allowed. */
@@ -129,6 +133,16 @@ export interface Config {
 	monitorPort: number;
 	/** Max tool-call turns for a single execution Agent (one assistant message with >=1 toolCall counts as 1 turn). Default 20. */
 	maxToolTurns: number;
+	/** When true, inject the recent IM conversation window into routing and execution prompts. */
+	conversationContextEnabled: boolean;
+	/** Number of recent visible turns kept per conversation session. */
+	conversationContextTurns: number;
+	/** Max characters kept for each stored user or assistant message. */
+	conversationTurnMaxChars: number;
+	/** Whole-window character cap for injected conversation context. */
+	conversationContextMaxChars: number;
+	/** Directory for the conversation session files (outside DATA_ROOT). */
+	conversationDir: string;
 }
 
 /**
@@ -220,6 +234,29 @@ function parseMaxToolTurns(): number {
 	return Number.isInteger(n) && n >= 1 ? n : 20;
 }
 
+/** Parse CONVERSATION_CONTEXT_ENABLED; only "0" disables it (default enabled). */
+function parseConversationContextEnabled(): boolean {
+	return process.env.CONVERSATION_CONTEXT_ENABLED !== "0";
+}
+
+/** Parse CONVERSATION_CONTEXT_TURNS; 0 disables injection, invalid values fall back to 5. */
+function parseConversationContextTurns(): number {
+	const n = Number(process.env.CONVERSATION_CONTEXT_TURNS ?? "5");
+	return Number.isInteger(n) && n >= 0 ? n : 5;
+}
+
+/** Parse CONVERSATION_TURN_MAX_CHARS; invalid or non-positive values fall back to 4000. */
+function parseConversationTurnMaxChars(): number {
+	const n = Number(process.env.CONVERSATION_TURN_MAX_CHARS ?? "4000");
+	return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 4000;
+}
+
+/** Parse CONVERSATION_CONTEXT_MAX_CHARS; invalid or non-positive values fall back to 12000. */
+function parseConversationContextMaxChars(): number {
+	const n = Number(process.env.CONVERSATION_CONTEXT_MAX_CHARS ?? "12000");
+	return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 12000;
+}
+
 /**
  * Parse WECHAT_REMINDER_HOURS. Single parse branch (avoids `Number(env)||23` letting 0<x<1 /
  * negative values through):
@@ -251,11 +288,13 @@ export const CONFIG: Config = {
 	model: process.env.PI_MODEL ?? "claude-sonnet-4-5",
 	customProviders: buildCustomProviders(),
 	telegramToken: process.env.TELEGRAM_BOT_TOKEN || undefined,
+	telegramAllowFrom: process.env.TELEGRAM_ALLOW_FROM || undefined,
 	feishuAppId: process.env.FEISHU_APP_ID || undefined,
 	feishuAppSecret: process.env.FEISHU_APP_SECRET || undefined,
 	feishuVerificationToken: process.env.FEISHU_VERIFICATION_TOKEN || undefined,
 	feishuEncryptKey: process.env.FEISHU_ENCRYPT_KEY || undefined,
 	feishuPort: Number(process.env.FEISHU_PORT ?? "3000"),
+	feishuAllowFrom: process.env.FEISHU_ALLOW_FROM || undefined,
 	wechatEnabled: process.env.WECHAT_ENABLED === "1",
 	wechatAllowFrom: process.env.WECHAT_ALLOW_FROM || undefined,
 	wechatReminderHours: parseWechatReminderHours(),
@@ -271,6 +310,11 @@ export const CONFIG: Config = {
 		"https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/{year}.json",
 	logDir: process.env.BOTLER_LOG_DIR ?? join(USER_CONFIG_DIR, "task-logs"),
 	maxToolTurns: parseMaxToolTurns(),
+	conversationContextEnabled: parseConversationContextEnabled(),
+	conversationContextTurns: parseConversationContextTurns(),
+	conversationTurnMaxChars: parseConversationTurnMaxChars(),
+	conversationContextMaxChars: parseConversationContextMaxChars(),
+	conversationDir: join(USER_CONFIG_DIR, "conversations"),
 	monitorEnabled: process.env.MONITOR_ENABLED !== "0",
 	monitorPort: (() => {
 		const n = Number(process.env.MONITOR_PORT ?? "8899");
