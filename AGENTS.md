@@ -9,7 +9,7 @@ This file is for AI coding assistants (and any contributors) working in this rep
 Key design principles (understand before changing, do not break):
 
 1. **The framework only defines boundaries, it does not hardcode business logic**: the operable directories (first-level subdirs of `DATA_ROOT`), the toolset (read/write/edit/run + schedule, where run is limited to existing in-project scripts and schedule only writes the fixed externalized `schedules.json`, neither is an arbitrary shell), the post-write JSON-validity fallback, and automatic git commit. Business schemas and rules are self-described by each data subproject's root `AGENTS.md`, concatenated into the system prompt at runtime.
-2. **Each message = a brand-new `Agent` instance**, with no cross-task memory. Therefore any "retry/fix" must be a **self-contained instruction** (pointing to the file + location + how to change it), not relying on the previous conversation.
+2. **Each message = a brand-new `Agent` instance**, but IM channels inject the most recent user-visible conversation turns as prompt context. The agent still has no internal tool-call / thinking memory, so any "retry/fix" must be a **self-contained instruction** (pointing to the file + location + how to change it), not relying on the previous conversation.
 3. **App / data separation**: this repo (including `.env`) and the `DATA_ROOT` data directory are two separate locations. The data directory contains only the projects being operated on — no source code or secrets.
 4. **Config externalized**: the system prompt, the real `.env`, and `providers.json` (custom model providers) live in `~/.botler-agent/` (overridable via `BOTLER_CONFIG_DIR`), reused across clones / machines. The source-dir `.env` is only a dev fallback.
 5. **Path allowlist is a security boundary**: the agent's tools may only read/write first-level subdirs of `DATA_ROOT`. Do not relax `safePath`, do not add `bash`-class tools to the agent unless explicitly requested and the consequences are understood.
@@ -39,11 +39,12 @@ npm test               # node:test suite (scheduler cron + store)
 
 ```
 channel (telegram.ts / feishu.ts)
-   → dispatcher.ts  dispatch(text, {id, source})
+   → dispatcher.ts  dispatch(text, {id, source, sessionKey: "im"})
        ├─ dedup (5-minute window, by id)
        ├─ sequential queue (Promise chain, serializes writes)
        └─ runner.ts  runTask(text)
              ├─ resolveModel() (provider/model resolution + cache)
+             ├─ loadRecentTurns() (shared IM recent visible turns; scheduler / CLI skip)
              ├─ loadSystemPrompt() (externalized first, fallback to built-in default; injects __DATA_ROOT__ / __PROJECTS__)
              ├─ new Agent({ systemPrompt, model, tools: fileTools })
              ├─ agent.prompt(text)
@@ -65,6 +66,7 @@ scheduler (scheduler/engine.ts) → dispatch(schedule.message, {id, source:"sche
 | `src/init.ts` | Initialize `~/.botler-agent/` (.env + providers.json + system-prompt.md templates); existing files not overwritten |
 | `src/config.ts` | Two-level `.env` loading (user-level > source-level) + providers.json loading + `CONFIG` construction + `USER_CONFIG_DIR` |
 | `src/dispatcher.ts` | Dedup, sequential queue, validation retry, commit orchestration (**never rejects**) |
+| `src/conversation/store.ts` | Shared `im` session sliding-window store (`~/.botler-agent/conversations/im.json`) + prompt formatting; scheduler / CLI / self-heal do not read or write it |
 | `src/runner.ts` | Build Agent, run task, extract final reply, decide whether it mutated; greeting short-circuit (`greeting.ts`) + image-aware routing |
 | `src/providers.ts` | Build a custom provider config into a pi-ai `Provider` (openai-completions) |
 | `src/prompts/system-prompt.ts` | Built-in generic default prompt + `loadSystemPrompt()` (externalized first + placeholder injection) |
@@ -106,7 +108,7 @@ The allowlist = first-level (non-hidden) subdirs of `DATA_ROOT`, computed dynami
 
 The framework **does not validate business semantics** (field values, aggregation consistency, etc.) — it only checks "all data JSON is valid JSON". This is the last line of defense against `edit` text replacement breaking JSON syntax (the `write` tool itself guarantees validity). Business rules are guaranteed by each subproject's `AGENTS.md` conventions + the project's own scripts.
 
-Each `runTask` is a brand-new Agent with no memory. On validation failure, the `fix` must be a **self-contained** correction instruction ("read file X, fix the JSON syntax, do not create a new file"). The dispatcher retries at most once; if still failing, it returns an error and does not commit.
+Each `runTask` is a brand-new Agent with no internal tool/thinking memory (recent visible turns may be injected as prompt text). On validation failure, the `fix` must be a **self-contained** correction instruction ("read file X, fix the JSON syntax, do not create a new file"). The dispatcher retries at most once; if still failing, it returns an error and does not commit.
 
 ### 4. Commit strategy (`safety/git.ts`)
 

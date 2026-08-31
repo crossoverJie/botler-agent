@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { createHash, createDecipheriv } from "node:crypto";
 import { CONFIG } from "../config.ts";
 import { dispatch } from "../dispatcher.ts";
+import { IM_SESSION_KEY } from "../conversation/store.ts";
 import { setChannelUp, setChannelDown } from "../monitor/stats.ts";
 
 const FEISHU_API = "https://open.feishu.cn/open-apis";
@@ -166,7 +167,7 @@ export function startFeishu(): void {
 					}
 				}
 				if (text) {
-					const reply = await dispatch(text, { id: messageId, source: "feishu" });
+					const reply = await dispatch(text, { id: messageId, source: "feishu", sessionKey: IM_SESSION_KEY });
 					// Text-only channel: an images-only reply still needs a non-empty body
 					const body = reply.text || "(image generated, but the Feishu channel does not support sending images yet)";
 					await replyFeishu(chatId, body).catch((e) =>

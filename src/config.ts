@@ -129,6 +129,14 @@ export interface Config {
 	monitorPort: number;
 	/** Max tool-call turns for a single execution Agent (one assistant message with >=1 toolCall counts as 1 turn). Default 20. */
 	maxToolTurns: number;
+	/** When true, inject the recent IM conversation window into routing and execution prompts. */
+	conversationContextEnabled: boolean;
+	/** Number of recent visible turns kept per conversation session. */
+	conversationContextTurns: number;
+	/** Max characters kept for each stored user or assistant message. */
+	conversationTurnMaxChars: number;
+	/** Directory for the conversation session files (outside DATA_ROOT). */
+	conversationDir: string;
 }
 
 /**
@@ -220,6 +228,23 @@ function parseMaxToolTurns(): number {
 	return Number.isInteger(n) && n >= 1 ? n : 20;
 }
 
+/** Parse CONVERSATION_CONTEXT_ENABLED; only "0" disables it (default enabled). */
+function parseConversationContextEnabled(): boolean {
+	return process.env.CONVERSATION_CONTEXT_ENABLED !== "0";
+}
+
+/** Parse CONVERSATION_CONTEXT_TURNS; 0 disables injection, invalid values fall back to 5. */
+function parseConversationContextTurns(): number {
+	const n = Number(process.env.CONVERSATION_CONTEXT_TURNS ?? "5");
+	return Number.isInteger(n) && n >= 0 ? n : 5;
+}
+
+/** Parse CONVERSATION_TURN_MAX_CHARS; invalid or non-positive values fall back to 4000. */
+function parseConversationTurnMaxChars(): number {
+	const n = Number(process.env.CONVERSATION_TURN_MAX_CHARS ?? "4000");
+	return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 4000;
+}
+
 /**
  * Parse WECHAT_REMINDER_HOURS. Single parse branch (avoids `Number(env)||23` letting 0<x<1 /
  * negative values through):
@@ -271,6 +296,10 @@ export const CONFIG: Config = {
 		"https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/{year}.json",
 	logDir: process.env.BOTLER_LOG_DIR ?? join(USER_CONFIG_DIR, "task-logs"),
 	maxToolTurns: parseMaxToolTurns(),
+	conversationContextEnabled: parseConversationContextEnabled(),
+	conversationContextTurns: parseConversationContextTurns(),
+	conversationTurnMaxChars: parseConversationTurnMaxChars(),
+	conversationDir: join(USER_CONFIG_DIR, "conversations"),
 	monitorEnabled: process.env.MONITOR_ENABLED !== "0",
 	monitorPort: (() => {
 		const n = Number(process.env.MONITOR_PORT ?? "8899");

@@ -22,6 +22,11 @@ import { buildCustomProvider } from "./providers.ts";
 import { collectTaskLog, type CollectInput } from "./logging/collect.ts";
 import type { Recipient } from "./push/types.ts";
 import type { ModelCacheStats, TaskLog } from "./logging/types.ts";
+import {
+	formatRecentTurns,
+	loadRecentTurns,
+	type ConversationTurn,
+} from "./conversation/store.ts";
 import { markModelCache, markAgentStart, markAgentEnd, stats } from "./monitor/stats.ts";
 
 const models = createModels();
@@ -80,6 +85,10 @@ export interface RunLogContext {
 	recipient?: Recipient;
 	/** Inbound images (decoded bytes) to feed the model as vision input AND persist under the target subproject. */
 	inboundImages?: InboundImage[];
+	/** Fixed conversation session key for IM messages; absent for scheduler / CLI / self-heal. */
+	sessionKey?: string;
+	/** Preloaded recent turns (used by tests); when absent, the runner loads them from the store. */
+	recentTurns?: ConversationTurn[];
 }
 
 export interface TaskResult {
@@ -91,6 +100,8 @@ export interface TaskResult {
 	mutated: boolean;
 	/** Collected task log; the dispatcher overrides `status` then appends it (undefined only on early throw). */
 	log?: TaskLog;
+	/** Persisted inbound-image relative paths, used by the dispatcher when recording the visible turn. */
+	conversationImageRefs?: string[];
 }
 
 const IMAGE_REF_RE = /!\[[^\]]*\]\(([^)]*)\)/g;
@@ -205,6 +216,7 @@ async function routeProject(
 	includeScheduler: boolean,
 	images?: ImageContent[],
 	hasImages = false,
+	recentTurns: readonly ConversationTurn[] = [],
 ): Promise<{ project: string | null; usage?: Usage; prompt?: string; candidates: string[] }> {
 	const projects = listProjectDirs();
 	if (projects.length === 0) return { project: null, candidates: [] };
@@ -214,7 +226,7 @@ async function routeProject(
 	// single-project shortcut above intentionally ignores it (the schedule tool stays available
 	// in any execution context, so single-project setups still work).
 	const candidates = includeScheduler ? [...projects, SCHEDULER_VIRTUAL_PROJECT] : projects;
-	const prompt = buildRoutePrompt(userMessage, includeScheduler, hasImages);
+	const prompt = buildRoutePrompt(userMessage, includeScheduler, hasImages, recentTurns);
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: prompt,
@@ -281,6 +293,15 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	const ctx: RunLogContext = logCtx ?? { taskId: randomUUID(), source: "cli", phase: "execute" };
 	const startedAt = Date.now();
 	const inboundImages = ctx.inboundImages ?? [];
+	const recentTurns =
+		ctx.recentTurns !== undefined
+			? ctx.recentTurns
+			: CONFIG.conversationContextEnabled &&
+					ctx.phase === "execute" &&
+					ctx.source !== "scheduler" &&
+					ctx.sessionKey
+				? loadRecentTurns(ctx.sessionKey, CONFIG.conversationContextTurns)
+				: [];
 	// Base64-encode each inbound image exactly once and reuse it for routing + execution.
 	const imagesContent = toImageContent(inboundImages);
 	const model = resolveModel();
@@ -327,6 +348,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 			ctx.source !== "scheduler",
 			imagesContent,
 			inboundImages.length > 0,
+			recentTurns,
 		);
 		project = routed.project;
 		routingUsage = routed.usage;
@@ -373,8 +395,12 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		: "";
 	const execText = `${userMessage}${attachmentNote}`.trim();
 
-	// Phase 2: execution
-	const systemPrompt = loadSystemPrompt(project);
+	// Phase 2: execution. Recent visible turns are injected through the system prompt rather
+	// than reconstructed as Agent messages, avoiding internal tool-call metadata.
+	const historyBlock = formatRecentTurns(recentTurns);
+	const systemPrompt = historyBlock
+		? `${loadSystemPrompt(project)}\n\n# 最近对话\n${historyBlock}\n\n以上是最近若干轮用户可见对话。当前消息如果明显是新的独立任务，请忽略旧历史并按新任务处理；如果它是上一轮任务的确认、补充或纠正，请结合历史继续处理。无法确定时向用户确认。`
+		: loadSystemPrompt(project);
 	// Flag set when the tool-turn cap is hit and the run is hard-stopped; used after prompt() to recognize it and return the fallback copy.
 	let toolTurnCapHit = false;
 	const agent = new Agent({
@@ -497,5 +523,5 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		modelCache: snapshotModelCache(),
 	});
 
-	return { text, images, mutated, log };
+	return { text, images, mutated, log, conversationImageRefs: savedPaths };
 }

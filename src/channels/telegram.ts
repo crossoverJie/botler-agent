@@ -3,6 +3,7 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { CONFIG } from "../config.ts";
 import { dispatch } from "../dispatcher.ts";
 import { recordContact } from "../push/contacts.ts";
+import { IM_SESSION_KEY } from "../conversation/store.ts";
 import { setChannelUp, setChannelDown } from "../monitor/stats.ts";
 
 /** Module-level bot instance (set by startTelegram); used by push delivery. */
@@ -77,6 +78,7 @@ export function startTelegram(): void {
 				id: `${chatId}:${messageId}`,
 				source: "telegram",
 				recipient: { source: "telegram", userId: String(chatId) },
+				sessionKey: IM_SESSION_KEY,
 			});
 			// Text-only channel: images the agent produced are not sent here, so an
 			// images-only reply still needs a non-empty body (Telegram rejects empty text).
