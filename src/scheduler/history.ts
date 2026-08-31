@@ -38,23 +38,12 @@ export interface ScheduleLastRun {
 	tokenTotal: number;
 }
 
-export interface ScheduleOverviewItem {
-	id: string;
-	enabled: boolean;
-	cron?: string;
-	interval?: string;
-	at?: string;
-	once?: string;
-	timezone: string;
-	message: string;
-	project?: string;
-	retry?: ScheduleEntry["retry"];
-	silentHours?: ScheduleEntry["silentHours"];
-	holidayMode?: ScheduleEntry["holidayMode"];
-	recipient?: ScheduleEntry["recipient"];
+export type ScheduleOverviewItem = ScheduleEntry & {
 	nextFireAt: number | null;
 	lastRun: ScheduleLastRun | null;
-}
+};
+
+export type RunLogVisitor = (visit: (log: TaskLog) => void) => void;
 
 function nextFireAt(e: ScheduleEntry): number | null {
 	if (!e.enabled) return null;
@@ -70,7 +59,10 @@ export function scheduleRuns(id: string, q: ScheduleRunQuery = {}): LogPage {
 	return queryLogs({ ...q, source: "scheduler", scheduleId: id });
 }
 
-export function scheduleRunStats(id: string): ScheduleRunStats {
+export function aggregateRunStats(
+	scheduleId: string,
+	iterate: RunLogVisitor,
+): ScheduleRunStats {
 	const byStatus: Record<string, number> = {};
 	const token = { input: 0, output: 0, total: 0 };
 	let durationSum = 0;
@@ -78,7 +70,7 @@ export function scheduleRunStats(id: string): ScheduleRunStats {
 	let lastRunAt: number | null = null;
 	let totalRuns = 0;
 
-	scanLogs({ source: "scheduler", scheduleId: id, phase: "execute" }, (l) => {
+	iterate((l) => {
 		totalRuns += 1;
 		byStatus[l.status] = (byStatus[l.status] ?? 0) + 1;
 		token.input += l.usage.input;
@@ -90,7 +82,7 @@ export function scheduleRunStats(id: string): ScheduleRunStats {
 	});
 
 	return {
-		scheduleId: id,
+		scheduleId,
 		totalRuns,
 		byStatus,
 		firstRunAt,
@@ -98,6 +90,55 @@ export function scheduleRunStats(id: string): ScheduleRunStats {
 		avgDurationMs: totalRuns ? Math.round(durationSum / totalRuns) : 0,
 		token,
 	};
+}
+
+export function scheduleRunStats(id: string): ScheduleRunStats {
+	return aggregateRunStats(id, (visit) => {
+		scanLogs({ source: "scheduler", scheduleId: id, phase: "execute" }, visit);
+	});
+}
+
+function toLastRun(l: TaskLog | undefined): ScheduleLastRun | null {
+	return l
+		? {
+				startedAt: l.startedAt,
+				status: l.status,
+				durationMs: l.durationMs,
+				project: l.project,
+				tokenTotal: l.usage.total,
+			}
+		: null;
+}
+
+function latestRunBySchedule(logs: Iterable<TaskLog>): Map<string, TaskLog> {
+	const latest = new Map<string, TaskLog>();
+
+	for (const l of logs) {
+		const scheduleId = scheduleIdFromTaskId(l.taskId);
+		if (!scheduleId) continue;
+		const prev = latest.get(scheduleId);
+		if (!prev || l.startedAt > prev.startedAt) latest.set(scheduleId, l);
+	}
+
+	return latest;
+}
+
+function buildScheduleOverview(
+	entries: ScheduleEntry[],
+	latest: Map<string, TaskLog>,
+): ScheduleOverviewItem[] {
+	return entries.map((e) => ({
+		...e,
+		nextFireAt: nextFireAt(e),
+		lastRun: toLastRun(latest.get(e.id)),
+	}));
+}
+
+export function scheduleOverviewFromLogs(
+	entries: ScheduleEntry[],
+	logs: Iterable<TaskLog>,
+): ScheduleOverviewItem[] {
+	return buildScheduleOverview(entries, latestRunBySchedule(logs));
 }
 
 export function scheduleOverview(): ScheduleOverviewItem[] {
@@ -111,35 +152,5 @@ export function scheduleOverview(): ScheduleOverviewItem[] {
 		if (!prev || l.startedAt > prev.startedAt) latest.set(scheduleId, l);
 	});
 
-	const toLastRun = (l: TaskLog | undefined): ScheduleLastRun | null =>
-		l
-			? {
-					startedAt: l.startedAt,
-					status: l.status,
-					durationMs: l.durationMs,
-					project: l.project,
-					tokenTotal: l.usage.total,
-				}
-			: null;
-
-	return entries.map((e) => {
-		const last = latest.get(e.id);
-		return {
-			id: e.id,
-			enabled: e.enabled,
-			timezone: e.timezone,
-			message: e.message,
-			...(e.cron ? { cron: e.cron } : {}),
-			...(e.interval ? { interval: e.interval } : {}),
-			...(e.at ? { at: e.at } : {}),
-			...(e.once ? { once: e.once } : {}),
-			...(e.project ? { project: e.project } : {}),
-			...(e.retry ? { retry: e.retry } : {}),
-			...(e.silentHours ? { silentHours: e.silentHours } : {}),
-			...(e.holidayMode ? { holidayMode: e.holidayMode } : {}),
-			...(e.recipient ? { recipient: e.recipient } : {}),
-			nextFireAt: nextFireAt(e),
-			lastRun: toLastRun(last),
-		};
-	});
+	return buildScheduleOverview(entries, latest);
 }

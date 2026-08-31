@@ -868,9 +868,7 @@ async function persistSchedules(){
   }
 }
 
-async function loadSchedStats(){
-  if(!schedHistory.id) return;
-  const s = await getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/stats`);
+function renderSchedStats(s){
   const success = s.byStatus.success || 0;
   const failed = (s.byStatus.error || 0) + (s.byStatus["validation-failed"] || 0);
   document.getElementById("sched-stats").innerHTML = [
@@ -887,7 +885,10 @@ async function loadSchedHistory(){
   const p = new URLSearchParams();
   p.set("limit", schedHistory.limit);
   p.set("offset", schedHistory.offset);
-  const data = await getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/runs?${p}`);
+  const [data, s] = await Promise.all([
+    getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/runs?${p}`),
+    getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/stats`),
+  ]);
   schedHistory.total = data.total;
   const rows = data.logs.map(l=>{
     return `<tr class="row" data-log="${esc(l.id)}">
@@ -904,7 +905,10 @@ async function loadSchedHistory(){
 
   document.getElementById("sched-history").style.display="block";
   document.getElementById("sched-history").innerHTML = `
-    <div class="section-title">History: ${esc(schedHistory.id)}</div>
+    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>History: ${esc(schedHistory.id)}</span>
+      <button class="btn ghost" id="sched-history-close">Close</button>
+    </div>
     <div class="cards" id="sched-stats"></div>
     <table>
       <thead><tr><th>Time</th><th>Status</th><th>Phase</th><th>Project</th><th>Duration</th><th>Tokens</th><th>Reply</th></tr></thead>
@@ -917,6 +921,10 @@ async function loadSchedHistory(){
     </div>`;
 
   document.querySelectorAll("#sched-history tr.row").forEach(tr=>tr.onclick=()=>showDetail(tr.dataset.log));
+  document.getElementById("sched-history-close").onclick = ()=>{
+    document.getElementById("sched-history").style.display="none";
+    schedHistory = { id:null, offset:0, limit:20, total:0 };
+  };
   document.getElementById("sh-prev").onclick=()=>{ schedHistory.offset=Math.max(0,schedHistory.offset-schedHistory.limit); loadSchedHistory(); };
   document.getElementById("sh-next").onclick=()=>{
     const nextOffset = schedHistory.offset + schedHistory.limit;
@@ -924,7 +932,7 @@ async function loadSchedHistory(){
     schedHistory.offset = nextOffset;
     loadSchedHistory();
   };
-  await loadSchedStats();
+  renderSchedStats(s);
 }
 
 function openSchedHistory(id){
