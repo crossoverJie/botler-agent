@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # botler-agent container.
 # Runs the persistent channel via tsx (no build step); tsx is a runtime dependency.
 #
@@ -16,7 +14,9 @@ RUN apk add --no-cache git tzdata python3 ca-certificates
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+# --ignore-scripts matches the repo CI (ci.yml) and skips native postinstall
+# binaries (e.g. esbuild) that crash under multi-arch QEMU emulation.
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 COPY bin ./bin
 COPY src ./src
