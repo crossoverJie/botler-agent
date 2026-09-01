@@ -16,7 +16,13 @@ import {
 	listProjectDirs,
 	SCHEDULER_VIRTUAL_PROJECT,
 } from "./prompts/system-prompt.ts";
-import { isGreeting, greetingReply, fallbackUnknownReply } from "./greeting.ts";
+import {
+	isGreeting,
+	greetingReply,
+	fallbackUnknownReply,
+	isContextResetRequest,
+	contextResetReply,
+} from "./greeting.ts";
 import { CONFIG } from "./config.ts";
 import { buildCustomProvider } from "./providers.ts";
 import { collectTaskLog, type CollectInput } from "./logging/collect.ts";
@@ -25,6 +31,7 @@ import type { ModelCacheStats, TaskLog } from "./logging/types.ts";
 import {
 	formatRecentTurns,
 	loadRecentTurns,
+	clearSession,
 	shouldLoadRecentTurns,
 	type ConversationTurn,
 } from "./conversation/store.ts";
@@ -292,6 +299,26 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	const ctx: RunLogContext = logCtx ?? { taskId: randomUUID(), source: "cli", phase: "execute" };
 	const startedAt = Date.now();
 	const inboundImages = ctx.inboundImages ?? [];
+	const isImSession =
+		ctx.phase === "execute" &&
+		ctx.source !== "scheduler" &&
+		ctx.source !== "cli" &&
+		Boolean(ctx.sessionKey);
+
+	// An explicit reset command clears the shared IM history before any routing or execution.
+	// The command itself is not written back, so the next real message starts from an empty window.
+	if (isImSession && inboundImages.length === 0 && isContextResetRequest(userMessage)) {
+		clearSession(ctx.sessionKey!);
+		const replyText = contextResetReply();
+		return {
+			text: replyText,
+			images: [],
+			mutated: false,
+			log: buildMinimalLog({ ctx, startedAt, endedAt: Date.now(), userMessage, replyText, project: null }),
+			recordConversationTurn: false,
+		};
+	}
+
 	const recentTurns = shouldLoadRecentTurns({
 		enabled: CONFIG.conversationContextEnabled,
 		phase: ctx.phase,

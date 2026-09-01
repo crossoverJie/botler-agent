@@ -244,6 +244,7 @@ Scheduler ──► dispatch(schedule.message) ──►（同上流水线）
 - **微信（iLink / ClawBot 官方 Bot API）**：私聊渠道。先用 `npm start -- wechat-login` 登录（终端打印二维码，用微信扫码——凭据存入 `~/.botler-agent/wechat/account.json`），再设 `WECHAT_ENABLED=1` 启用。账号主号（扫码者）始终允许；`WECHAT_ALLOW_FROM` 可额外放行 `ilink_user_id`。续期提醒（`WECHAT_REMINDER_HOURS`）会在主号 24h `context_token` 窗口临近过期前提醒其刷新。
   - **入站图片即视觉输入**：微信可接收你发来的图片，解码后作为视觉输入喂给模型，并把原图持久化到 `DATA_ROOT/<project>/photos/`。由于微信「选图即发、文字后到」，入站图片会在一个短暂窗口内暂存（`WECHAT_IMAGE_BATCH_SECONDS`，默认 60s；设 `0` 关闭），让随后补发的文字作为同一条任务的描述合并进入；窗口内的多张图片也会合并。若当前模型无法读图，代理会用中文回复，请你补一句文字说明。
   - **问候短路**：仅含问候（如 你好 / hi）的消息会跳过路由 LLM 调用，直接给出一份零开销的中文欢迎语，列出当前可用子项目。
+  - **上下文重置**：发送「新任务 / 忽略上文 / 重置上下文」会清空共享的最近对话窗口；重置命令本身不写入历史。
 
 只有微信渠道会发送图片；其他渠道仅发文本（回复中的图片 markdown 会被去除）。
 

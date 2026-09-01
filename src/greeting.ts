@@ -22,6 +22,19 @@ export function isGreeting(msg: string): boolean {
 	return /^(你好|您好|喂|哈喽|嗨|hi|hello|hey|在吗|在不在)[啊呀哇哦啦哟]*$/i.test(stripped);
 }
 
+/**
+ * Returns true for an explicit request to clear the shared conversation context.
+ * Like greetings, this is matched only when the message contains no additional task content.
+ */
+export function isContextResetRequest(msg: string): boolean {
+	const stripped = msg
+		.trim()
+		.replace(/^[\s\p{P}\p{S}\p{M}]+|[\s\p{P}\p{S}\p{M}]+$/gu, "");
+	return /^(新任务|新对话|忽略上文|忽略历史|重置上下文|重置会话|清空上下文|new task|ignore previous|ignore context|reset context|clear context)$/i.test(
+		stripped,
+	);
+}
+
 /** Compact, IM-friendly list of subprojects with a one-line "what it does" each. */
 function projectList(): string {
 	const caps = projectCapabilities();
@@ -37,6 +50,11 @@ export function greetingReply(): string {
 		"想做什么直接说就行，比如记账、查词、记录日常，也可以让我「创建定时任务 / 提醒」。\n\n" +
 		`当前可用的子项目：\n${projectList()}`
 	);
+}
+
+/** Confirmation for a context-reset command. The previous conversation is already cleared. */
+export function contextResetReply(): string {
+	return "已清空当前会话上下文。接下来我会按新任务处理。";
 }
 
 /**
