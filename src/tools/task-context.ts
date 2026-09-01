@@ -9,18 +9,18 @@
 
 import type { Recipient } from "../push/types.ts";
 
-let current: { recipient?: Recipient; clearConversationAllowed?: boolean } | null = null;
+let current: { recipient?: Recipient; conversationSessionKey?: string } | null = null;
 
 export function setTaskContext(c: {
 	recipient?: Recipient;
-	clearConversationAllowed?: boolean;
+	conversationSessionKey?: string;
 } | null): void {
 	current = c;
 }
 
 export function getTaskContext(): {
 	recipient?: Recipient;
-	clearConversationAllowed?: boolean;
+	conversationSessionKey?: string;
 } | null {
 	return current;
 }

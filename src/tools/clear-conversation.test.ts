@@ -25,8 +25,17 @@ test("clear_conversation_context rejects when the current task is not an IM user
 	);
 });
 
+test("clear_conversation_context rejects a recipient-only task without a conversation session key", async () => {
+	taskContext.setTaskContext({ recipient: { source: "telegram", userId: "123" } });
+	await assert.rejects(
+		clearTool.clearConversationTool.execute("tool-call-id", {}),
+		/Conversation context can only be cleared for IM user tasks/,
+	);
+	taskContext.setTaskContext(null);
+});
+
 test("clear_conversation_context clears the shared IM session when allowed", async () => {
-	taskContext.setTaskContext({ clearConversationAllowed: true });
+	taskContext.setTaskContext({ conversationSessionKey: store.IM_SESSION_KEY });
 	store.clearSession(store.IM_SESSION_KEY);
 	store.appendTurn(
 		store.IM_SESSION_KEY,

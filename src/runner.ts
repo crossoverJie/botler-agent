@@ -8,6 +8,11 @@ import type { AssistantMessage, ImageContent, Model, Usage } from "@earendil-wor
 type AnyModel = Model<any>;
 import { dataTools, fileTools } from "./tools/index.ts";
 import { setTaskContext } from "./tools/task-context.ts";
+import {
+	parseRoute,
+	shouldClearConversationForRoute,
+	shouldRecordConversationTurn,
+} from "./runner/decisions.ts";
 import { safePath } from "./tools/paths.ts";
 import { persistInboundImage, type InboundImage } from "./channels/wechat/download.ts";
 import {
@@ -190,28 +195,6 @@ const TOOL_TURN_CAP_HINT = [
 ].join("\n");
 
 /**
- * Parse the routing output into a project name; returns null if undetermined.
- * The candidate list includes the virtual `__scheduler__` project. Aliases are matched only
- * AFTER real-project matches, so a message targeting a data project is never stolen by the
- * scheduler; "task" alone is deliberately not an alias (too generic).
- */
-function parseRoute(output: string, projects: string[]): { project: string | null; resetContext: boolean } {
-	const t = output.replace(/^[-*\s]+/, "").replace(/[\/\s]+$/, "").trim();
-	if (!t) return { project: null, resetContext: false };
-	if (t === RESET_CONTEXT_DECISION) {
-		return { project: null, resetContext: true };
-	}
-	if (/unknown|无法确定|不确定|无法判断|不明确|多个|both/i.test(t)) {
-		return { project: null, resetContext: false };
-	}
-	if (projects.includes(t)) return { project: t, resetContext: false };
-	for (const p of projects) if (t.includes(p)) return { project: p, resetContext: false };
-	if (projects.includes(SCHEDULER_VIRTUAL_PROJECT) && (t === "scheduler" || /定时|提醒|日程/.test(t)))
-		return { project: SCHEDULER_VIRTUAL_PROJECT, resetContext: false };
-	return { project: null, resetContext: false };
-}
-
-/**
  * Phase 1: decide which data subproject the user message targets.
  * Single project returns directly; multiple projects route via one lightweight LLM call; undetermined returns null (caller notifies the user).
  * The routing Agent is a single clean LLM call, so its `usage` (and the routing prompt) is returned alongside the decision.
@@ -377,7 +360,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		routingPrompt = routed.prompt;
 		routingCandidates = routed.candidates;
 	}
-	if (resetContext && isImSession) {
+	if (shouldClearConversationForRoute(resetContext, isImSession, ctx.sessionKey)) {
 		clearSession(ctx.sessionKey!);
 		const replyText = contextResetReply();
 		return {
@@ -443,11 +426,12 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	const baseSystemPrompt = historyBlock
 		? `${loadSystemPrompt(project)}\n\n# 最近对话\n${historyBlock}\n\n以上是最近若干轮用户可见对话。当前消息如果明显是新的独立任务，请忽略旧历史并按新任务处理；如果它是上一轮任务的确认、补充或纠正，请结合历史继续处理。无法确定时向用户确认。`
 		: loadSystemPrompt(project);
-	const clearToolInstruction = isImSession
+	const canControlConversation = isImSession && project !== SCHEDULER_VIRTUAL_PROJECT;
+	const clearToolInstruction = canControlConversation
 		? "\n\n# 会话上下文控制\n你可以使用 clear_conversation_context 工具。仅当用户明确要求清空 / 忽略 / 重置之前的上下文（例如「新任务」「忽略上文」「重置上下文」，或等价表达）时，在处理当前请求前调用该工具一次。调用后，如果用户还带有具体任务，继续完成该任务；如果没有具体任务，只需简短确认已清空。"
 		: "";
 	const systemPrompt = `${baseSystemPrompt}${clearToolInstruction}`;
-	const executionTools = isImSession ? fileTools : dataTools;
+	const executionTools = canControlConversation ? fileTools : dataTools;
 	// Flag set when the tool-turn cap is hit and the run is hard-stopped; used after prompt() to recognize it and return the fallback copy.
 	let toolTurnCapHit = false;
 	const agent = new Agent({
@@ -489,7 +473,10 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	// context once the run ends — whether it succeeded or not.
 	setTaskContext(
 		isImSession || ctx.recipient
-			? { recipient: ctx.recipient, clearConversationAllowed: isImSession }
+			? {
+					recipient: ctx.recipient,
+					conversationSessionKey: isImSession ? ctx.sessionKey : undefined,
+				}
 			: null,
 	);
 	try {
@@ -510,8 +497,6 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		.filter((m) => m.role === "toolResult")
 		.map((m) => (m as { toolName?: string }).toolName)
 		.filter((name): name is string => typeof name === "string");
-	const clearToolCalled = toolNames.includes("clear_conversation_context");
-	const nonClearToolCalled = toolNames.some((name) => name !== "clear_conversation_context");
 
 	let text = "⚠️ No reply generated";
 	let images: string[] = [];
@@ -586,6 +571,6 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		images,
 		mutated,
 		log,
-		recordConversationTurn: !(clearToolCalled && !nonClearToolCalled && savedPaths.length === 0),
+		recordConversationTurn: shouldRecordConversationTurn(toolNames, savedPaths.length),
 	};
 }

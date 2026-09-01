@@ -8,7 +8,7 @@
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
-import { clearSession, IM_SESSION_KEY } from "../conversation/store.ts";
+import { clearSession } from "../conversation/store.ts";
 import { getTaskContext } from "./task-context.ts";
 
 const schema = Type.Object({});
@@ -21,10 +21,11 @@ export const clearConversationTool: AgentTool<typeof schema> = {
 	parameters: schema,
 	async execute(_toolCallId) {
 		const ctx = getTaskContext();
-		if (!ctx?.clearConversationAllowed) {
+		const sessionKey = ctx?.conversationSessionKey;
+		if (!sessionKey) {
 			throw new Error("Conversation context can only be cleared for IM user tasks.");
 		}
-		clearSession(IM_SESSION_KEY);
+		clearSession(sessionKey);
 		return {
 			content: [{ type: "text", text: "Conversation context cleared." }],
 			details: {},

@@ -8,7 +8,7 @@
 
 通用轻量个人 Agent 框架：从 **Telegram / 飞书 / 微信（iLink）** 接收消息，在**数据根目录（`DATA_ROOT`）**内的各数据子项目中自主完成短任务，并把结果回发给用户。可选运行定时任务（内置调度器），并提供本地 WebUI 与健康度监控。
 
-- **框架只定义边界**：可操作目录白名单、只提供 `read / write / edit / run / schedule` 五个工具（run 仅限项目内已有脚本，schedule 只写固定的外置 `schedules.json`，二者都不是任意 shell）、写后校验 JSON 合法、有改动自动 git commit。
+- **框架只定义边界**：可操作目录白名单、只提供 `read / write / edit / run / schedule` 五个数据工具，外加 IM-only 的 `clear_conversation_context`（run 仅限项目内已有脚本，schedule 只写固定的外置 `schedules.json`，二者都不是任意 shell）、写后校验 JSON 合法、有改动自动 git commit。
 - **业务规则由数据项目自描述**：每个数据子项目根目录的 `AGENTS.md` 描述其文件结构与操作规则，Agent 动手前先读它。框架不硬编码任何具体业务。
 - **提示词与配置外置**：放在 `~/.botler-agent/`，跨 clone / 跨机器复用，用户可定制或让 AI 生成。
 
@@ -16,7 +16,7 @@
 
 刻意做**轻**，区别于重型 Agent 框架：
 
-- **轻量** — 只有五个工具，无重型运行时 / 守护进程，一个 `tsx` 进程即可，秒级安装。
+- **轻量** — 只有六个工具，无重型运行时 / 守护进程，一个 `tsx` 进程即可，秒级安装。
 - **省 token** — 每个任务都是全新短命 Agent，仅复用受限的最近可见对话窗口；路由只用「项目名 + 摘要」小提示词，只加载被选中子项目的约定。没有巨型 system prompt、不追长上下文，多数任务成本只有通用助手的零头。
 - **聚焦垂直简单任务** — 不是通用聊天机器人，擅长小、重复、边界清晰的活（饮食记录、生词查询、定时提醒），每个由自己的 `AGENTS.md` 描述。
 
@@ -26,7 +26,7 @@
 |---|---|---|---|
 | **定位** | 轻量个人数据助手 | 通用任务自动化 | 代码库内的软件工程 |
 | **安装体积** | 单个 `tsx` 进程，秒级安装，无重型运行时 | 庞大的安装包，携带大量可能用不上的功能 | 较重，依赖完整的开发环境 |
-| **内置工具** | 仅 5 个受控工具（read / write / edit / run / schedule） | 内置大量、往往复杂的工具 | 完整的 shell、文件系统与命令权限 |
+| **内置工具** | 仅 6 个受控工具（read / write / edit / run / schedule + IM-only `clear_conversation_context`） | 内置大量、往往复杂的工具 | 完整的 shell、文件系统与命令权限 |
 | **文件操作** | 路径白名单——仅限 `DATA_ROOT` 一级子目录 | 文件访问较开放 | 可读取/改写整个工作区 |
 | **对电脑的权限** | 极其克制——无任意 shell | 较开放 | 高度开放（执行命令、修改代码） |
 | **交互方式** | 移动端优先：微信 / Telegram / 飞书 聊天 | 多端 | 以桌面 / 终端为主 |
@@ -126,7 +126,7 @@ Telegram / 飞书 / 微信（iLink）
                         ├─ ① 路由：判断消息属于哪个子项目（或 __scheduler__）；模糊则让用户说清楚
                         ├─ ② 执行：system prompt 按需拼接该子项目的 AGENTS.md
                         ├─ model（anthropic 或自定义 OpenAI-completions / anthropic-messages 网关）
-                        └─ 工具 read / write / edit / run / schedule（白名单目录；run 仅限项目内脚本；schedule 只写 schedules.json）
+                        └─ 工具 read / write / edit / run / schedule（白名单目录；run 仅限项目内脚本；schedule 只写 schedules.json；IM 执行额外加入 clear_conversation_context）
                         │
                         ▼
                   读/写 DATA_ROOT 下各子项目（每个子项目自带 AGENTS.md 描述约定）
@@ -155,8 +155,9 @@ Scheduler ──► dispatch(schedule.message) ──►（同上流水线）
 | `src/providers.ts` | 把自定义供应商配置构建成 pi-ai `Provider`（openai-completions / anthropic-messages） |
 | `src/prompts/system-prompt.ts` | 内置通用默认提示词 + 路由提示词 + `loadSystemPrompt()`（按需加载，注入占位符） |
 | `src/tools/paths.ts` | **安全边界**：`safePath()` 白名单校验 + `projectOf()` |
-| `src/tools/{read,write,edit,run,schedule}.ts` | 五个自定义 `AgentTool`；read/write/edit/run 经 `safePath` 校验（run 仅限项目内 python3/node 脚本）；`schedule` 管理 `schedules.json`（固定文件、无路径参数——唯一的有意白名单例外） |
-| `src/tools/task-context.ts` | 模块级每任务上下文；把消息发送者注入为 `schedule` 工具的推送对象 |
+| `src/tools/{read,write,edit,run,schedule}.ts` | 五个 DATA_ROOT `AgentTool`；read/write/edit/run 经 `safePath` 校验（run 仅限项目内 python3/node 脚本）；`schedule` 管理 `schedules.json`（固定文件、无路径参数） |
+| `src/tools/clear-conversation.ts` | IM-only 会话控制 `AgentTool`；通过 `task-context` 清空当前任务的会话，不触碰 `DATA_ROOT`，无路径参数 |
+| `src/tools/task-context.ts` | 模块级每任务上下文；为 `schedule` 注入消息发送者，为 `clear_conversation_context` 注入当前会话 key |
 | `src/safety/validate.ts` | 写后校验所有数据 JSON 合法（兜 edit 破坏语法），返回自包含的 `fix` 指令 |
 | `src/safety/git.ts` | 遍历 DATA_ROOT 子项目各自 commit（可选 push） |
 | `src/scheduler/{types,store,engine,cron}.ts` | schedules.json 的 schema + 校验/原子存储、进程内触发循环（watermark + `nextFireEpoch`），saved 监听器使写入立即唤醒循环 |
@@ -164,6 +165,7 @@ Scheduler ──► dispatch(schedule.message) ──►（同上流水线）
 | `src/logging/{types,collect,store}.ts` | 每任务 JSONL 日志（`task-logs/`），供 WebUI 使用 |
 | `src/monitor/{stats,health}.ts` | 进程内计数器 + 本地健康/指标服务（`/healthz`、`/metrics`、`/healthz/history`） |
 | `src/webui/server.ts` | 本地任务日志 WebUI（仅绑定 `127.0.0.1`） |
+| `src/channels/allowlist.ts` | Telegram / 飞书共用的发送者白名单助手（微信有独立主号 + 额外发送者门控） |
 | `src/channels/{telegram,feishu}.ts` | 渠道适配：grammy 长轮询 / 飞书 webhook（含解密） |
 | `src/channels/wechat/*` | 微信 iLink 渠道：扫码登录（`login.ts`）、长轮询监听（`monitor.ts`）、媒体发送/上传、context_token 持久化（`context.ts`）、主号续期提醒循环（`reminder.ts`） |
 
@@ -292,7 +294,7 @@ Schema——`cron` / `interval` / `at` / `once` 四选一：
 - `retry` / `silentHours`：可选失败重试与免打扰窗口（落在窗口内的触发延后到窗口结束）。
 - `holidayMode: "workday"`：**中国法定工作日门控**，仅作用于 `cron` / `interval` / `at` 触发。该条目**只在法定工作日触发**——跳过法定假日（法定假日），并在调休补班日（补班）正常触发。cron 的日期字段被忽略，只使用「时刻」（`hour:minute`），因此 `0 9,18 * * *` 会在每个工作日的 09:00 与 18:00 各触发一次。不可与 `once` 组合。日历在启动 + 每 24h 从 `BOTLER_HOLIDAY_API_URL` 拉取并缓存到 `BOTLER_HOLIDAYS_FILE`；任何拉取失败都保留缓存数据，并退化为普通周一至周五。
 
-**路由**：创建/管理定时任务的消息（或含中文关键词 定时 / 提醒 / 日程）会路由到虚拟项目 `__scheduler__`；`schedule` 工具属于 `dataTools`，因此在任何执行上下文中都可用。IM 执行任务还会额外获得 `clear_conversation_context`。
+**路由**：创建/管理定时任务的消息（或含中文关键词 定时 / 提醒 / 日程）会路由到虚拟项目 `__scheduler__`；`schedule` 工具属于 `dataTools`，因此在任何执行上下文中都可用。非调度项目的 IM 执行任务还会额外获得 `clear_conversation_context`。
 
 ## WebUI
 
@@ -310,7 +312,7 @@ Schema——`cron` / `interval` / `at` / `once` 四选一：
 
 - **应用与数据分离**：框架（本仓库，含 `.env`）与数据目录（`DATA_ROOT`）是两个独立位置。数据目录里只有被操作的项目，不含源码或密钥。
 - **路径白名单**：`safePath()` 只放行 `DATA_ROOT` 下的一级子目录；用 `root + sep` 前缀匹配防止 `/agent2` 误入，并对最深已存在祖先做 `realpath` 防止符号链接逃逸。
-- **不提供任意 shell**：只读/写/edit + 受控 run（仅限白名单项目内已存在的 python3/node 脚本，不经 shell、参数直传、超时 60s）+ 受控 schedule（只写固定的 `schedules.json`、无文件路径参数）。git 提交由胶水层用 `execFileSync` 完成。
+- **不提供任意 shell**：只读/写/edit + 受控 run（仅限白名单项目内已存在的 python3/node 脚本，不经 shell、参数直传、超时 60s）+ 受控 schedule（只写固定的 `schedules.json`、无文件路径参数）。IM 执行额外只在当前会话暴露 `clear_conversation_context`，且不触碰 `DATA_ROOT`。git 提交由胶水层用 `execFileSync` 完成。
 
 ## 目录结构
 
@@ -324,9 +326,10 @@ src/
 ├── providers.ts             # 构建自定义 OpenAI-completions / anthropic-messages 供应商
 ├── prompts/system-prompt.ts # 内置默认提示词 + 路由提示词 + loadSystemPrompt()（按需加载）
 ├── tools/
-│   ├── index.ts             # 注册 read/write/edit/run/schedule
+│   ├── index.ts             # 注册 read/write/edit/run/schedule + clear_conversation_context
 │   ├── paths.ts             # safePath 白名单校验 + projectOf
 │   ├── read.ts / write.ts / edit.ts / run.ts / schedule.ts
+│   └── clear-conversation.ts # IM-only 会话上下文清理
 │   └── task-context.ts      # 每任务上下文（把消息发送者注入为推送对象）
 ├── safety/
 │   ├── validate.ts          # 写后校验所有数据 JSON 合法（兜 edit 破坏语法）
