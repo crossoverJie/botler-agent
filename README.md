@@ -273,7 +273,7 @@ Schema — exactly one of `cron` / `interval` / `at` / `once`:
 - `retry` / `silentHours`: optional failure retry and do-not-disturb window (fires landing inside it are deferred to the window end).
 - `holidayMode: "workday"`: **China legal-workday gating** for `cron` / `interval` / `at` triggers. The entry fires **only on China legal workdays** — it skips statutory holidays (法定假日) and fires on 调休 makeup workdays (补班). The cron's date fields are ignored; only its `hour:minute`(s) matter, so `0 9,18 * * *` fires at 09:00 and 18:00 on every workday. Cannot be combined with `once`. The calendar is fetched (at startup + every 24h) from `BOTLER_HOLIDAY_API_URL` into `BOTLER_HOLIDAYS_FILE`; any outage keeps the cached data and degrades to plain Mon–Fri.
 
-**Routing**: messages about creating/managing schedules (or containing the Chinese keywords 定时 / 提醒 / 日程) route to the virtual `__scheduler__` project; the `schedule` tool is in `fileTools`, so it works in any execution context.
+**Routing**: messages about creating/managing schedules (or containing the Chinese keywords 定时 / 提醒 / 日程) route to the virtual `__scheduler__` project; the `schedule` tool is in `dataTools`, so it works in every execution context. IM execute runs additionally get `clear_conversation_context`.
 
 ## WebUI
 
