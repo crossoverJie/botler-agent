@@ -1,6 +1,6 @@
 {
 	"name": "botler-agent",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"type": "module",
 	"description": "Lightweight personal agent framework: receives messages from Telegram / Feishu / WeChat (iLink) and autonomously completes short tasks within the data directory, with an optional in-process scheduler, a local WebUI, and health/metrics monitoring.",
 	"license": "AGPL-3.0-only",
