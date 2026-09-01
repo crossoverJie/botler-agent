@@ -128,6 +128,15 @@ test("buildRoutePrompt includes the recent user-visible conversation", () => {
 	assert.match(prompt, /确认/);
 });
 
+test("buildRoutePrompt includes reset-context routing only for IM sessions", () => {
+	const withReset = systemPrompt.buildRoutePrompt("新任务", true, false, [], true);
+	assert.match(withReset, /RESET_CONTEXT/);
+	assert.match(withReset, /清空 \/ 忽略 \/ 重置之前的上下文/);
+
+	const withoutReset = systemPrompt.buildRoutePrompt("新任务", true, false, [], false);
+	assert.doesNotMatch(withoutReset, /RESET_CONTEXT/);
+});
+
 test("clearSession removes the stored conversation file", () => {
 	store.clearSession(store.IM_SESSION_KEY);
 	store.appendTurn(store.IM_SESSION_KEY, turn(1), 5);

@@ -76,8 +76,9 @@ LLM 应判断为新任务，按新任务处理。
 
 如果判断错了，用户继续纠正即可；纠正内容也会进入最近 N 轮上下文，后续可以重新做对。
 
-用户也可以显式结束当前上下文：发送「新任务 / 忽略上文 / 重置上下文」会清空共享会话，
-下一轮从空窗口开始。该命令本身不写入历史。
+用户也可以显式结束当前上下文：发送「新任务 / 忽略上文 / 重置上下文」或等价表达时，
+由路由模型或执行 Agent 判断是否重置；共享会话被清空后，下一轮从空窗口开始。纯重置命令
+本身不写入历史。
 
 ### 2.4 不引入复杂状态
 
@@ -254,8 +255,13 @@ export function appendTurn(
 export function clearSession(sessionKey: string): void;
 ```
 
-`runner.ts` 在执行阶段识别到上述重置命令时调用 `clearSession(IM_SESSION_KEY)`，并直接返回
-确认文本，不进入路由或执行阶段。
+`runner.ts` 不维护命令穷举表，而是把重置判断交给模型：
+
+- 路由阶段：仅对 IM 消息启用 `RESET_CONTEXT` 哨兵。路由模型判断为“纯重置请求”时，
+  `runTask()` 调用 `clearSession(IM_SESSION_KEY)` 并直接返回确认文本，不进入执行阶段。
+- 执行阶段：IM 执行 Agent 额外获得一个窄工具 `clear_conversation_context`；用户把重置
+  意图和具体任务一起说（如“新任务，帮我记午饭”）时，模型可在执行前调用它清空旧会话，
+  然后继续处理当前请求。scheduler / CLI / self-heal 只使用 `dataTools`，不会暴露该工具。
 
 ### 6.2 扩展 `RunLogContext`
 

@@ -4,12 +4,17 @@ import { writeTool } from "./write.ts";
 import { editTool } from "./edit.ts";
 import { runTool } from "./run.ts";
 import { scheduleTool } from "./schedule.ts";
+import { clearConversationTool } from "./clear-conversation.ts";
 
 /**
  * Custom file tools registered with the Agent, limited to the allowlisted data directories.
  * run is not bash: it only executes existing python3/node scripts inside projects (no shell, args passed directly).
- * schedule is the one exception to the DATA_ROOT allowlist: it writes the fixed externalized
- * schedules.json (no file-path parameter, full validation, atomic write) so users can create
- * scheduled tasks from chat. safePath itself is untouched.
+ * schedule and clear_conversation_context are narrow framework-level exceptions to the
+ * DATA_ROOT allowlist: they write/clear fixed externalized state outside DATA_ROOT and take no
+ * file-path parameter. safePath itself is untouched.
  */
-export const fileTools: AgentTool[] = [readTool, writeTool, editTool, runTool, scheduleTool];
+/** Data tools available to every execution; no framework-level conversation control. */
+export const dataTools: AgentTool[] = [readTool, writeTool, editTool, runTool, scheduleTool];
+
+/** Execution tools for IM user tasks; includes the narrow clear-conversation control tool. */
+export const fileTools: AgentTool[] = [...dataTools, clearConversationTool];
