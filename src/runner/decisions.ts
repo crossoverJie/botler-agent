@@ -3,9 +3,10 @@
  * tested without constructing a model or Agent.
  */
 
-import { SCHEDULER_VIRTUAL_PROJECT } from "../prompts/system-prompt.ts";
+import { RESET_CONTEXT_DECISION, SCHEDULER_VIRTUAL_PROJECT } from "../prompts/system-prompt.ts";
 
 const CLEAR_CONVERSATION_TOOL = "clear_conversation_context";
+const RESET_CONTEXT_PATTERN = new RegExp(`^${RESET_CONTEXT_DECISION}\\b`, "i");
 
 export interface RouteDecision {
 	project: string | null;
@@ -21,7 +22,7 @@ export interface RouteDecision {
 export function parseRoute(output: string, projects: string[]): RouteDecision {
 	const t = output.replace(/^[-*\s]+/, "").replace(/[\/\s]+$/, "").trim();
 	if (!t) return { project: null, resetContext: false };
-	if (/^RESET_CONTEXT\b/i.test(t)) {
+	if (RESET_CONTEXT_PATTERN.test(t)) {
 		return { project: null, resetContext: true };
 	}
 	if (/unknown|无法确定|不确定|无法判断|不明确|多个|both/i.test(t)) {

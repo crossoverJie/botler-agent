@@ -211,10 +211,10 @@ export function buildRoutePrompt(
 		? "\n如果当前消息是上一轮任务的简短确认或补充，优先沿用最近对话对应的项目；如果当前消息明显是一个新的独立任务，忽略旧历史并按新任务判断；无法确定时输出 UNKNOWN。\n"
 		: "";
 	const resetInstruction = allowResetContext
-		? "\n如果用户明确要求清空 / 忽略 / 重置之前的上下文（例如「新任务」「忽略上文」「重置上下文」，或等价表达），只输出 RESET_CONTEXT。若用户的新任务还带有具体的数据操作，则仍输出对应项目，不要输出 RESET_CONTEXT。\n"
+		? `\n如果用户明确要求清空 / 忽略 / 重置之前的上下文（例如「新任务」「忽略上文」「重置上下文」，或等价表达），只输出 ${RESET_CONTEXT_DECISION}。若用户的新任务还带有具体的数据操作，则仍输出对应项目，不要输出 ${RESET_CONTEXT_DECISION}。\n`
 		: "";
 	const outputCandidates = allowResetContext
-		? "只输出项目名（如 my-project）、RESET_CONTEXT 或 UNKNOWN。"
+		? `只输出项目名（如 my-project）、${RESET_CONTEXT_DECISION} 或 UNKNOWN。`
 		: "只输出项目名（如 my-project）或 UNKNOWN。";
 	return `你是路由助手，负责判断用户消息要操作哪个数据子项目。只输出一个项目名（不含斜杠），无法确定时只输出 UNKNOWN。不要使用任何工具。
 

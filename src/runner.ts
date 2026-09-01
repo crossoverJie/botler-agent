@@ -475,7 +475,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		isImSession || ctx.recipient
 			? {
 					recipient: ctx.recipient,
-					conversationSessionKey: isImSession ? ctx.sessionKey : undefined,
+					conversationSessionKey: canControlConversation ? ctx.sessionKey : undefined,
 				}
 			: null,
 	);
