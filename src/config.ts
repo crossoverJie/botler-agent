@@ -113,10 +113,12 @@ export interface Config {
 	wechatImageBatchSeconds: number;
 	/** When GIT_PUSH=1, additionally git push after a write task commits (failure is only a warning; default off). */
 	gitPush: boolean;
-	/** When WEBUI_ENABLED=1, start the local task-log UI (binds 127.0.0.1 only). */
+	/** When WEBUI_ENABLED=1, start the local task-log UI (binds WEBUI_HOST, default 127.0.0.1). */
 	webuiEnabled: boolean;
 	/** Port for the task-log WebUI. */
 	webuiPort: number;
+	/** Bind host for the WebUI (default 127.0.0.1; set 0.0.0.0 in Docker to reach it from the host/LAN). */
+	webuiHost: string;
 	/** When SCHEDULER_ENABLED=1, run the in-process scheduler that fires schedules.json entries into dispatch. */
 	schedulerEnabled: boolean;
 	/** Path to the scheduler config file. Default: ~/.botler-agent/schedules.json. */
@@ -302,6 +304,7 @@ export const CONFIG: Config = {
 	gitPush: process.env.GIT_PUSH === "1",
 	webuiEnabled: process.env.WEBUI_ENABLED === "1",
 	webuiPort: Number(process.env.WEBUI_PORT ?? "8900"),
+	webuiHost: process.env.WEBUI_HOST ?? "127.0.0.1",
 	schedulerEnabled: process.env.SCHEDULER_ENABLED === "1",
 	schedulesFile: process.env.BOTLER_SCHEDULES_FILE ?? join(USER_CONFIG_DIR, "schedules.json"),
 	holidaysFile: process.env.BOTLER_HOLIDAYS_FILE ?? join(USER_CONFIG_DIR, "holidays.json"),
