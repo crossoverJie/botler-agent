@@ -1,7 +1,8 @@
 /**
  * Local task-log WebUI.
  *
- * Zero dependencies: Node built-in `http` only, bound to 127.0.0.1. Serves the single-file
+ * Zero dependencies: Node built-in `http` only, bound to CONFIG.webuiHost (default 127.0.0.1,
+ * set to 0.0.0.0 in Docker to reach it from the host/LAN). Serves the single-file
  * `index.html` and a small read-only JSON API plus one write endpoint (`POST /api/cleanup`)
  * that only deletes day-files inside the log directory. Never reads DATA_ROOT, config, or source.
  */
@@ -320,8 +321,8 @@ export function startWebui(): void {
 		}
 	});
 
-	server.listen(CONFIG.webuiPort, "127.0.0.1", () => {
-		console.log(`[webui] task log UI on http://127.0.0.1:${CONFIG.webuiPort}`);
+	server.listen(CONFIG.webuiPort, CONFIG.webuiHost, () => {
+		console.log(`[webui] task log UI on http://${CONFIG.webuiHost}:${CONFIG.webuiPort}`);
 	});
 }
 
