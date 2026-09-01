@@ -6,8 +6,13 @@ import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import type { AssistantMessage, ImageContent, Model, Usage } from "@earendil-works/pi-ai";
 // Model is generic; here we use any to denote a model of any provider API
 type AnyModel = Model<any>;
-import { fileTools } from "./tools/index.ts";
+import { dataTools, fileTools } from "./tools/index.ts";
 import { setTaskContext } from "./tools/task-context.ts";
+import {
+	parseRoute,
+	shouldClearConversationForRoute,
+	shouldRecordConversationTurn,
+} from "./runner/decisions.ts";
 import { safePath } from "./tools/paths.ts";
 import { persistInboundImage, type InboundImage } from "./channels/wechat/download.ts";
 import {
@@ -15,8 +20,14 @@ import {
 	buildRoutePrompt,
 	listProjectDirs,
 	SCHEDULER_VIRTUAL_PROJECT,
+	RESET_CONTEXT_DECISION,
 } from "./prompts/system-prompt.ts";
-import { isGreeting, greetingReply, fallbackUnknownReply } from "./greeting.ts";
+import {
+	isGreeting,
+	greetingReply,
+	fallbackUnknownReply,
+	contextResetReply,
+} from "./greeting.ts";
 import { CONFIG } from "./config.ts";
 import { buildCustomProvider } from "./providers.ts";
 import { collectTaskLog, type CollectInput } from "./logging/collect.ts";
@@ -25,6 +36,7 @@ import type { ModelCacheStats, TaskLog } from "./logging/types.ts";
 import {
 	formatRecentTurns,
 	loadRecentTurns,
+	clearSession,
 	shouldLoadRecentTurns,
 	type ConversationTurn,
 } from "./conversation/store.ts";
@@ -183,23 +195,6 @@ const TOOL_TURN_CAP_HINT = [
 ].join("\n");
 
 /**
- * Parse the routing output into a project name; returns null if undetermined.
- * The candidate list includes the virtual `__scheduler__` project. Aliases are matched only
- * AFTER real-project matches, so a message targeting a data project is never stolen by the
- * scheduler; "task" alone is deliberately not an alias (too generic).
- */
-function parseRoute(output: string, projects: string[]): string | null {
-	const t = output.replace(/^[-*\s]+/, "").replace(/[\/\s]+$/, "").trim();
-	if (!t) return null;
-	if (/unknown|无法确定|不确定|无法判断|不明确|多个|both/i.test(t)) return null;
-	if (projects.includes(t)) return t;
-	for (const p of projects) if (t.includes(p)) return p;
-	if (projects.includes(SCHEDULER_VIRTUAL_PROJECT) && (t === "scheduler" || /定时|提醒|日程/.test(t)))
-		return SCHEDULER_VIRTUAL_PROJECT;
-	return null;
-}
-
-/**
  * Phase 1: decide which data subproject the user message targets.
  * Single project returns directly; multiple projects route via one lightweight LLM call; undetermined returns null (caller notifies the user).
  * The routing Agent is a single clean LLM call, so its `usage` (and the routing prompt) is returned alongside the decision.
@@ -216,16 +211,17 @@ async function routeProject(
 	images?: ImageContent[],
 	hasImages = false,
 	recentTurns: readonly ConversationTurn[] = [],
-): Promise<{ project: string | null; usage?: Usage; prompt?: string; candidates: string[] }> {
+	allowResetContext = false,
+): Promise<{ project: string | null; resetContext: boolean; usage?: Usage; prompt?: string; candidates: string[] }> {
 	const projects = listProjectDirs();
-	if (projects.length === 0) return { project: null, candidates: [] };
-	if (projects.length === 1) return { project: projects[0], candidates: [...projects] };
+	if (projects.length === 0) return { project: null, resetContext: false, candidates: [] };
+	if (projects.length === 1) return { project: projects[0], resetContext: false, candidates: [...projects] };
 
 	// The virtual scheduler project is a routing candidate but NOT a data subproject; the
 	// single-project shortcut above intentionally ignores it (the schedule tool stays available
 	// in any execution context, so single-project setups still work).
 	const candidates = includeScheduler ? [...projects, SCHEDULER_VIRTUAL_PROJECT] : projects;
-	const prompt = buildRoutePrompt(userMessage, includeScheduler, hasImages, recentTurns);
+	const prompt = buildRoutePrompt(userMessage, includeScheduler, hasImages, recentTurns, allowResetContext);
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: prompt,
@@ -239,7 +235,7 @@ async function routeProject(
 	// Routing state is [user, assistant]; the assistant message carries a single clean usage.
 	const assistant = agent.state.messages[agent.state.messages.length - 1];
 	const usage = assistant && assistant.role === "assistant" ? assistant.usage : undefined;
-	return { project: decision, usage, prompt, candidates };
+	return { project: decision.project, resetContext: decision.resetContext, usage, prompt, candidates };
 }
 
 /**
@@ -292,6 +288,12 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	const ctx: RunLogContext = logCtx ?? { taskId: randomUUID(), source: "cli", phase: "execute" };
 	const startedAt = Date.now();
 	const inboundImages = ctx.inboundImages ?? [];
+	const isImSession =
+		ctx.phase === "execute" &&
+		ctx.source !== "scheduler" &&
+		ctx.source !== "cli" &&
+		Boolean(ctx.sessionKey);
+
 	const recentTurns = shouldLoadRecentTurns({
 		enabled: CONFIG.conversationContextEnabled,
 		phase: ctx.phase,
@@ -336,6 +338,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	let routingUsage: Usage | undefined;
 	let routingPrompt: string | undefined;
 	let routingCandidates: string[];
+	let resetContext = false;
 	if (hint && projects.includes(hint)) {
 		project = hint;
 		routingUsage = undefined;
@@ -349,11 +352,33 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 			imagesContent,
 			inboundImages.length > 0,
 			recentTurns,
+			isImSession,
 		);
-		project = routed.project;
+		resetContext = routed.resetContext;
+		project = routed.resetContext ? null : routed.project;
 		routingUsage = routed.usage;
 		routingPrompt = routed.prompt;
 		routingCandidates = routed.candidates;
+	}
+	if (shouldClearConversationForRoute(resetContext, isImSession, ctx.sessionKey)) {
+		clearSession(ctx.sessionKey!);
+		const replyText = contextResetReply();
+		return {
+			text: replyText,
+			images: [],
+			mutated: false,
+			log: buildMinimalLog({
+				ctx,
+				startedAt,
+				endedAt: Date.now(),
+				userMessage,
+				replyText,
+				project: null,
+				routingUsage,
+				routing: { candidates: routingCandidates, decision: RESET_CONTEXT_DECISION, prompt: routingPrompt },
+			}),
+			recordConversationTurn: false,
+		};
 	}
 	if (!project) {
 		const replyText = fallbackUnknownReply(inboundImages.length > 0);
@@ -398,16 +423,22 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	// Phase 2: execution. Recent visible turns are injected through the system prompt rather
 	// than reconstructed as Agent messages, avoiding internal tool-call metadata.
 	const historyBlock = formatRecentTurns(recentTurns);
-	const systemPrompt = historyBlock
+	const baseSystemPrompt = historyBlock
 		? `${loadSystemPrompt(project)}\n\n# 最近对话\n${historyBlock}\n\n以上是最近若干轮用户可见对话。当前消息如果明显是新的独立任务，请忽略旧历史并按新任务处理；如果它是上一轮任务的确认、补充或纠正，请结合历史继续处理。无法确定时向用户确认。`
 		: loadSystemPrompt(project);
+	const canControlConversation = isImSession && project !== SCHEDULER_VIRTUAL_PROJECT;
+	const clearToolInstruction = canControlConversation
+		? "\n\n# 会话上下文控制\n你可以使用 clear_conversation_context 工具。仅当用户明确要求清空 / 忽略 / 重置之前的上下文（例如「新任务」「忽略上文」「重置上下文」，或等价表达）时，在处理当前请求前调用该工具一次。调用后，如果用户还带有具体任务，继续完成该任务；如果没有具体任务，只需简短确认已清空。"
+		: "";
+	const systemPrompt = `${baseSystemPrompt}${clearToolInstruction}`;
+	const executionTools = canControlConversation ? fileTools : dataTools;
 	// Flag set when the tool-turn cap is hit and the run is hard-stopped; used after prompt() to recognize it and return the fallback copy.
 	let toolTurnCapHit = false;
 	const agent = new Agent({
 		initialState: {
 			systemPrompt,
 			model,
-			tools: fileTools,
+			tools: executionTools,
 		},
 		streamFn: models.streamSimple.bind(models),
 		// Tool-turn cap: counted from context.messages after each turn.
@@ -438,8 +469,16 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	});
 
 	// Inject the sender as the task context (for tools like schedule to auto-fill the push
-	// recipient), then clear it once the run ends — whether it succeeded or not.
-	setTaskContext(ctx.recipient ? { recipient: ctx.recipient } : null);
+	// recipient), and allow the clear-conversation tool only for IM execute runs. Clear the
+	// context once the run ends — whether it succeeded or not.
+	setTaskContext(
+		isImSession || ctx.recipient
+			? {
+					recipient: ctx.recipient,
+					conversationSessionKey: canControlConversation ? ctx.sessionKey : undefined,
+				}
+			: null,
+	);
 	try {
 		markAgentStart();
 		// Inline vision (decoded bytes) + the saved-path note, so the model can both see the
@@ -454,6 +493,10 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	// Do not concatenate all text_delta — the thinking before a tool call is also a text_delta, and concatenating it would mix into the reply.
 	const state = agent.state;
 	const last = state.messages[state.messages.length - 1];
+	const toolNames = state.messages
+		.filter((m) => m.role === "toolResult")
+		.map((m) => (m as { toolName?: string }).toolName)
+		.filter((name): name is string => typeof name === "string");
 
 	let text = "⚠️ No reply generated";
 	let images: string[] = [];
@@ -523,5 +566,11 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		modelCache: snapshotModelCache(),
 	});
 
-	return { text, images, mutated, log };
+	return {
+		text,
+		images,
+		mutated,
+		log,
+		recordConversationTurn: shouldRecordConversationTurn(toolNames, savedPaths.length),
+	};
 }

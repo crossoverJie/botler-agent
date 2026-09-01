@@ -167,6 +167,9 @@ function projectContext(name: string): string {
  */
 export const SCHEDULER_VIRTUAL_PROJECT = "__scheduler__";
 
+/** Routing sentinel for explicit requests to clear the shared conversation context. */
+export const RESET_CONTEXT_DECISION = "RESET_CONTEXT";
+
 function schedulerContext(): string {
 	return `## ${SCHEDULER_VIRTUAL_PROJECT}/（定时任务管理）
 当前请求属于「定时任务管理」，与任何数据子项目无关。
@@ -190,6 +193,7 @@ export function buildRoutePrompt(
 	includeScheduler = true,
 	hasImages = false,
 	recentTurns: readonly ConversationTurn[] = [],
+	allowResetContext = false,
 ): string {
 	const schedulerLine = includeScheduler
 		? `- ${SCHEDULER_VIRTUAL_PROJECT}/：仅用于创建/管理定时任务（与数据子项目无关）\n`
@@ -206,11 +210,17 @@ export function buildRoutePrompt(
 	const historyInstruction = recentTurns.length
 		? "\n如果当前消息是上一轮任务的简短确认或补充，优先沿用最近对话对应的项目；如果当前消息明显是一个新的独立任务，忽略旧历史并按新任务判断；无法确定时输出 UNKNOWN。\n"
 		: "";
+	const resetInstruction = allowResetContext
+		? `\n如果用户明确要求清空 / 忽略 / 重置之前的上下文（例如「新任务」「忽略上文」「重置上下文」，或等价表达），只输出 ${RESET_CONTEXT_DECISION}。若用户的新任务还带有具体的数据操作，则仍输出对应项目，不要输出 ${RESET_CONTEXT_DECISION}。\n`
+		: "";
+	const outputCandidates = allowResetContext
+		? `只输出项目名（如 my-project）、${RESET_CONTEXT_DECISION} 或 UNKNOWN。`
+		: "只输出项目名（如 my-project）或 UNKNOWN。";
 	return `你是路由助手，负责判断用户消息要操作哪个数据子项目。只输出一个项目名（不含斜杠），无法确定时只输出 UNKNOWN。不要使用任何工具。
 
 数据根目录下的子项目：
 ${listProjectSummaries()}${schedulerLine}${historyBlock}用户消息：${userMessage}
-${imageLine}${historyInstruction}判断这条消息属于哪个子项目。只输出项目名（如 my-project）或 UNKNOWN。`;
+${imageLine}${historyInstruction}${resetInstruction}判断这条消息属于哪个子项目。${outputCandidates}`;
 }
 
 /**

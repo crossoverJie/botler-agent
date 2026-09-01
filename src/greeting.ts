@@ -39,6 +39,11 @@ export function greetingReply(): string {
 	);
 }
 
+/** Confirmation for a context-reset command. The previous conversation is already cleared. */
+export function contextResetReply(): string {
+	return "已清空当前会话上下文。接下来我会按新任务处理。";
+}
+
 /**
  * Static fallback when a message cannot be routed to any subproject.
  * When the message carried inbound images, guide the user explicitly: image content only helps

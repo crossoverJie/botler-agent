@@ -10,7 +10,7 @@
 
 A general-purpose, lightweight personal agent framework: it receives messages from **Telegram / Feishu / WeChat (iLink)**, autonomously completes short tasks within each data subproject under the **data root (`DATA_ROOT`)**, and sends the results back to the user. Optionally runs scheduled tasks (via an in-process scheduler) and exposes a local WebUI plus a health/metrics monitor.
 
-- **The framework only defines boundaries**: an allowlist of operable directories, five tools (`read / write / edit / run / schedule`, where `run` only executes existing in-project scripts and `schedule` only writes the fixed externalized `schedules.json`; neither is an arbitrary shell), post-write JSON validity checks, and automatic git commit on changes.
+- **The framework only defines boundaries**: an allowlist of operable directories, six tools (`read / write / edit / run / schedule`, plus IM-only `clear_conversation_context`; `run` only executes existing in-project scripts and `schedule` only writes the fixed externalized `schedules.json`; neither is an arbitrary shell), post-write JSON validity checks, and automatic git commit on changes.
 - **Business rules are self-described by data projects**: each data subproject's root `AGENTS.md` describes its file structure and operating rules; the agent reads it before acting. The framework hardcodes no specific business logic.
 - **Prompts and config are externalized**: stored in `~/.botler-agent/`, reusable across clones / machines; the user can customize them or have AI generate them.
 
@@ -18,7 +18,7 @@ A general-purpose, lightweight personal agent framework: it receives messages fr
 
 A deliberately **lightweight** alternative to heavyweight agent frameworks:
 
-- **Lightweight** — only five tools, no heavy runtime or daemon; a single `tsx` process, installed in seconds.
+- **Lightweight** — only six tools, no heavy runtime or daemon; a single `tsx` process, installed in seconds.
 - **Token-thrifty** — every task is a fresh, short-lived Agent; only a bounded recent-visible-conversation window is reused across IM turns. Routing uses a tiny project-name + summary prompt, and only the selected subproject's conventions are loaded. No giant system prompts, no chasing long contexts — most tasks cost a fraction of a general-assistant call.
 - **Focused on simple vertical tasks** — not a general-purpose chatbot. It shines at small, repetitive, well-scoped jobs (meal logging, vocabulary lookups, reminders), each described by its own `AGENTS.md`.
 
@@ -28,7 +28,7 @@ A deliberately **lightweight** alternative to heavyweight agent frameworks:
 |---|---|---|---|---|
 | **Positioning** | Lightweight personal data assistant | Broad task automation | Software engineering in a codebase | Conversational Q&A service |
 | **Install footprint** | A single `tsx` process, installed in seconds — no heavy runtime | Large bundles carrying many features you may never use | Heavy; expects a full dev environment | Web / app — nothing to install |
-| **Built-in tools** | Only 5 controlled tools (`read / write / edit / run / schedule`) | Many built-in, often complex tools | Full shell, filesystem, and command access | Chat only — no file tools |
+| **Built-in tools** | Only 6 controlled tools (`read / write / edit / run / schedule` + IM-only `clear_conversation_context`) | Many built-in, often complex tools | Full shell, filesystem, and command access | Chat only — no file tools |
 | **File operations** | Path allowlist — only first-level subdirs of `DATA_ROOT` | Broad file access | Reads/writes across the whole workspace | None — cloud only |
 | **Permissions on your machine** | Extremely restrained — no arbitrary shell | More open | Highly open (run commands, modify code) | N/A (remote cloud service) |
 | **Interaction** | Mobile-first: chat from WeChat / Telegram / Feishu | Multi-surface | Desktop / terminal-centric | Web / app chat |
@@ -130,7 +130,7 @@ Telegram / Feishu / WeChat (iLink)
                         ├─ ① route: decide which subproject the message belongs to (or __scheduler__); if ambiguous, ask the user to clarify
                         ├─ ② execute: concatenate that subproject's AGENTS.md into the system prompt as needed
                         ├─ model (anthropic or a custom OpenAI-completions / anthropic-messages gateway)
-                        └─ tools read / write / edit / run / schedule (allowlisted directories; run limited to in-project scripts; schedule only writes schedules.json)
+                        └─ tools read / write / edit / run / schedule (allowlisted directories; run limited to in-project scripts; schedule only writes schedules.json; IM executes add clear_conversation_context)
                         │
                         ▼
                   read/write each subproject under DATA_ROOT (each subproject ships its own AGENTS.md with the conventions)
@@ -225,6 +225,7 @@ Once the system prompt is externalized, you (or the AI assistant) can customize 
 - **WeChat (iLink / ClawBot official Bot API)**: DM channel. Enable with `WECHAT_ENABLED=1` after logging in via `npm start -- wechat-login` (prints a QR code in the terminal; scan it with WeChat — credentials saved to `~/.botler-agent/wechat/account.json`). The account owner (the QR scanner) is always allowed; `WECHAT_ALLOW_FROM` can allowlist extra `ilink_user_id`s. A renewal reminder (`WECHAT_REMINDER_HOURS`) nudges the owner to refresh the 24h `context_token` window.
   - **Inbound images as vision input**: WeChat can receive images you send. They are decoded and fed to the model as vision input, and the originals are persisted under `DATA_ROOT/<project>/photos/`. Because WeChat delivers a selected photo immediately while you may still be typing the caption ("选图即发，文字后到"), inbound image messages are held for a short window (`WECHAT_IMAGE_BATCH_SECONDS`, default 60s; `0` disables) so a following text joins the batch as one task; multiple photos in the window also merge. If the configured model cannot read images, the agent replies in Chinese asking you to add a short text hint.
   - **Greeting short-circuit**: a bare greeting (e.g. 你好 / hi) skips the routing LLM call entirely and gets a deterministic Chinese welcome that lists the available subprojects — zero model cost.
+  - **Context reset**: when the user explicitly asks for a new task or to ignore/reset previous context, the routing or execution model clears the shared recent-conversation window. A pure reset command is not stored.
 
 Only the WeChat channel sends images; other channels deliver text only (image markdown is stripped from the reply).
 
@@ -272,7 +273,7 @@ Schema — exactly one of `cron` / `interval` / `at` / `once`:
 - `retry` / `silentHours`: optional failure retry and do-not-disturb window (fires landing inside it are deferred to the window end).
 - `holidayMode: "workday"`: **China legal-workday gating** for `cron` / `interval` / `at` triggers. The entry fires **only on China legal workdays** — it skips statutory holidays (法定假日) and fires on 调休 makeup workdays (补班). The cron's date fields are ignored; only its `hour:minute`(s) matter, so `0 9,18 * * *` fires at 09:00 and 18:00 on every workday. Cannot be combined with `once`. The calendar is fetched (at startup + every 24h) from `BOTLER_HOLIDAY_API_URL` into `BOTLER_HOLIDAYS_FILE`; any outage keeps the cached data and degrades to plain Mon–Fri.
 
-**Routing**: messages about creating/managing schedules (or containing the Chinese keywords 定时 / 提醒 / 日程) route to the virtual `__scheduler__` project; the `schedule` tool is in `fileTools`, so it works in any execution context.
+**Routing**: messages about creating/managing schedules (or containing the Chinese keywords 定时 / 提醒 / 日程) route to the virtual `__scheduler__` project; the `schedule` tool is in `dataTools`, so it works in every execution context. Non-scheduler IM execute runs additionally get `clear_conversation_context`.
 
 ## WebUI
 
@@ -290,7 +291,7 @@ By default a local health/metrics server runs on `127.0.0.1:MONITOR_PORT` (defau
 
 - **App / data separation**: the framework (this repo, including `.env`) and the data directory (`DATA_ROOT`) are two separate locations. The data directory contains only the projects being operated on — no source code or secrets.
 - **Path allowlist**: `safePath()` only permits first-level subdirectories under `DATA_ROOT`; it uses `root + sep` prefix matching to avoid `/agent2` slipping in, and does a `realpath` on the deepest existing ancestor to prevent symlink escapes.
-- **No arbitrary shell**: only read/write/edit + a controlled run (limited to existing python3/node scripts inside allowlisted projects, no shell, args passed directly, 60s timeout) + a controlled schedule (only writes the fixed `schedules.json`, no file-path parameter). Git commits are done by the glue layer via `execFileSync`.
+- **No arbitrary shell**: only read/write/edit + a controlled run (limited to existing python3/node scripts inside allowlisted projects, no shell, args passed directly, 60s timeout) + a controlled schedule (only writes the fixed `schedules.json`, no file-path parameter). IM execute runs additionally expose `clear_conversation_context` only for that session and outside `DATA_ROOT`. Git commits are done by the glue layer via `execFileSync`.
 
 
 

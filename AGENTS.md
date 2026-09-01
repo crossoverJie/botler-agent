@@ -8,7 +8,7 @@ This file is for AI coding assistants (and any contributors) working in this rep
 
 Key design principles (understand before changing, do not break):
 
-1. **The framework only defines boundaries, it does not hardcode business logic**: the operable directories (first-level subdirs of `DATA_ROOT`), the toolset (read/write/edit/run + schedule, where run is limited to existing in-project scripts and schedule only writes the fixed externalized `schedules.json`, neither is an arbitrary shell), the post-write JSON-validity fallback, and automatic git commit. Business schemas and rules are self-described by each data subproject's root `AGENTS.md`, concatenated into the system prompt at runtime.
+1. **The framework only defines boundaries, it does not hardcode business logic**: the operable directories (first-level subdirs of `DATA_ROOT`), the toolset (read/write/edit/run + schedule, where run is limited to existing in-project scripts and schedule only writes the fixed externalized `schedules.json`, neither is an arbitrary shell; IM sessions additionally get an IM-only `clear_conversation_context` control), the post-write JSON-validity fallback, and automatic git commit. Business schemas and rules are self-described by each data subproject's root `AGENTS.md`, concatenated into the system prompt at runtime.
 2. **Each message = a brand-new `Agent` instance**, but IM channels inject the most recent user-visible conversation turns as prompt context. The agent still has no internal tool-call / thinking memory, so any "retry/fix" must be a **self-contained instruction** (pointing to the file + location + how to change it), not relying on the previous conversation.
 3. **App / data separation**: this repo (including `.env`) and the `DATA_ROOT` data directory are two separate locations. The data directory contains only the projects being operated on — no source code or secrets.
 4. **Config externalized**: the system prompt, the real `.env`, and `providers.json` (custom model providers) live in `~/.botler-agent/` (overridable via `BOTLER_CONFIG_DIR`), reused across clones / machines. The source-dir `.env` is only a dev fallback.
@@ -68,15 +68,18 @@ scheduler (scheduler/engine.ts) → dispatch(schedule.message, {id, source:"sche
 | `src/dispatcher.ts` | Dedup, sequential queue, validation retry, commit orchestration (**never rejects**) |
 | `src/conversation/store.ts` | Shared `im` session sliding-window store (`~/.botler-agent/conversations/im.json`) + prompt formatting; scheduler / CLI / self-heal do not read or write it |
 | `src/runner.ts` | Build Agent, run task, extract final reply, decide whether it mutated; greeting short-circuit (`greeting.ts`) + image-aware routing |
+| `src/runner/decisions.ts` | Pure routing/reset and turn-recording decisions extracted from `runner.ts` for unit testing |
 | `src/providers.ts` | Build a custom provider config into a pi-ai `Provider` (openai-completions) |
 | `src/prompts/system-prompt.ts` | Built-in generic default prompt + `loadSystemPrompt()` (externalized first + placeholder injection) |
 | `src/tools/paths.ts` | **Security boundary**: `safePath()` allowlist check + `projectOf()` |
-| `src/tools/{read,write,edit,run,schedule}.ts` | Five custom `AgentTool`s; read/write/edit/run checked by `safePath` (run limited to in-project python3/node scripts); `schedule` manages `schedules.json` (fixed file, no path param — the one narrow allowlist exception) |
-| `src/tools/task-context.ts` | Module-level per-task context; injects the message sender as the push recipient for the `schedule` tool |
+| `src/tools/{read,write,edit,run,schedule}.ts` | Five DATA_ROOT `AgentTool`s; read/write/edit/run checked by `safePath` (run limited to in-project python3/node scripts); `schedule` manages `schedules.json` (fixed file, no path param) |
+| `src/tools/clear-conversation.ts` | IM-only conversation-control `AgentTool`; clears the active task's conversation session via `task-context`, never touches `DATA_ROOT`, and takes no path param |
+| `src/tools/task-context.ts` | Module-level per-task context; injects the message sender for `schedule` and the active conversation session key for `clear_conversation_context` |
 | `src/scheduler/{types,store,engine,cron}.ts` | Schedule config schema + validation/atomic store (`schedules.json`), in-process firing loop (watermark + `nextFireEpoch`), saved-listener so a schedule write wakes the loop immediately |
 | `src/push/{types,contacts,deliver}.ts` | Push types; per-channel known-address store (`contacts.json`); `deliver()` primary-channel send + `telegram → feishu → wechat` fallback |
 | `src/safety/validate.ts` | Post-write check that all data JSON is valid (catches edit breaking syntax), returns a self-contained `fix` instruction |
 | `src/safety/git.ts` | Iterate first-level subdirs of `DATA_ROOT`, commit each independent git repo only if changed (optional push) |
+| `src/channels/allowlist.ts` | Shared sender allowlist helper used by Telegram / Feishu (WeChat has its own owner + extra-sender gate) |
 | `src/channels/{telegram,feishu}.ts` | Channel adapters: grammy long polling / Feishu webhook |
 | `src/channels/wechat/*` | WeChat iLink channel: QR login (`login.ts`), long-poll monitor (`monitor.ts`), media send/upload, context_token persistence (`context.ts`), owner renewal reminder loop (`reminder.ts`), inbound image download + persist (`download.ts`) and per-sender image batching (`image-batch.ts`) |
 
@@ -184,7 +187,7 @@ The WeChat channel can receive images the user sends and feed them to the model 
 
 ## Things not to do (red lines)
 
-- Do not relax the `safePath` allowlist or add arbitrary `bash`/shell command tools to the agent (the `run` and `schedule` tools are the only exceptions: `run` only executes existing python3/node scripts inside allowlisted projects, no shell, args passed directly, 60s timeout; `schedule` only writes the fixed `schedules.json`, no file-path parameter).
+- Do not relax the `safePath` allowlist or add arbitrary `bash`/shell command tools to the agent (the `run`, `schedule`, and IM-only `clear_conversation_context` tools are the only exceptions: `run` only executes existing python3/node scripts inside allowlisted projects, no shell, args passed directly, 60s timeout; `schedule` only writes the fixed `schedules.json`, no file-path parameter; `clear_conversation_context` only clears the active IM session, no file-path parameter).
 - Do not hardcode secrets, paths, or model credentials into source code (always go through `.env`).
 - Do not break "app / data separation": do not put app source code / `.env` into `DATA_ROOT`.
 - Do not change it to concatenate all `text_delta` as the reply.

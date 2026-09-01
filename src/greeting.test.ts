@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isGreeting } from "./greeting.ts";
+import { isGreeting, contextResetReply } from "./greeting.ts";
 
 const cases: Array<[string, boolean, string]> = [
 	["你好", true, "basic"],
@@ -24,3 +24,7 @@ for (const [input, expected, note] of cases) {
 		assert.equal(isGreeting(input), expected);
 	});
 }
+
+test("contextResetReply confirms the cleared session", () => {
+	assert.match(contextResetReply(), /已清空当前会话上下文/);
+});
