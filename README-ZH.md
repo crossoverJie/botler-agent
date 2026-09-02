@@ -66,6 +66,36 @@ botler -- "你的第一条消息"   # 或直接 `botler` 按 .env 启动常驻�
 
 三种方式安装后配置相同：编辑 `~/.botler-agent/.env`（DATA_ROOT / 模型选择 / 渠道凭据），可选在 `~/.botler-agent/providers.json` 配置自定义网关，并按需定制 `~/.botler-agent/system-prompt.md`。
 
+**方式 D — Docker（NAS / 容器部署）**
+
+已发布多架构镜像（`linux/amd64` + `linux/arm64`）到 Docker Hub（`crossoverjie/botler-agent`，标签 `latest` / `edge` / `vX.Y.Z`）。容器直接通过 `tsx` 运行常驻渠道（容器内无需构建），并通过两个挂载卷持久化一切：
+
+| 关注点 | 容器内路径 | 推荐挂载 |
+| --- | --- | --- |
+| 配置目录（`BOTLER_CONFIG_DIR`） | `/config` | `./config:/config` |
+| 数据根目录（`DATA_ROOT`） | `/data` | `./data:/data` |
+
+快速开始：
+
+```bash
+# 1. 原地生成配置模板（复制 .env / providers.json / system-prompt.md / schedules.json）
+docker run --rm -v "$PWD/config:/config" crossoverjie/botler-agent:latest init
+
+# 2. 编辑 ./config/.env：设置 PI_PROVIDER / PI_MODEL 及你的渠道凭据
+
+# 3. 启动容器（镜像内默认已开启 WebUI / 调度器 / 监控）
+docker run -d --name botler --restart unless-stopped \
+  -e TZ=Asia/Shanghai \
+  -p 8900:8900 \
+  -v "$PWD/config:/config" \
+  -v "$PWD/data:/data" \
+  crossoverjie/botler-agent:latest
+
+# 浏览器打开 WebUI：http://<host-ip>:8900
+```
+
+镜像默认值（`WEBUI_HOST=0.0.0.0`、`WEBUI_ENABLED=1`、`SCHEDULER_ENABLED=1`、`MONITOR_ENABLED=1`）优先级高于挂载的 `/config/.env`——如需修改请在创建容器时覆盖（如 `-e WEBUI_ENABLED=0`）。容器内已内置 8899 端口的 `/healthz` 健康检查。关于微信扫码登录、飞书端口、git 提交身份与升级步骤，见 [Docker 部署（NAS）](docs/docker.md)。
+
 ## 快速开始
 
 ```bash
@@ -429,5 +459,6 @@ src/
 
 ## 相关文档
 
+- Docker 部署（NAS / 容器）：[docs/docker.md](docs/docker.md)
 - 给 AI 编码助手的仓库说明：[`AGENTS.md`](AGENTS.md)
 - 环境变量模板：[`.env.example`](.env.example)

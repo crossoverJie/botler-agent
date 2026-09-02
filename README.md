@@ -70,6 +70,36 @@ botler -- "your first message"   # or just `botler` to start channels per .env
 
 All three methods then need the same setup: edit `~/.botler-agent/.env` (DATA_ROOT / model selection / channel credentials), optionally configure custom gateways in `~/.botler-agent/providers.json`, and customize `~/.botler-agent/system-prompt.md` if desired.
 
+**Option D — Docker (NAS / container deployment)**
+
+A multi-arch (`linux/amd64` + `linux/arm64`) image is published to Docker Hub (`crossoverjie/botler-agent`, tags `latest` / `edge` / `vX.Y.Z`). The container runs the persistent channel directly via `tsx` (no build step inside the container) and persists everything through two mounted volumes:
+
+| Host concern | In-container path | Recommended mount |
+| --- | --- | --- |
+| Config dir (`BOTLER_CONFIG_DIR`) | `/config` | `./config:/config` |
+| Data root (`DATA_ROOT`) | `/data` | `./data:/data` |
+
+Quick start:
+
+```bash
+# 1. Generate the config templates in-place (copies .env / providers.json / system-prompt.md / schedules.json)
+docker run --rm -v "$PWD/config:/config" crossoverjie/botler-agent:latest init
+
+# 2. Edit ./config/.env: set PI_PROVIDER / PI_MODEL and your channel credentials
+
+# 3. Start the container (WebUI / scheduler / monitor are ON by default in the image)
+docker run -d --name botler --restart unless-stopped \
+  -e TZ=Asia/Shanghai \
+  -p 8900:8900 \
+  -v "$PWD/config:/config" \
+  -v "$PWD/data:/data" \
+  crossoverjie/botler-agent:latest
+
+# Open the WebUI at http://<host-ip>:8900
+```
+
+Image defaults (`WEBUI_HOST=0.0.0.0`, `WEBUI_ENABLED=1`, `SCHEDULER_ENABLED=1`, `MONITOR_ENABLED=1`) take precedence over the mounted `/config/.env` — override them at container creation (e.g. `-e WEBUI_ENABLED=0`). A `/healthz` healthcheck on port 8899 is built in. For WeChat QR login, the Feishu port, git commit identity, and upgrading steps, see [Docker deployment (NAS)](docs/docker.md).
+
 ## Quick Start
 
 ```bash
@@ -373,5 +403,6 @@ The framework hardcodes no data schema. Each data subproject's root `AGENTS.md` 
 
 ## Related docs
 
+- Docker deployment (NAS / container): [docs/docker.md](docs/docker.md)
 - Repo guide for AI coding assistants: [`AGENTS.md`](AGENTS.md)
 - Environment variable template: [`.env.example`](.env.example)
