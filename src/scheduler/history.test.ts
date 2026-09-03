@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
 	aggregateRunStats,
+	orphanHistoryIndex,
 	scheduleOverviewFromLogs,
+	scheduleState,
 } from "./history.ts";
 import type { TaskLog } from "../logging/types.ts";
 import type { ScheduleEntry } from "./types.ts";
@@ -48,6 +50,130 @@ function makeEntry(overrides: Partial<ScheduleEntry> = {}): ScheduleEntry {
 		...overrides,
 	};
 }
+
+/** makeEntry() defaults to interval:"1h", which must go first — triggers are mutually exclusive. */
+function makeOnceEntry(id: string, once: string, overrides: Partial<ScheduleEntry> = {}): ScheduleEntry {
+	const base = makeEntry({ id, enabled: true, ...overrides });
+	delete base.interval;
+	return { ...base, once };
+}
+
+test("scheduleState splits enabled/disabled and spent one-time schedules", () => {
+	// Disabled wins even with a trigger that would otherwise fire: it is deliberate and reversible.
+	assert.equal(scheduleState({ enabled: false, nextFireAt: 1700000000000 }), "paused");
+	assert.equal(scheduleState({ enabled: false, nextFireAt: null }), "paused");
+	assert.equal(scheduleState({ enabled: true, nextFireAt: 1700000000000 }), "active");
+	assert.equal(scheduleState({ enabled: true, nextFireAt: null }), "past");
+	// An unparseable trigger also yields a null nextFireAt and so lands in "past", but that case
+	// never reaches the UI: loadSchedules() -> normalizeEntry() skips entries that fail to compile.
+});
+
+test("scheduleOverviewFromLogs reports state per entry", () => {
+	const entries = [
+		makeOnceEntry("future", "2099-01-01T00:00:00+08:00"),
+		makeOnceEntry("spent", "2020-01-01T00:00:00+08:00"),
+		makeEntry({ id: "off", enabled: false }),
+	];
+	const logs = [makeLog({ id: "run", taskId: "schedule:spent:1720000000000" })];
+
+	const overview = scheduleOverviewFromLogs(entries, logs);
+	const byId = new Map(overview.map((e) => [e.id, e]));
+
+	assert.equal(byId.get("future")?.state, "active");
+	assert.equal(byId.get("spent")?.state, "past");
+	assert.equal(byId.get("off")?.state, "paused");
+});
+
+test("a spent once is only distinguishable as fired by its last run", () => {
+	const spent = [makeOnceEntry("spent", "2020-01-01T00:00:00+08:00")];
+
+	// Fired: the run was recorded, so the UI shows the run rather than a "missed" warning.
+	const fired = scheduleOverviewFromLogs(spent, [
+		makeLog({ id: "run", taskId: "schedule:spent:1720000000000" }),
+	]);
+	assert.equal(fired[0]?.state, "past");
+	assert.notEqual(fired[0]?.lastRun, null);
+
+	// Missed: the time passed with no run at all (the process was down, or the watermark was
+	// reseeded to now by a restart before it could fire).
+	const missed = scheduleOverviewFromLogs(spent, []);
+	assert.equal(missed[0]?.state, "past");
+	assert.equal(missed[0]?.lastRun, null);
+});
+
+test("orphanHistoryIndex returns an empty index for no logs", () => {
+	assert.deepEqual(orphanHistoryIndex([], []), []);
+});
+
+test("orphanHistoryIndex aggregates runs per id and keeps only the newest log's fields", () => {
+	const logs = [
+		// Deliberately out of order: first/last must be min/max, and the retained fields must come
+		// from the newest run rather than the last one visited.
+		makeLog({
+			id: "newer", taskId: "schedule:foo:1720000200000", startedAt: 1720000200000,
+			status: "error", project: "cook", userMessage: "newest message",
+		}),
+		makeLog({
+			id: "older", taskId: "schedule:foo:1720000100000", startedAt: 1720000100000,
+			status: "success", project: "notes", userMessage: "oldest message",
+		}),
+		makeLog({
+			id: "middle", taskId: "schedule:foo:1720000150000", startedAt: 1720000150000,
+			status: "success", project: "notes", userMessage: "middle message",
+		}),
+		// Not a scheduler dispatch — no schedule id to recover.
+		makeLog({ id: "chat", taskId: "telegram:123:456", startedAt: 1720000300000 }),
+	];
+
+	const [foo] = orphanHistoryIndex([], logs);
+
+	assert.equal(foo.runCount, 3);
+	assert.equal(foo.firstRunAt, 1720000100000);
+	assert.equal(foo.lastRunAt, 1720000200000);
+	assert.equal(foo.lastStatus, "error");
+	assert.equal(foo.lastProject, "cook");
+	assert.equal(foo.lastMessage, "newest message");
+});
+
+test("orphanHistoryIndex excludes ids still present in the config", () => {
+	const entries = [makeEntry({ id: "foo" })];
+	const logs = [
+		makeLog({ id: "a", taskId: "schedule:foo:1720000100000", startedAt: 1720000100000 }),
+		makeLog({ id: "b", taskId: "schedule:gone:1720000200000", startedAt: 1720000200000 }),
+	];
+
+	const index = orphanHistoryIndex(entries, logs);
+
+	assert.deepEqual(index.map((i) => i.scheduleId), ["gone"]);
+});
+
+test("orphanHistoryIndex sorts newest first and truncates a long message", () => {
+	const long = "x".repeat(500);
+	const logs = [
+		makeLog({ id: "a", taskId: "schedule:old:1720000100000", startedAt: 1720000100000 }),
+		makeLog({ id: "b", taskId: "schedule:new:1720000200000", startedAt: 1720000200000, userMessage: long }),
+	];
+
+	const index = orphanHistoryIndex([], logs);
+
+	assert.deepEqual(index.map((i) => i.scheduleId), ["new", "old"]);
+	assert.equal(index[0]?.lastMessage.length, 200);
+});
+
+test("orphanHistoryIndex caps the index at 200 ids, keeping the newest", () => {
+	const logs = [];
+	for (let i = 0; i < 201; i++) {
+		logs.push(
+			makeLog({ id: `s${i}`, taskId: `schedule:id-${i}:1`, startedAt: 1720000000000 + i }),
+		);
+	}
+
+	const index = orphanHistoryIndex([], logs);
+
+	assert.equal(index.length, 200);
+	assert.equal(index[0]?.scheduleId, "id-200");
+	assert.ok(!index.some((i) => i.scheduleId === "id-0"));
+});
 
 test("aggregateRunStats handles an empty log stream", () => {
 	const stats = aggregateRunStats("empty", (visit) => {
