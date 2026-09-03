@@ -107,8 +107,30 @@
   .field .verr { color:var(--err); font-size:11px; }
   .banner { background:var(--warn-bg); border:1px solid var(--warn); color:var(--warn-fg); border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:13px; display:none; }
   textarea.code { font-family:var(--font-mono); min-height:340px; width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:10px; font-size:12.5px; line-height:1.5; }
-  .sched-row { display:grid; grid-template-columns:auto 150px minmax(180px,1fr) 150px 150px auto; gap:10px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); }
+  /* One grid for the whole list so columns line up across rows. Rows are display:contents so their
+     cells become grid items of .sched-list; the bottom border lives on the cells, which stretch to
+     the row height, so per-cell borders read as a single row line. */
+  .sched-list { display:grid; grid-template-columns:minmax(150px,220px) 160px minmax(160px,1fr) 165px 190px auto; column-gap:12px; }
+  .sched-row { display:contents; }
+  /* Cells stretch (default) so their borders line up, but their content stays at the top: a tall
+     cell must never push Next/Last/id down to the row's vertical middle. */
+  .sched-row > * { min-width:0; padding:9px 0; border-bottom:1px solid var(--line); }
+  /* Top-align the flex cells that would otherwise center in the stretched box (the +3px nudge puts
+     the checkbox back on the first line's optical centre). */
+  .sched-id { display:flex; align-items:flex-start; gap:6px; }
+  .sched-id input { margin-top:3px; }
+  .sched-row .row-actions { align-items:flex-start; align-content:flex-start; }
+  /* Cap the message so one long task can't balloon the row height. */
+  .sched-msg { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden; }
+  .sched-id .sid { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .sched-summary { font-size:12px; color:var(--muted); }
+  .sched-when { font-size:12px; }
+  /* Group headings and empty states are grid items of .sched-list (rows are display:contents), so
+     they must span every column. */
+  .sched-list > .section-title, .sched-list > .sched-empty { grid-column:1/-1; }
+  /* Lifecycle states that the "Next" column shows in place of a fire time. */
+  .b-paused { background:var(--dup-bg); color:var(--dup-fg); }
+  .b-missed { background:var(--warn-bg); color:var(--warn-fg); }
   .eye { background:#fff; border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:4px 8px; cursor:pointer; font-size:12px; }
 
   /* Chart wrappers */
@@ -120,7 +142,12 @@
   @media (max-width:760px){
     .view-switch { flex:1 1 100%; }
     .cards { grid-template-columns:repeat(2,1fr); }
-    .cfg-form, .field, .sched-row { grid-template-columns:1fr; }
+    .cfg-form, .field { grid-template-columns:1fr; }
+    /* Narrow screens: stack each row into its own block (a row is display:contents, so it needs a
+       real box again to carry the separator). */
+    .sched-list { grid-template-columns:1fr; }
+    .sched-row { display:block; padding:8px 0; border-bottom:1px solid var(--line); }
+    .sched-row > * { padding:2px 0; border-bottom:none; }
     .modal { width:96%; padding:16px; }
   }
   @media (prefers-reduced-motion:reduce){ * { transition:none !important; animation:none !important; } }
@@ -153,6 +180,9 @@
   .drawer-body .detail { border:none; box-shadow:none; margin:0; padding:0; }
   .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
   .table-scroll table { width:auto; min-width:100%; white-space:nowrap; }
+  /* Long text columns (e.g. a run's reply) wrap instead of stretching the table into a scroll. */
+  .table-scroll.wrap table { width:100%; white-space:normal; }
+  .table-scroll.wrap td { max-width:340px; }
 </style>
 </head>
 <body>
@@ -196,11 +226,16 @@
       <div class="cards" id="sched-cards"></div>
       <div class="muted" style="margin:0 0 12px;font-size:12px">History is retained as long as task logs are kept.</div>
       <div class="row-actions" style="margin-bottom:10px">
+        <div class="view-switch" id="sched-filter">
+          <button type="button" class="view-btn active" data-filter="active">Active</button>
+          <button type="button" class="view-btn" data-filter="past">Past</button>
+          <button type="button" class="view-btn" data-filter="all">All</button>
+        </div>
         <button class="btn" id="sched-add">+ Add</button>
         <button class="btn ghost" id="sched-reload">Refresh</button>
+        <button class="btn danger" id="sched-clear-past">Clear past</button>
       </div>
-      <div id="sched-list"></div>
-      <div id="sched-history" style="display:none"></div>
+      <div id="sched-list" class="sched-list"></div>
     </div>
 
     <!-- ============ STATS VIEW ============ -->
@@ -263,7 +298,7 @@
 <div class="drawer-backdrop" id="drawer-bg"></div>
 <div class="drawer" id="drawer">
   <div class="drawer-head">
-    <div class="drawer-title">Task detail</div>
+    <div class="drawer-title" id="drawer-title">Task detail</div>
     <button type="button" class="drawer-close" id="drawer-close" aria-label="Close">×</button>
   </div>
   <div class="drawer-body" id="drawer-body"></div>
@@ -285,6 +320,12 @@ function fmtDurHuman(ms){
   return `${Math.max(m,1)} m`;
 }
 function fmtN(n){ return (n??0).toLocaleString(); }
+// Fixed-width date-time for the schedule table columns (full precision is kept in the title attr).
+function fmtCompactTime(ms){
+  const d = new Date(ms);
+  const p = n=>String(n).padStart(2,"0");
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 function estTokens(s){ const cjk=(s.match(/[\u3400-\u9fff]/g)||[]).length; const other=s.length-cjk; return Math.ceil(cjk+other/4); }
 function esc(s){ return String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 function toast(msg){ const t=document.createElement("div"); t.className="toast"; t.textContent=msg; document.getElementById("toast-host").appendChild(t); setTimeout(()=>t.remove(),2600); }
@@ -300,8 +341,10 @@ async function cfgGet(path){ return getJSON(path); }
 function statusBadge(s){ return `<span class="badge b-${s}">${s}</span>`; }
 
 // ---------------- nav ----------------
-document.querySelectorAll(".view-btn").forEach(btn=>btn.onclick=()=>{
-  document.querySelectorAll(".view-btn").forEach(x=>x.classList.remove("active"));
+// Scoped to the topbar: other views reuse .view-btn for their own segmented controls, and an
+// unscoped selector would bind them here and hide every view (their data-view is undefined).
+document.querySelectorAll(".topbar .view-btn").forEach(btn=>btn.onclick=()=>{
+  document.querySelectorAll(".topbar .view-btn").forEach(x=>x.classList.remove("active"));
   btn.classList.add("active");
   document.getElementById("logs-view").style.display = btn.dataset.view==="logs-view"?"block":"none";
   document.getElementById("schedules-view").style.display = btn.dataset.view==="schedules-view"?"block":"none";
@@ -452,13 +495,19 @@ function renderUsage(u, label){
   return `<div class="section-title">${label}</div><div class="usage-grid">${grid.map(([k,v])=>`<div class="u"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>`;
 }
 
-async function showDetail(id){
+// opts: { title, back, backLabel } — `back` re-renders the previous drawer content (e.g. schedule
+// history) and turns the back link into "back to" instead of "back to list".
+async function showDetail(id, opts){
+  opts = opts || {};
   const l = await getJSON("/api/logs/"+encodeURIComponent(id));
-  if(!l){ document.getElementById("drawer-body").innerHTML='<div class="muted">Not found</div>'; openDrawer(); return; }
+  if(!l){ document.getElementById("drawer-body").innerHTML='<div class="muted">Not found</div>'; openDrawer(opts); return; }
   const mc = l.modelCache;
+  const backLink = opts.back
+    ? `<a class="back-link" onclick="drawerGoBack()">← ${esc(opts.backLabel||"Back")}</a>`
+    : `<a class="back-link" onclick="closeDetail()">← Back to list</a>`;
   document.getElementById("drawer-body").innerHTML = `
     <div class="detail">
-      <a class="back-link" onclick="closeDetail()">← Back to list</a>
+      ${backLink}
       <h2>Task detail</h2>
       <div class="kv">
         <div class="k">Status</div><div>${statusBadge(l.status)} ${l.phase==="self-heal"?'<span class="badge b-auto-fixed">self-heal</span>':""}</div>
@@ -499,20 +548,39 @@ async function showDetail(id){
       <div class="section-title">Conversation timeline</div>
       ${renderConversation(l.conversation)}
     </div>`;
-  openDrawer();
+  // Task details opened from the logs list refresh that list on close; ones opened from another
+  // drawer view (schedule history) must not, since the logs view is not what the user is looking at.
+  openDrawer({ title:opts.title, back:opts.back, refreshLogs:!opts.back });
 }
 
 // ---------------- detail drawer ----------------
-function openDrawer(){
+// Shared by the logs list and the schedule history. `back` (when set) is rendered as a "← back to"
+// link that re-renders the previous content inside the same drawer.
+let drawerBack = null;
+let drawerRefreshLogs = false;
+
+function openDrawer(opts){
+  opts = opts || {};
+  drawerBack = opts.back || null;
+  drawerRefreshLogs = !!opts.refreshLogs;
+  document.getElementById("drawer-title").textContent = opts.title || "Task detail";
+  document.getElementById("drawer-body").scrollTop = 0;
   document.getElementById("drawer").classList.add("show");
   document.getElementById("drawer-bg").classList.add("show");
   document.body.style.overflow = "hidden";
+}
+function drawerGoBack(){
+  const fn = drawerBack;
+  if(fn) fn();
 }
 function closeDetail(){
   document.getElementById("drawer").classList.remove("show");
   document.getElementById("drawer-bg").classList.remove("show");
   document.body.style.overflow = "";
-  loadList(); // refresh status / pagination while the drawer was open
+  const refresh = drawerRefreshLogs;
+  drawerBack = null;
+  drawerRefreshLogs = false;
+  if(refresh) loadList(); // refresh status / pagination while the drawer was open
 }
 document.getElementById("drawer-close").onclick = closeDetail;
 document.getElementById("drawer-bg").onclick = closeDetail;
@@ -763,7 +831,9 @@ function statsPage(delta, gi){
 // =====================================================================
 // CONFIG
 // =====================================================================
-let schedules = [];
+let schedules = [];      // config entries, exactly as returned by /api/schedules/overview
+let schedOrphans = [];   // log-derived rows, normalized to the same shape by orphanToRow()
+let schedFilter = "active";
 
 // ---- system prompt ----
 document.getElementById("sp-text").addEventListener("input", ()=>{
@@ -793,42 +863,94 @@ function scheduleSummary(e){
   return "(no trigger)";
 }
 
+// Cards: Total = Enabled + Disabled and Enabled = Active + Past, since the three states are
+// mutually exclusive. "Removed" is the only log-derived card — it counts schedules that were
+// deleted from schedules.json but still have runs, which is exactly the discoverability gap.
 function renderScheduleCards(){
   const total = schedules.length;
   const enabled = schedules.filter(e=>e.enabled).length;
-  const withNext = schedules.filter(e=>e.nextFireAt).length;
   document.getElementById("sched-cards").innerHTML = [
-    ["Total", total],
-    ["Enabled", enabled],
-    ["Scheduled", withNext],
-    ["Disabled", total-enabled]
-  ].map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+    ["Total", total, "Entries in schedules.json"],
+    ["Active", schedules.filter(e=>e.state==="active").length, "Enabled with a computed next fire time"],
+    ["Disabled", total-enabled, "enabled=false — never fires"],
+    ["Past", schedules.filter(e=>e.state==="past").length, "Spent one-time schedules; safe to clear"],
+    ["Removed", schedOrphans.length, "Deleted schedules whose run history is still in the task logs"],
+  ].map(([k,v,t])=>`<div class="card" title="${esc(t)}"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+}
+
+/**
+ * A log-derived orphan has no config spec left, so it is shaped like an overview item that is
+ * permanently in the "past" state and read-only. Orphans are kept in their own array and never
+ * merged into `schedules`, so persistSchedules() / openSchedModal() can never see one.
+ */
+function orphanToRow(o){
+  return {
+    id:o.scheduleId, removed:true, state:"past", enabled:false, nextFireAt:null,
+    timezone:"", message:o.lastMessage, runCount:o.runCount,
+    lastRun:{ startedAt:o.lastRunAt, status:o.lastStatus, project:o.lastProject, durationMs:0, tokenTotal:0 },
+  };
+}
+
+function renderScheduleRow(e){
+  const last = e.lastRun
+    ? `<span title="${esc(fmtTime(e.lastRun.startedAt))}">${fmtCompactTime(e.lastRun.startedAt)}</span> ${statusBadge(e.lastRun.status)}`
+    : "—";
+  // "Next" used to be a bare "—" for three different reasons; `state` (computed server-side) splits
+  // them. A past row with no run at all is the actionable one: its time passed without firing.
+  const next =
+      e.state === "active" ? `<span title="${esc(fmtTime(e.nextFireAt))}">${fmtCompactTime(e.nextFireAt)}</span>`
+    : e.state === "paused" ? `<span class="badge b-paused">paused</span>`
+    : e.lastRun            ? "—"
+    : `<span class="badge b-missed" title="Its time passed with no run recorded — the process was not running, or it crashed before the run was logged.">missed</span>`;
+  const idCell = e.removed
+    ? `<div class="sched-id" title="${esc(e.id)}"><span class="sid">${esc(e.id)}</span></div>`
+    : `<label class="sched-id" title="${esc(e.id)}"><input type="checkbox" class="sched-enable" data-id="${esc(e.id)}" ${e.enabled?"checked":""}/> <span class="sid">${esc(e.id)}</span></label>`;
+  const summary = e.removed
+    ? `removed<br/><span class="muted">${e.runCount} run(s)</span>`
+    : `${esc(scheduleSummary(e))}<br/>tz:${esc(e.timezone||"Asia/Shanghai")}${e.project?("<br/>project:"+esc(e.project)):""}`;
+  // Orphans have no config entry left: nothing to edit, nothing to enable, nothing to delete.
+  const actions = e.removed
+    ? `<button class="btn ghost sched-history" data-id="${esc(e.id)}">History</button>`
+    : `<button class="btn ghost sched-history" data-id="${esc(e.id)}">History</button>
+       <button class="btn ghost sched-edit" data-id="${esc(e.id)}">Edit</button>
+       <button class="btn danger sched-del" data-id="${esc(e.id)}">Delete</button>`;
+  return `<div class="sched-row">
+    ${idCell}
+    <div class="sched-summary">${summary}</div>
+    <div class="sched-summary sched-msg" title="${esc(e.message||"")}">${esc((e.message||"").slice(0,60))}</div>
+    <div class="muted sched-when">Next: ${next}</div>
+    <div class="muted sched-when">Last: ${last}</div>
+    <div class="row-actions">${actions}</div>
+  </div>`;
 }
 
 function renderSchedules(){
-  if(!schedules.length){
-    document.getElementById("sched-list").innerHTML='<div class="muted">No scheduled tasks yet. Click "Add" to create one.</div>';
-    return;
-  }
-  document.getElementById("sched-list").innerHTML = schedules.map(e=>{
-    const last = e.lastRun
-      ? `${fmtTime(e.lastRun.startedAt)} · ${statusBadge(e.lastRun.status)}`
-      : "—";
-    const next = e.nextFireAt ? `${fmtTime(e.nextFireAt)}` : "—";
-    return `<div class="sched-row">
-      <label><input type="checkbox" class="sched-enable" data-id="${esc(e.id)}" ${e.enabled?"checked":""}/> ${esc(e.id)}</label>
-      <div class="sched-summary">${esc(scheduleSummary(e))}<br/>tz:${esc(e.timezone||"Asia/Shanghai")}${e.project?("<br/>project:"+esc(e.project)):""}</div>
-      <div class="sched-summary">${esc((e.message||"").slice(0,60))}</div>
-      <div class="muted" style="font-size:12px">Next: ${next}</div>
-      <div class="muted" style="font-size:12px">Last: ${last}</div>
-      <div class="row-actions">
-        <button class="btn ghost sched-history" data-id="${esc(e.id)}">History</button>
-        <button class="btn ghost sched-edit" data-id="${esc(e.id)}">Edit</button>
-        <button class="btn danger sched-del" data-id="${esc(e.id)}">Delete</button>
-      </div>
-    </div>`;
+  const groups = [];
+  // "Active" also covers disabled entries: they are still live config, and hiding them from the
+  // default view would decouple this list from the Disabled card.
+  if(schedFilter!=="past") groups.push({
+    title:"Active & paused", rows:schedules.filter(e=>e.state!=="past"),
+    empty:'No active scheduled tasks. Click "Add" to create one.' });
+  if(schedFilter!=="active") groups.push(
+    { title:"Past · no further runs", rows:schedules.filter(e=>e.state==="past"),
+      empty:"No spent one-time schedules." },
+    { title:"Removed · history only", rows:schedOrphans,
+      empty:"No deleted schedules with retained history." },
+  );
+  // Headings only when more than one group is shown, so the default view stays flat.
+  const titles = schedFilter!=="active";
+  document.getElementById("sched-list").innerHTML = groups.map(g=>{
+    const head = titles ? `<div class="section-title">${esc(g.title)}</div>` : "";
+    const body = g.rows.length ? g.rows.map(renderScheduleRow).join("")
+      : `<div class="muted sched-empty">${esc(g.empty)}</div>`;
+    return head + body;
   }).join("");
+  bindScheduleRows();
+  const clear = document.getElementById("sched-clear-past");
+  clear.disabled = !schedules.some(e=>e.state==="past");
+}
 
+function bindScheduleRows(){
   document.querySelectorAll(".sched-enable").forEach(c=>c.onchange=async()=>{
     const id=c.dataset.id; const e=schedules.find(x=>x.id===id); if(!e) return;
     e.enabled=c.checked;
@@ -844,15 +966,33 @@ function renderSchedules(){
 }
 
 async function loadSchedulesView(){
-  schedules = await getJSON("/api/schedules/overview") || [];
+  // Two independent GETs: the index stays a separate endpoint (no shape change to /overview) but is
+  // always fetched, so the Removed card and the post-clear refresh are never stale. Best-effort —
+  // a failing index must not take the whole view down.
+  const [overview, index] = await Promise.all([
+    getJSON("/api/schedules/overview"),
+    getJSON("/api/schedules/history-index").catch(()=>({ items: [] })),
+  ]);
+  schedules = overview || [];
+  schedOrphans = ((index && index.items) || []).map(orphanToRow);
   renderScheduleCards();
   renderSchedules();
 }
 
+// Whitelist mirroring normalizeEntry() in src/scheduler/store.ts. A blacklist no longer scales:
+// ScheduleOverviewItem now carries nextFireAt / lastRun / state, and orphan rows carry more.
+// KEEP IN SYNC with normalizeEntry — a field added there but not here is silently dropped on save.
 function scheduleEntryForSave(e){
-  // V1 blacklist is enough because overview adds only these two computed fields.
-  // If ScheduleOverviewItem gains more computed fields later, switch this to an explicit whitelist.
-  const { nextFireAt, lastRun, ...entry } = e;
+  const entry = { id:e.id, enabled:e.enabled!==false, timezone:e.timezone||"Asia/Shanghai", message:e.message };
+  if(e.cron) entry.cron = e.cron;
+  else if(e.interval) entry.interval = e.interval;
+  else if(e.at) entry.at = e.at;
+  else if(e.once) entry.once = e.once;
+  if(e.project) entry.project = e.project;
+  if(e.retry) entry.retry = e.retry;
+  if(e.silentHours) entry.silentHours = e.silentHours;
+  if(e.holidayMode) entry.holidayMode = e.holidayMode;
+  if(e.recipient) entry.recipient = e.recipient;
   return entry;
 }
 
@@ -880,59 +1020,69 @@ function renderSchedStats(s){
   ].map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
 }
 
+// Renders into the shared right-hand drawer (same place as a task-log detail). The drawer is the
+// only feedback the History button has, so a failed load is surfaced there instead of in console.
 async function loadSchedHistory(){
   if(!schedHistory.id) return;
-  const p = new URLSearchParams();
-  p.set("limit", schedHistory.limit);
-  p.set("offset", schedHistory.offset);
-  const [data, s] = await Promise.all([
-    getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/runs?${p}`),
-    getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/stats`),
-  ]);
-  schedHistory.total = data.total;
-  const rows = data.logs.map(l=>{
-    return `<tr class="row" data-log="${esc(l.id)}">
-      <td>${fmtTime(l.startedAt)}</td>
-      <td>${statusBadge(l.status)}</td>
-      <td>${l.phase==="self-heal"?'<span class="badge b-auto-fixed">self-heal</span>':""}</td>
-      <td>${esc(l.project||"—")}</td>
-      <td>${fmtDur(l.durationMs)}</td>
-      <td>${l.usage.total}</td>
-      <td>${esc((l.replyText||"").slice(0,80))}</td>
-    </tr>`;
-  }).join("");
-  const bodyRows = data.logs.length ? rows : '<tr><td colspan="7" class="muted">No records</td></tr>';
+  const body = document.getElementById("drawer-body");
+  try {
+    const p = new URLSearchParams();
+    p.set("limit", schedHistory.limit);
+    p.set("offset", schedHistory.offset);
+    const [data, s] = await Promise.all([
+      getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/runs?${p}`),
+      getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/stats`),
+    ]);
+    schedHistory.total = data.total;
+    const rows = data.logs.map(l=>{
+      return `<tr class="row" data-log="${esc(l.id)}">
+        <td>${fmtTime(l.startedAt)}</td>
+        <td>${statusBadge(l.status)}</td>
+        <td>${l.phase==="self-heal"?'<span class="badge b-auto-fixed">self-heal</span>':""}</td>
+        <td>${esc(l.project||"—")}</td>
+        <td>${fmtDur(l.durationMs)}</td>
+        <td>${l.usage.total}</td>
+        <td>${esc((l.replyText||"").slice(0,80))}</td>
+      </tr>`;
+    }).join("");
+    const bodyRows = data.logs.length ? rows : '<tr><td colspan="7" class="muted">No records</td></tr>';
 
-  document.getElementById("sched-history").style.display="block";
-  document.getElementById("sched-history").innerHTML = `
-    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
-      <span>History: ${esc(schedHistory.id)}</span>
-      <button class="btn ghost" id="sched-history-close">Close</button>
-    </div>
-    <div class="cards" id="sched-stats"></div>
-    <table>
-      <thead><tr><th>Time</th><th>Status</th><th>Phase</th><th>Project</th><th>Duration</th><th>Tokens</th><th>Reply</th></tr></thead>
-      <tbody>${bodyRows}</tbody>
-    </table>
-    <div class="pager">
-      <button class="ghost" id="sh-prev" ${schedHistory.offset<=0?"disabled":""}>← Prev</button>
-      <span class="muted">Page ${Math.floor(schedHistory.offset/schedHistory.limit)+1} · ${schedHistory.total} total</span>
-      <button class="ghost" id="sh-next" ${schedHistory.offset+schedHistory.limit>=schedHistory.total?"disabled":""}>Next →</button>
-    </div>`;
+    body.innerHTML = `
+      <div class="detail">
+        <div class="muted" style="font-size:12px;margin-bottom:10px">Runs are matched by schedule id; if an id is reused, runs from earlier schedules with the same id appear here too.</div>
+        <div class="cards" id="sched-stats"></div>
+        <div class="table-scroll wrap">
+          <table>
+            <thead><tr><th>Time</th><th>Status</th><th>Phase</th><th>Project</th><th>Duration</th><th>Tokens</th><th>Reply</th></tr></thead>
+            <tbody>${bodyRows}</tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button class="ghost" id="sh-prev" ${schedHistory.offset<=0?"disabled":""}>← Prev</button>
+          <span class="muted">Page ${Math.floor(schedHistory.offset/schedHistory.limit)+1} · ${schedHistory.total} total</span>
+          <button class="ghost" id="sh-next" ${schedHistory.offset+schedHistory.limit>=schedHistory.total?"disabled":""}>Next →</button>
+        </div>
+      </div>`;
 
-  document.querySelectorAll("#sched-history tr.row").forEach(tr=>tr.onclick=()=>showDetail(tr.dataset.log));
-  document.getElementById("sched-history-close").onclick = ()=>{
-    document.getElementById("sched-history").style.display="none";
-    schedHistory = { id:null, offset:0, limit:20, total:0 };
-  };
-  document.getElementById("sh-prev").onclick=()=>{ schedHistory.offset=Math.max(0,schedHistory.offset-schedHistory.limit); loadSchedHistory(); };
-  document.getElementById("sh-next").onclick=()=>{
-    const nextOffset = schedHistory.offset + schedHistory.limit;
-    if(nextOffset >= schedHistory.total) return;
-    schedHistory.offset = nextOffset;
-    loadSchedHistory();
-  };
-  renderSchedStats(s);
+    renderSchedStats(s);
+    // A run opens its task detail in the same drawer, with a link back to this history.
+    const taskOpts = { back:loadSchedHistory, backLabel:"Back to history" };
+    body.querySelectorAll("tr.row").forEach(tr=>tr.onclick=()=>showDetail(tr.dataset.log, taskOpts));
+    body.querySelector("#sh-prev").onclick=()=>{
+      schedHistory.offset=Math.max(0, schedHistory.offset-schedHistory.limit);
+      loadSchedHistory();
+    };
+    body.querySelector("#sh-next").onclick=()=>{
+      const nextOffset = schedHistory.offset + schedHistory.limit;
+      if(nextOffset >= schedHistory.total) return;
+      schedHistory.offset = nextOffset;
+      loadSchedHistory();
+    };
+    openDrawer({ title:"History · "+schedHistory.id });
+  } catch(e){
+    body.innerHTML = `<div class="detail"><div class="err">Failed to load history: ${esc(e.message)}</div></div>`;
+    openDrawer({ title:"History · "+schedHistory.id });
+  }
 }
 
 function openSchedHistory(id){
@@ -1124,6 +1274,26 @@ async function loadConfig(){
 // ---- wire schedules buttons ----
 document.getElementById("sched-add").onclick = ()=>openSchedModal(null);
 document.getElementById("sched-reload").onclick = async ()=>{ await loadSchedulesView(); toast("Refreshed"); };
+
+document.querySelectorAll("#sched-filter .view-btn").forEach(btn=>btn.onclick=()=>{
+  schedFilter = btn.dataset.filter;
+  document.querySelectorAll("#sched-filter .view-btn").forEach(x=>x.classList.toggle("active", x===btn));
+  renderSchedules();
+});
+
+document.getElementById("sched-clear-past").onclick = async ()=>{
+  const n = schedules.filter(e=>e.state==="past").length;
+  if(!n) return toast("Nothing to clear");
+  const ok = confirm(
+    `Remove ${n} spent schedule(s) from schedules.json?\n\n`+
+    `They cannot fire again, so nothing stops working.\n`+
+    `Run history lives in the task logs, not in the config — it is kept, and these schedules stay `+
+    `browsable here under "Removed · history only".`
+  );
+  if(!ok) return;
+  schedules = schedules.filter(e=>e.state!=="past");
+  await persistSchedules();
+};
 
 // =====================================================================
 // MONITOR (process health / metrics)
