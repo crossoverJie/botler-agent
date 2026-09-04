@@ -15,6 +15,7 @@ import type {
 	TokenUsageLog,
 	ToolCallLog,
 } from "./types.ts";
+import { legacyProject } from "./utils.ts";
 
 /** Max characters for result text / thinking / conversation text (user msg & final reply are not truncated). */
 const TEXT_MAX = 2000;
@@ -54,7 +55,8 @@ export interface CollectInput {
 	source: string;
 	provider: string;
 	model: string;
-	project: string | null;
+	/** Selected data subprojects (ordered, deduplicated); empty = not routed. */
+	projects: string[];
 	startedAt: number;
 	endedAt: number;
 	userMessage: string;
@@ -81,7 +83,7 @@ export function collectTaskLog(input: CollectInput): TaskLog {
 		source,
 		provider,
 		model,
-		project,
+		projects,
 		startedAt,
 		endedAt,
 		userMessage,
@@ -196,7 +198,8 @@ export function collectTaskLog(input: CollectInput): TaskLog {
 		source,
 		provider,
 		model,
-		project,
+		project: legacyProject(projects),
+		projects,
 		status: "success",
 		startedAt,
 		endedAt,

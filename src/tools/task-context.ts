@@ -9,11 +9,16 @@
 
 import type { Recipient } from "../push/types.ts";
 
-let current: { recipient?: Recipient; conversationSessionKey?: string } | null = null;
+let current: {
+	recipient?: Recipient;
+	conversationSessionKey?: string;
+	projects?: readonly string[];
+} | null = null;
 
 export function setTaskContext(c: {
 	recipient?: Recipient;
 	conversationSessionKey?: string;
+	projects?: readonly string[];
 } | null): void {
 	current = c;
 }
@@ -21,6 +26,12 @@ export function setTaskContext(c: {
 export function getTaskContext(): {
 	recipient?: Recipient;
 	conversationSessionKey?: string;
+	projects?: readonly string[];
 } | null {
 	return current;
+}
+
+/** Task-local selected projects for path-tool enforcement; undefined when no subset is active. */
+export function getTaskProjects(): readonly string[] | undefined {
+	return current?.projects;
 }

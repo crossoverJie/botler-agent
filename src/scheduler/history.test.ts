@@ -175,6 +175,37 @@ test("orphanHistoryIndex caps the index at 200 ids, keeping the newest", () => {
 	assert.ok(!index.some((i) => i.scheduleId === "id-0"));
 });
 
+test("scheduleOverviewFromLogs joins a multi-project lastRun into a readable string", () => {
+	const entries = [makeEntry({ id: "foo" })];
+	const logs = [
+		makeLog({
+			id: "run",
+			taskId: "schedule:foo:1720000000000",
+			project: null,
+			projects: ["cook", "vocab"],
+		}),
+	];
+
+	const overview = scheduleOverviewFromLogs(entries, logs);
+
+	assert.equal(overview[0]?.lastRun?.project, "cook, vocab");
+});
+
+test("orphanHistoryIndex joins a multi-project lastProject into a readable string", () => {
+	const logs = [
+		makeLog({
+			id: "run",
+			taskId: "schedule:foo:1720000000000",
+			project: null,
+			projects: ["cook", "vocab"],
+		}),
+	];
+
+	const [foo] = orphanHistoryIndex([], logs);
+
+	assert.equal(foo.lastProject, "cook, vocab");
+});
+
 test("aggregateRunStats handles an empty log stream", () => {
 	const stats = aggregateRunStats("empty", (visit) => {
 		// No logs visited.

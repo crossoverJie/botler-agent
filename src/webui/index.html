@@ -408,7 +408,7 @@ async function loadList(){
     return `<tr class="row" data-id="${esc(l.id)}">
       <td>${fmtTime(l.startedAt)}</td>
       <td>${esc(l.source)}</td>
-      <td>${esc(l.project||"—")}</td>
+      <td>${esc(l.projects?.length ? l.projects.join(", ") : (l.project||"—"))}</td>
       <td>${statusBadge(l.status)}</td>
       <td>${fmtDur(l.durationMs)}</td>
       <td>${l.usage.total}</td>
@@ -515,7 +515,7 @@ async function showDetail(id, opts){
         <div class="k">End</div><div>${fmtTime(l.endedAt)}</div>
         <div class="k">Duration</div><div>${fmtDur(l.durationMs)}</div>
         <div class="k">provider/model</div><div>${esc(l.provider)} / ${esc(l.model)}</div>
-        <div class="k">Project</div><div>${esc(l.project||"—")}</div>
+        <div class="k">Project</div><div>${esc(l.projects?.length ? l.projects.join(", ") : (l.project||"—"))}</div>
         <div class="k">Channel</div><div>${esc(l.source)}</div>
         <div class="k">mutated</div><div>${l.mutated?"Yes":"No"}</div>
         <div class="k">Images</div><div>${l.images?.length||0}</div>
@@ -1039,7 +1039,7 @@ async function loadSchedHistory(){
         <td>${fmtTime(l.startedAt)}</td>
         <td>${statusBadge(l.status)}</td>
         <td>${l.phase==="self-heal"?'<span class="badge b-auto-fixed">self-heal</span>':""}</td>
-        <td>${esc(l.project||"—")}</td>
+        <td>${esc(l.projects?.length ? l.projects.join(", ") : (l.project||"—"))}</td>
         <td>${fmtDur(l.durationMs)}</td>
         <td>${l.usage.total}</td>
         <td>${esc((l.replyText||"").slice(0,80))}</td>

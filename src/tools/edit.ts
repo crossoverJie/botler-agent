@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import { safePath } from "./paths.ts";
+import { getTaskProjects } from "./task-context.ts";
 
 const schema = Type.Object({
 	path: Type.String({ description: "File path relative to DATA_ROOT" }),
@@ -22,7 +23,7 @@ export const editTool: AgentTool<typeof schema> = {
 		"Replace oldText with newText in a file. oldText must match the file's existing content character-for-character (including spaces and newlines), otherwise it fails. all=true replaces all matches, otherwise only the first. Used for local fixes inside JSON files.",
 	parameters: schema,
 	async execute(_toolCallId, { path, oldText, newText, all }) {
-		const abs = safePath(path);
+		const abs = safePath(path, { projects: getTaskProjects() });
 		const current = readFileSync(abs, "utf8");
 		if (!current.includes(oldText)) {
 			throw new Error(`oldText not found in the original file (first 60 chars): ${oldText.slice(0, 60)}`);

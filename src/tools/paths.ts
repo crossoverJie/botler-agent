@@ -33,6 +33,18 @@ const ROOTS = ALLOWED.map((d) => (existsSync(d) ? resolve(d) : d));
 export interface SafePathOptions {
 	/** Whether to realpath the deepest existing ancestor, to prevent symlink escapes outside the allowlist. Default on. */
 	followSymlinks?: boolean;
+	/** Optional task-local subset: when set, the resolved path must fall inside one of these projects (on top of the global allowlist). */
+	projects?: readonly string[];
+}
+
+/** Enforce the task-local subset (additive on top of the global allowlist); no-op for framework calls without a subset. */
+function assertSelectedProject(abs: string, projects: readonly string[] | undefined): void {
+	if (!projects) return;
+	const selected = new Set(projects);
+	const matchedRoot = ROOTS.find((root) => abs === root || abs.startsWith(root + sep));
+	if (!matchedRoot || !selected.has(basename(matchedRoot))) {
+		throw new Error(`Path not selected for this task: ${abs}`);
+	}
 }
 
 /**
@@ -46,6 +58,7 @@ export function safePath(p: string, opts: SafePathOptions = {}): string {
 	if (!ok) {
 		throw new Error(`Path out of bounds (not within the allowed directory): ${p}`);
 	}
+	assertSelectedProject(abs, opts.projects);
 
 	if (opts.followSymlinks ?? true) {
 		// realpath the "deepest existing ancestor", then concatenate the remaining path back, and verify once more,
@@ -60,6 +73,7 @@ export function safePath(p: string, opts: SafePathOptions = {}): string {
 		if (!ROOTS.some((root) => real === root || real.startsWith(root + sep))) {
 			throw new Error(`Path out of bounds (symlink escape): ${p}`);
 		}
+		assertSelectedProject(real, opts.projects);
 		return real;
 	}
 

@@ -8,7 +8,7 @@ import { CONFIG } from "../config.ts";
  * and has non-empty `git status --porcelain`, gets add + commit. The glue layer does the commit; the agent never touches bash.
  * When GIT_PUSH=1, additionally push (failure is only a warning, not a blocker).
  */
-export function commitIfChanged(msg: string): void {
+export function commitIfChanged(msg: string, projects?: readonly string[]): void {
 	if (!CONFIG.dataRoot) return;
 	const root = resolve(CONFIG.dataRoot);
 	if (!existsSync(root)) return;
@@ -22,6 +22,7 @@ export function commitIfChanged(msg: string): void {
 
 	for (const d of entries) {
 		if (!d.isDirectory() || d.name.startsWith(".")) continue;
+		if (projects && !projects.includes(d.name)) continue;
 		const dir = join(root, d.name);
 		if (!existsSync(join(dir, ".git"))) continue;
 		try {
