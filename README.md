@@ -212,8 +212,8 @@ Custom OpenAI-completions / Anthropic-messages compatible gateways (self-hosted 
       "baseUrl": "https://your-gateway.example.com/v1",
       "apiKey": "sk-…",
       "models": [
-        { "id": "your-model-pro", "name": "Your Model Pro", "reasoning": true, "contextWindow": 1048576, "maxTokens": 393216 },
-        { "id": "your-model-flash", "name": "Your Model Flash", "reasoning": false, "contextWindow": 1048576, "maxTokens": 393216 }
+        { "id": "your-model-pro", "name": "Your Model Pro", "reasoning": true, "contextWindow": 1048576, "maxTokens": 393216, "vision": true },
+        { "id": "your-model-flash", "name": "Your Model Flash", "reasoning": false, "contextWindow": 1048576, "maxTokens": 393216, "vision": true }
       ]
     },
     "ark": {
@@ -221,7 +221,7 @@ Custom OpenAI-completions / Anthropic-messages compatible gateways (self-hosted 
       "baseUrl": "https://ark.cn-beijing.volces.com/api/coding",
       "apiKey": "sk-…",
       "models": [
-        { "id": "ark-code-latest", "name": "…", "reasoning": false, "contextWindow": 524288, "maxTokens": 32768 }
+        { "id": "ark-code-latest", "name": "…", "reasoning": false, "contextWindow": 524288, "maxTokens": 32768, "vision": false }
       ]
     }
   }
@@ -231,7 +231,7 @@ Custom OpenAI-completions / Anthropic-messages compatible gateways (self-hosted 
 - **Select**: set `PI_PROVIDER` to a provider id and `PI_MODEL` to one of its model ids in `.env`, then restart — the model is cached per process.
 - **Add a provider / model**: just edit this file, no framework change needed. Malformed entries are skipped with a warning.
 - **`api`**: `"openai-completions"` (OpenAI Chat Completions, default) or `"anthropic-messages"` (Anthropic Messages API, whose SDK appends `/v1/messages` to `baseUrl`).
-- **Model fields**: `id` (as sent to the gateway), `name`, `reasoning` (supports thinking), `contextWindow` (context tokens), `maxTokens` (max output tokens).
+- **Model fields**: `id` (as sent to the gateway), `name`, `reasoning` (supports thinking), `contextWindow` (context tokens), `maxTokens` (max output tokens), `vision` (whether the model accepts image input; **defaults to `true` — image input is enabled**. Only set `vision: false` for text-only models. If you omit the field entirely, vision stays ON. Do NOT add `vision: false` unless the model genuinely cannot read images, or WeChat inbound images and any image-based tasks will silently fail).
 - **Built-in anthropic**: set `PI_PROVIDER=anthropic` and authenticate via `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` (no `providers.json` entry needed).
 
 ### Customizing the system prompt
