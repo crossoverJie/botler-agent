@@ -33,6 +33,7 @@ import { buildCustomProvider } from "./providers.ts";
 import { collectTaskLog, type CollectInput } from "./logging/collect.ts";
 import type { Recipient } from "./push/types.ts";
 import type { ModelCacheStats, TaskLog } from "./logging/types.ts";
+import { legacyProject } from "./logging/utils.ts";
 import {
 	formatRecentTurns,
 	loadRecentTurns,
@@ -94,6 +95,8 @@ export interface RunLogContext {
 	phase: "execute" | "self-heal";
 	/** Optional routing hint (a valid data subproject name) — skips the routing LLM call. */
 	projectHint?: string;
+	/** Optional plural routing hint (valid data subproject names) — used by the self-heal retry to avoid re-routing ambiguously. */
+	projectsHint?: string[];
 	/** Optional recipient (the message sender); injected into the task context for tools like schedule. */
 	recipient?: Recipient;
 	/** Inbound images (decoded bytes) to feed the model as vision input AND persist under the target subproject. */
@@ -121,13 +124,14 @@ const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 /**
  * Split the reply into text + image references (markdown `![alt](path)`).
  *
- * Local paths go through safePath (DATA_ROOT allowlist + symlink escape check) and must be an
- * existing image file — the agent supplies the path, but the framework decides whether it is
- * allowed, so a hallucinated path cannot leak an arbitrary file. Invalid refs are dropped
- * silently: the text reply still gets through. Image markdown is always stripped from the text,
- * so channels that cannot render it (telegram / CLI) don't show raw markdown.
+ * Local paths go through safePath (DATA_ROOT allowlist + symlink escape check + task-local
+ * selected-project subset) and must be an existing image file — the agent supplies the path, but
+ * the framework decides whether it is allowed, so a hallucinated path cannot leak an arbitrary
+ * file. Invalid refs are dropped silently: the text reply still gets through. Image markdown is
+ * always stripped from the text, so channels that cannot render it (telegram / CLI) don't show
+ * raw markdown.
  */
-function extractImages(text: string): { text: string; images: string[] } {
+function extractImages(text: string, projects: readonly string[]): { text: string; images: string[] } {
 	const images: string[] = [];
 	for (const m of text.matchAll(IMAGE_REF_RE)) {
 		const ref = (m[1] ?? "").trim();
@@ -138,7 +142,7 @@ function extractImages(text: string): { text: string; images: string[] } {
 		}
 		if (!IMAGE_EXT_RE.test(ref)) continue;
 		try {
-			const abs = safePath(ref);
+			const abs = safePath(ref, { projects });
 			if (statSync(abs).isFile() && !images.includes(abs)) images.push(abs);
 		} catch {
 			// Out of bounds / missing / unreadable: skip this image, keep the reply text
@@ -212,10 +216,12 @@ async function routeProject(
 	hasImages = false,
 	recentTurns: readonly ConversationTurn[] = [],
 	allowResetContext = false,
-): Promise<{ project: string | null; resetContext: boolean; usage?: Usage; prompt?: string; candidates: string[] }> {
+): Promise<{ projects: string[]; attachmentProject: string | null; resetContext: boolean; usage?: Usage; prompt?: string; candidates: string[] }> {
 	const projects = listProjectDirs();
-	if (projects.length === 0) return { project: null, resetContext: false, candidates: [] };
-	if (projects.length === 1) return { project: projects[0], resetContext: false, candidates: [...projects] };
+	if (projects.length === 0) return { projects: [], attachmentProject: null, resetContext: false, candidates: [] };
+	if (projects.length === 1) {
+		return { projects: [...projects], attachmentProject: null, resetContext: false, candidates: [...projects] };
+	}
 
 	// The virtual scheduler project is a routing candidate but NOT a data subproject; the
 	// single-project shortcut above intentionally ignores it (the schedule tool stays available
@@ -226,7 +232,7 @@ async function routeProject(
 		initialState: {
 			systemPrompt: prompt,
 			model,
-			tools: [], // Routing phase needs no tools, only outputs the project name
+			tools: [], // Routing phase needs no tools, only outputs the project set
 		},
 		streamFn: models.streamSimple.bind(models),
 	});
@@ -235,7 +241,14 @@ async function routeProject(
 	// Routing state is [user, assistant]; the assistant message carries a single clean usage.
 	const assistant = agent.state.messages[agent.state.messages.length - 1];
 	const usage = assistant && assistant.role === "assistant" ? assistant.usage : undefined;
-	return { project: decision.project, resetContext: decision.resetContext, usage, prompt, candidates };
+	return {
+		projects: decision.projects,
+		attachmentProject: decision.attachmentProject,
+		resetContext: decision.resetContext,
+		usage,
+		prompt,
+		candidates,
+	};
 }
 
 /**
@@ -248,7 +261,7 @@ function buildMinimalLog(opts: {
 	endedAt: number;
 	userMessage: string;
 	replyText: string;
-	project: string | null;
+	projects: string[];
 	routingUsage?: Usage;
 	routing?: { candidates: string[]; decision: string | null; prompt?: string };
 }): TaskLog {
@@ -259,7 +272,7 @@ function buildMinimalLog(opts: {
 		source: opts.ctx.source,
 		provider: CONFIG.provider,
 		model: CONFIG.model,
-		project: opts.project,
+		projects: opts.projects,
 		startedAt: opts.startedAt,
 		endedAt: opts.endedAt,
 		userMessage: opts.userMessage,
@@ -312,7 +325,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 			text: replyText,
 			images: [],
 			mutated: false,
-			log: buildMinimalLog({ ctx, startedAt, endedAt: Date.now(), userMessage, replyText, project: null }),
+			log: buildMinimalLog({ ctx, startedAt, endedAt: Date.now(), userMessage, replyText, projects: [] }),
 			recordConversationTurn: false,
 		};
 	}
@@ -327,20 +340,29 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 			text: replyText,
 			images: [],
 			mutated: false,
-			log: buildMinimalLog({ ctx, startedAt, endedAt: Date.now(), userMessage, replyText, project: null }),
+			log: buildMinimalLog({ ctx, startedAt, endedAt: Date.now(), userMessage, replyText, projects: [] }),
 			recordConversationTurn: false,
 		};
 	}
 
 	// Phase 1 (routing): a valid projectHint skips the routing LLM call entirely.
 	const hint = ctx.projectHint;
-	let project: string | null;
+	const hintProjects = ctx.projectsHint;
+	let selectedProjects: string[];
+	let attachmentProject: string | null;
 	let routingUsage: Usage | undefined;
 	let routingPrompt: string | undefined;
 	let routingCandidates: string[];
 	let resetContext = false;
 	if (hint && projects.includes(hint)) {
-		project = hint;
+		selectedProjects = [hint];
+		attachmentProject = null;
+		routingUsage = undefined;
+		routingPrompt = undefined;
+		routingCandidates = [...projects, SCHEDULER_VIRTUAL_PROJECT];
+	} else if (hintProjects && hintProjects.length > 0) {
+		selectedProjects = hintProjects.filter((n) => projects.includes(n));
+		attachmentProject = null;
 		routingUsage = undefined;
 		routingPrompt = undefined;
 		routingCandidates = [...projects, SCHEDULER_VIRTUAL_PROJECT];
@@ -355,7 +377,8 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 			isImSession,
 		);
 		resetContext = routed.resetContext;
-		project = routed.resetContext ? null : routed.project;
+		selectedProjects = routed.resetContext ? [] : routed.projects;
+		attachmentProject = routed.resetContext ? null : routed.attachmentProject;
 		routingUsage = routed.usage;
 		routingPrompt = routed.prompt;
 		routingCandidates = routed.candidates;
@@ -373,14 +396,14 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 				endedAt: Date.now(),
 				userMessage,
 				replyText,
-				project: null,
+				projects: [],
 				routingUsage,
 				routing: { candidates: routingCandidates, decision: RESET_CONTEXT_DECISION, prompt: routingPrompt },
 			}),
 			recordConversationTurn: false,
 		};
 	}
-	if (!project) {
+	if (selectedProjects.length === 0) {
 		const replyText = fallbackUnknownReply(inboundImages.length > 0);
 		return {
 			text: replyText,
@@ -392,24 +415,51 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 				endedAt: Date.now(),
 				userMessage,
 				replyText,
-				project: null,
+				projects: [],
 				routingUsage,
 				routing: { candidates: routingCandidates, decision: null, prompt: routingPrompt },
 			}),
 		};
 	}
 
-	// Persist originals under DATA_ROOT/<project>/photos, then tell the agent where they are.
+	// Inbound images must persist to a single data subproject. If the routing model omitted the
+	// attachment and exactly one real project is selected, default to it (unique owner). Multiple
+	// real projects with no explicit attachment cannot be resolved — never write arbitrarily.
+	const realSelectedProjects = selectedProjects.filter((n) => n !== SCHEDULER_VIRTUAL_PROJECT);
+	if (inboundImages.length > 0 && !attachmentProject) {
+		if (realSelectedProjects.length === 1) {
+			attachmentProject = realSelectedProjects[0];
+		} else if (realSelectedProjects.length > 1) {
+			const replyText = fallbackUnknownReply(true);
+			return {
+				text: replyText,
+				images: [],
+				mutated: false,
+				log: buildMinimalLog({
+					ctx,
+					startedAt,
+					endedAt: Date.now(),
+					userMessage,
+					replyText,
+					projects: selectedProjects,
+					routingUsage,
+					routing: { candidates: routingCandidates, decision: null, prompt: routingPrompt },
+				}),
+			};
+		}
+	}
+
+	// Persist originals under DATA_ROOT/<attachmentProject>/photos, then tell the agent where they are.
 	// Persistence happens only after a subproject is known — unrouted / unknown-project messages
 	// (returned above) never write a photo into DATA_ROOT, and the virtual __scheduler__ project
 	// is not a data subproject (nothing to persist, avoids a spurious warn). The file is written
 	// by the framework (a transport concern), validated through safePath + an image-extension
 	// whitelist; the agent only ever receives the relative path as text to cite in its record.
 	const savedPaths: string[] = [];
-	if (inboundImages.length > 0 && project !== SCHEDULER_VIRTUAL_PROJECT) {
+	if (inboundImages.length > 0 && attachmentProject) {
 		for (const img of inboundImages) {
 			try {
-				savedPaths.push(await persistInboundImage(img, project!));
+				savedPaths.push(await persistInboundImage(img, attachmentProject));
 			} catch (e) {
 				console.warn(`[runner] persist image failed: ${String(e)}`);
 			}
@@ -424,9 +474,9 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	// than reconstructed as Agent messages, avoiding internal tool-call metadata.
 	const historyBlock = formatRecentTurns(recentTurns);
 	const baseSystemPrompt = historyBlock
-		? `${loadSystemPrompt(project)}\n\n# 最近对话\n${historyBlock}\n\n以上是最近若干轮用户可见对话。当前消息如果明显是新的独立任务，请忽略旧历史并按新任务处理；如果它是上一轮任务的确认、补充或纠正，请结合历史继续处理。无法确定时向用户确认。`
-		: loadSystemPrompt(project);
-	const canControlConversation = isImSession && project !== SCHEDULER_VIRTUAL_PROJECT;
+		? `${loadSystemPrompt(selectedProjects)}\n\n# 最近对话\n${historyBlock}\n\n以上是最近若干轮用户可见对话。当前消息如果明显是新的独立任务，请忽略旧历史并按新任务处理；如果它是上一轮任务的确认、补充或纠正，请结合历史继续处理。无法确定时向用户确认。`
+		: loadSystemPrompt(selectedProjects);
+	const canControlConversation = isImSession && !selectedProjects.includes(SCHEDULER_VIRTUAL_PROJECT);
 	const clearToolInstruction = canControlConversation
 		? "\n\n# 会话上下文控制\n你可以使用 clear_conversation_context 工具。仅当用户明确要求清空 / 忽略 / 重置之前的上下文（例如「新任务」「忽略上文」「重置上下文」，或等价表达）时，在处理当前请求前调用该工具一次。调用后，如果用户还带有具体任务，继续完成该任务；如果没有具体任务，只需简短确认已清空。"
 		: "";
@@ -469,16 +519,14 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 	});
 
 	// Inject the sender as the task context (for tools like schedule to auto-fill the push
-	// recipient), and allow the clear-conversation tool only for IM execute runs. Clear the
-	// context once the run ends — whether it succeeded or not.
-	setTaskContext(
-		isImSession || ctx.recipient
-			? {
-					recipient: ctx.recipient,
-					conversationSessionKey: canControlConversation ? ctx.sessionKey : undefined,
-				}
-			: null,
-	);
+	// recipient), the selected real data projects (for the path-tool subset check), and allow the
+	// clear-conversation tool only for IM execute runs. Clear the context once the run ends —
+	// whether it succeeded or not.
+	setTaskContext({
+		recipient: ctx.recipient,
+		conversationSessionKey: canControlConversation ? ctx.sessionKey : undefined,
+		projects: realSelectedProjects,
+	});
 	try {
 		markAgentStart();
 		// Inline vision (decoded bytes) + the saved-path note, so the model can both see the
@@ -510,7 +558,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 				.filter((c) => c.type === "text")
 				.map((c) => (c as { text: string }).text)
 				.join("");
-			({ text, images } = extractImages(raw));
+			({ text, images } = extractImages(raw, realSelectedProjects));
 		}
 	} else if (last && last.role === "toolResult" && toolTurnCapHit) {
 		// Hard-stopped at the tool-turn cap: the last message is a toolResult with no final reply, so return fallback copy
@@ -551,7 +599,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		source: ctx.source,
 		provider: CONFIG.provider,
 		model: CONFIG.model,
-		project,
+		projects: selectedProjects,
 		startedAt,
 		endedAt,
 		userMessage,
@@ -561,7 +609,7 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 		inboundImageCount: inboundImages.length,
 		messages: state.messages,
 		routingUsage,
-		routing: { candidates: routingCandidates, decision: project, prompt: routingPrompt },
+		routing: { candidates: routingCandidates, decision: legacyProject(selectedProjects), prompt: routingPrompt },
 		systemPrompt,
 		modelCache: snapshotModelCache(),
 	});

@@ -124,7 +124,7 @@ function toLastRun(l: TaskLog | undefined): ScheduleLastRun | null {
 				startedAt: l.startedAt,
 				status: l.status,
 				durationMs: l.durationMs,
-				project: l.project,
+				project: l.project ?? (l.projects?.join(", ") || null),
 				tokenTotal: l.usage.total,
 			}
 		: null;
@@ -236,7 +236,7 @@ function finishHistory(
 			firstRunAt: a.first,
 			lastRunAt: a.last,
 			lastStatus: a.log.status,
-			lastProject: a.log.project,
+			lastProject: a.log.project ?? (a.log.projects?.join(", ") || null),
 			lastMessage: a.log.userMessage.slice(0, HISTORY_MESSAGE_CHARS),
 		});
 	}

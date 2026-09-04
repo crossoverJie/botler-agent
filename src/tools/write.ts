@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import { safePath } from "./paths.ts";
+import { getTaskProjects } from "./task-context.ts";
 
 const schema = Type.Object({
 	path: Type.String({
@@ -47,7 +48,7 @@ export const writeTool: AgentTool<typeof schema> = {
 				}. Pass the data structure itself — this tool handles serialization.`,
 			);
 		}
-		const abs = safePath(path);
+		const abs = safePath(path, { projects: getTaskProjects() });
 		mkdirSync(dirname(abs), { recursive: true });
 		const text = JSON.stringify(value, null, 2);
 		writeFileSync(abs, text, "utf8");

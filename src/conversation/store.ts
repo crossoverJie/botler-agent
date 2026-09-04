@@ -16,8 +16,10 @@ export const IM_SESSION_KEY = "im";
 export interface ConversationTurn {
 	/** Epoch ms of the turn's start. */
 	ts: number;
-	/** Routed data subproject; null when the reply did not target a project. */
+	/** Routed data subproject; null when the reply did not target a project (legacy display field derived from `projects`). */
 	project: string | null;
+	/** Selected data subprojects (ordered); optional to tolerate old persisted turns. */
+	projects?: string[];
 	/** User-visible input text. */
 	user: string;
 	/** User-visible final Bot reply text. */
@@ -35,6 +37,13 @@ function normalizeProject(value: unknown): string | null {
 	return typeof value === "string" && value ? value : null;
 }
 
+function normalizeProjects(value: unknown): string[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const out: string[] = [];
+	for (const v of value) if (typeof v === "string" && v) out.push(v);
+	return out;
+}
+
 function normalizeTurn(value: unknown): ConversationTurn | null {
 	if (!value || typeof value !== "object") return null;
 	const raw = value as Record<string, unknown>;
@@ -43,9 +52,14 @@ function normalizeTurn(value: unknown): ConversationTurn | null {
 	const user = typeof raw.user === "string" ? raw.user.slice(0, CONFIG.conversationTurnMaxChars) : "";
 	const assistant = typeof raw.assistant === "string" ? raw.assistant.slice(0, CONFIG.conversationTurnMaxChars) : "";
 	if (!user && !assistant) return null;
+	const project = normalizeProject(raw.project);
+	const rawProjects = normalizeProjects(raw.projects);
+	// Prefer a non-empty plural set; fall back to [project] for old singular data (or [] when none).
+	const projects = rawProjects && rawProjects.length ? rawProjects : project ? [project] : [];
 	return {
 		ts,
-		project: normalizeProject(raw.project),
+		project,
+		projects,
 		user,
 		assistant,
 	};
@@ -126,7 +140,8 @@ export function formatRecentTurns(
 	if (!Number.isFinite(maxChars) || maxChars <= 0) return "";
 	const separator = "\n\n---\n\n";
 	const rendered = turns.map((turn) => {
-		const project = opts.includeProject && turn.project ? `（项目：${turn.project}）` : "";
+		const label = turn.projects?.length ? turn.projects.join(", ") : turn.project;
+		const project = opts.includeProject && label ? `（项目：${label}）` : "";
 		return `${project}用户：${turn.user}\nBot：${turn.assistant}`;
 	});
 	// Keep the newest turns within the whole-window cap, dropping the oldest turns first.

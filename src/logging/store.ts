@@ -64,16 +64,22 @@ export function scheduleIdFromTaskId(taskId: string): string | undefined {
 }
 
 export function matchesLogQuery(log: TaskLog, q: LogQuery): boolean {
-	if (q.project && log.project !== q.project) return false;
+	if (q.project) {
+		const matches = log.projects?.length
+			? log.projects.includes(q.project)
+			: log.project === q.project;
+		if (!matches) return false;
+	}
 	if (q.source && log.source !== q.source) return false;
 	if (q.phase && log.phase !== q.phase) return false;
 	if (q.scheduleId && scheduleIdFromTaskId(log.taskId) !== q.scheduleId) return false;
 	if (q.q) {
 		const needle = q.q.toLowerCase();
+		const projectText = [log.project, ...(log.projects ?? [])].filter(Boolean).join(" ").toLowerCase();
 		if (
 			!log.userMessage.toLowerCase().includes(needle) &&
 			!log.replyText.toLowerCase().includes(needle) &&
-			!(log.project ?? "").toLowerCase().includes(needle)
+			!projectText.includes(needle)
 		) {
 			return false;
 		}
@@ -190,8 +196,8 @@ export function summary(): TaskSummary {
 
 	for (const l of all) {
 		byStatus[l.status] = (byStatus[l.status] ?? 0) + 1;
-		const proj = l.project ?? "(none)";
-		byProject[proj] = (byProject[proj] ?? 0) + 1;
+		const names = l.projects?.length ? l.projects : l.project ? [l.project] : ["(none)"];
+		for (const proj of names) byProject[proj] = (byProject[proj] ?? 0) + 1;
 		bySource[l.source] = (bySource[l.source] ?? 0) + 1;
 		token.input += l.usage.input;
 		token.output += l.usage.output;
@@ -283,6 +289,9 @@ function stepMs(g: Granularity): number {
  * Every group gets the same continuous bucket array, so the frontend can align its X axis
  * without handling missing buckets. No grouping returns at least one "(all)" group (empty
  * bucket sequence) so the UI never renders a blank state.
+ *
+ * Note: grouping by "project" counts a multi-project log once per selected project, so token
+ * totals summed across project groups can exceed the ungrouped ("(all)") total.
  */
 export function tokenTimeSeries(q: TokenTimeQuery = {}): TokenTimeSeries {
 	const g = q.granularity ?? "day";
@@ -310,8 +319,19 @@ export function tokenTimeSeries(q: TokenTimeQuery = {}): TokenTimeSeries {
 		costUsd: 0,
 	}));
 
-	const groupKey = (l: TaskLog): string =>
-		q.groupBy === "project" ? (l.project ?? "(none)") : q.groupBy === "source" ? l.source : "(all)";
+	// A multi-project log expands into one bucket increment per selected project (else it would
+	// collapse into "(none)"). Note: when `groupBy === "project"` this counts a multi-project
+	// log's tokens once per project, so the per-project totals can exceed the ungrouped total.
+	const groupKeys = (l: TaskLog): string[] =>
+		q.groupBy === "project"
+			? l.projects?.length
+				? l.projects
+				: l.project
+					? [l.project]
+					: ["(none)"]
+			: q.groupBy === "source"
+				? [l.source]
+				: ["(all)"];
 
 	const groups = new Map<string, TokenBucket[]>();
 	const groupOf = (k: string): TokenBucket[] => {
@@ -330,14 +350,16 @@ export function tokenTimeSeries(q: TokenTimeQuery = {}): TokenTimeSeries {
 		if (l.startedAt < lo || l.startedAt > hi) continue;
 		const idx = Math.floor((l.startedAt - first) / step);
 		if (idx < 0 || idx >= buckets.length) continue;
-		const b = groupOf(groupKey(l))[idx];
-		b.tasks += 1;
-		b.input += l.usage.input;
-		b.output += l.usage.output;
-		b.cacheRead += l.usage.cacheRead;
-		b.cacheWrite += l.usage.cacheWrite;
-		b.total += l.usage.total;
-		b.costUsd += l.usage.costUsd;
+		for (const k of groupKeys(l)) {
+			const b = groupOf(k)[idx];
+			b.tasks += 1;
+			b.input += l.usage.input;
+			b.output += l.usage.output;
+			b.cacheRead += l.usage.cacheRead;
+			b.cacheWrite += l.usage.cacheWrite;
+			b.total += l.usage.total;
+			b.costUsd += l.usage.costUsd;
+		}
 	}
 
 	return {

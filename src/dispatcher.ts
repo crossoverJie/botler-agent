@@ -26,6 +26,8 @@ export interface DispatchOptions {
 	source?: string;
 	/** Optional routing hint (a valid data subproject). Scheduler entries use it to skip the routing LLM call. */
 	projectHint?: string;
+	/** Optional plural routing hint (valid data subproject names); used by the self-heal retry. */
+	projectsHint?: string[];
 	/** Optional recipient: the sender of this message. Tools like schedule inject it as the push target. */
 	recipient?: Recipient;
 	/**
@@ -81,6 +83,7 @@ function appendVisibleTurn(
 		{
 			ts: log.startedAt,
 			project: log.project,
+			projects: log.projects,
 			// The model sees an additional image-persisted note appended by the framework;
 			// history deliberately stores only the original user text, not that transport note.
 			user: message,
@@ -117,6 +120,7 @@ function minimalLog(opts: {
 		provider: CONFIG.provider,
 		model: CONFIG.model,
 		project: null,
+		projects: [],
 		status: opts.status,
 		startedAt: opts.startedAt,
 		endedAt: Date.now(),
@@ -198,20 +202,20 @@ export async function dispatch(message: string, opts: DispatchOptions = {}): Pro
 			}
 
 			if (!result.mutated) {
-				// Read-only task (query) — or unrouted/no-project (project === null).
-				log.status = log.project === null ? "unknown-project" : "success";
+				// Read-only task (query) — or unrouted/no-project (empty selected set).
+				log.status = log.projects && log.projects.length === 0 ? "unknown-project" : "success";
 				log.replyText = result.text;
 				appendTaskLog(log);
 				finalStatus = log.status;
 				return out(result.text, result.images, log.status);
 			}
 
-			let validation = validateState();
+			let validation = validateState(log.projects);
 			if (!validation.ok) {
 				// A fresh Agent reads the file and self-heals in place.
 				console.log(`[dispatch] Validation failed; self-heal retry: ${validation.fix}`);
-				const heal = await runTask(validation.fix!, { taskId, source, phase: "self-heal" });
-				validation = validateState();
+				const heal = await runTask(validation.fix!, { taskId, source, phase: "self-heal", projectsHint: log.projects });
+				validation = validateState(log.projects);
 				if (!validation.ok) {
 					const errText = `⚠️ Could not save safely; please check the data: ${validation.fix ?? ""}`;
 					log.status = "validation-failed";
@@ -225,7 +229,7 @@ export async function dispatch(message: string, opts: DispatchOptions = {}): Pro
 					finalStatus = "validation-failed";
 					return out(errText, [], "validation-failed");
 				}
-				commitIfChanged(`agent: ${truncate(message)}`);
+				commitIfChanged(`agent: ${truncate(message)}`, log.projects);
 				const finalText = `${result.text}\n\n(auto-fixed and saved)`;
 				log.status = "auto-fixed";
 				log.replyText = finalText;
@@ -238,7 +242,7 @@ export async function dispatch(message: string, opts: DispatchOptions = {}): Pro
 				return out(finalText, result.images, "auto-fixed");
 			}
 
-			commitIfChanged(`agent: ${truncate(message)}`);
+			commitIfChanged(`agent: ${truncate(message)}`, log.projects);
 			log.status = "success";
 			log.replyText = result.text;
 			appendTaskLog(log);

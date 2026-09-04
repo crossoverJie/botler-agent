@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import { safePath, projectOf } from "./paths.ts";
+import { getTaskProjects } from "./task-context.ts";
 import { CONFIG } from "../config.ts";
 
 /** Fixed interpreter per extension; the script must already exist inside an allowlisted project, eliminating arbitrary execution like `python3 -c`. */
@@ -35,7 +36,7 @@ export const runTool: AgentTool<typeof schema> = {
 		"Run an existing script inside a data subproject (only python3 .py or node .js/.mjs), used to run build/refresh scripts defined by the project's conventions (e.g. build.py). No shell is used; args are passed directly; the working directory is locked to the script's subproject root with a 60-second timeout. Only run it when the project's conventions (AGENTS.md) require it; skip if the project has no such script.",
 	parameters: schema,
 	async execute(_toolCallId, { script, args = [] }) {
-		const abs = safePath(script);
+		const abs = safePath(script, { projects: getTaskProjects() });
 		if (!existsSync(abs) || !statSync(abs).isFile()) {
 			throw new Error(`Script does not exist or is not a file: ${script}`);
 		}

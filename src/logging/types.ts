@@ -99,8 +99,10 @@ export interface TaskLog {
 	source: string;
 	provider: string;
 	model: string;
-	/** Routed subproject; null = not routed / no project. */
+	/** Routed subproject; null = not routed / no project (legacy display field derived from `projects`). */
 	project: string | null;
+	/** Selected data subprojects (ordered, deduplicated); empty = not routed. Optional to tolerate old JSONL entries. */
+	projects?: string[];
 	status: TaskStatus;
 	startedAt: number;
 	endedAt: number;

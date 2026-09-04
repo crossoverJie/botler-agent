@@ -21,7 +21,7 @@ export const DEFAULT_SYSTEM_PROMPT = `你是运行在个人数据目录下的轻
 __PROJECT_CONTEXT__
 
 # 工作原则
-- 你已被路由到上面的数据子项目，直接按该项目约定完成任务即可；不要操作其他子项目。
+- 你只能操作下面“当前选中数据子项目与约定”列出的项目；可以按任务需要依次操作其中多个项目，绝不能操作未列出的数据子项目。
 - 修改文件前先用 read 读取现有内容，在上下文中修改后整体写回（write 接受数据结构本身，不是 JSON 文本）。
 - 必须保持 JSON 合法、字段类型一致（数字就是数字，字符串就是字符串）。
 - 写完后用平实的中文向用户汇报结果，给出关键数字。
@@ -161,6 +161,11 @@ function projectContext(name: string): string {
 	return `## ${name}/\n（约定文档内容${truncated ? "，已截断" : ""}）\n${truncated ? content.slice(0, RULE_MAX_CHARS) : content}`;
 }
 
+/** Concatenate the convention docs of several projects in selection order (used in the execution phase). */
+function projectsContext(names: readonly string[]): string {
+	return names.map((n) => projectContext(n)).join("\n\n");
+}
+
 /**
  * Virtual "project" context for schedule management requests (no data subproject involved).
  * Routed to when the message is about creating/managing scheduled tasks.
@@ -213,24 +218,28 @@ export function buildRoutePrompt(
 	const resetInstruction = allowResetContext
 		? `\n如果用户明确要求清空 / 忽略 / 重置之前的上下文（例如「新任务」「忽略上文」「重置上下文」，或等价表达），只输出 ${RESET_CONTEXT_DECISION}。若用户的新任务还带有具体的数据操作，则仍输出对应项目，不要输出 ${RESET_CONTEXT_DECISION}。\n`
 		: "";
+	const jsonInstruction = `只输出 JSON：{"projects":["项目名"],"attachmentProject":"项目名或null"}。
+projects 必须是一个或多个给定候选项目名（按需要依次列出）；无法确定时只输出 UNKNOWN。
+如果选择 ${SCHEDULER_VIRTUAL_PROJECT}，projects 必须只能是 ["${SCHEDULER_VIRTUAL_PROJECT}"]，且 attachmentProject 必须为 null。
+有图片时 attachmentProject 必须是 projects 中唯一一个用于保存原图的项目；无图片时写 null。`;
 	const outputCandidates = allowResetContext
-		? `只输出项目名（如 my-project）、${RESET_CONTEXT_DECISION} 或 UNKNOWN。`
-		: "只输出项目名（如 my-project）或 UNKNOWN。";
-	return `你是路由助手，负责判断用户消息要操作哪个数据子项目。只输出一个项目名（不含斜杠），无法确定时只输出 UNKNOWN。不要使用任何工具。
+		? `${jsonInstruction}\n若用户明确要求清空 / 忽略 / 重置之前的上下文，只输出 ${RESET_CONTEXT_DECISION}。`
+		: jsonInstruction;
+	return `你是路由助手，负责判断用户消息要操作哪个（或哪几个）数据子项目。只输出 JSON（不要输出解释文字），不要使用任何工具。
 
 数据根目录下的子项目：
 ${listProjectSummaries()}${schedulerLine}${historyBlock}用户消息：${userMessage}
-${imageLine}${historyInstruction}${resetInstruction}判断这条消息属于哪个子项目。${outputCandidates}`;
+${imageLine}${historyInstruction}${resetInstruction}判断这条消息属于哪个（或哪几个）子项目。${outputCandidates}`;
 }
 
 /**
  * Load the execution-phase system prompt (phase 2):
  * 1. ~/.botler-agent/system-prompt.md exists → use the externalized one; otherwise fall back to the built-in default;
- * 2. for a real data subproject, concatenate only that project's convention doc in full, by projectName;
- *    for the virtual `__scheduler__` project, use the schedule-management context instead (no data rules);
+ * 2. for real data subprojects, concatenate the convention docs of every selected project, in selection order;
+ *    for the virtual `__scheduler__` project (always sole), use the schedule-management context instead (no data rules);
  * 3. uniformly replace placeholders.
  */
-export function loadSystemPrompt(projectName?: string): string {
+export function loadSystemPrompt(projectNames?: readonly string[]): string {
 	let base = DEFAULT_SYSTEM_PROMPT;
 	const userPrompt = join(USER_CONFIG_DIR, "system-prompt.md");
 	if (existsSync(userPrompt)) {
@@ -241,11 +250,11 @@ export function loadSystemPrompt(projectName?: string): string {
 		}
 	}
 	const ctx =
-		projectName === SCHEDULER_VIRTUAL_PROJECT
-			? schedulerContext()
-			: projectName
-				? projectContext(projectName)
-				: listProjectSummaries();
+		!projectNames || projectNames.length === 0
+			? listProjectSummaries()
+			: projectNames.length === 1 && projectNames[0] === SCHEDULER_VIRTUAL_PROJECT
+				? schedulerContext()
+				: projectsContext(projectNames);
 	return base
 		.replaceAll("__DATA_ROOT__", CONFIG.dataRoot)
 		.replaceAll("__PROJECTS__", listProjects())

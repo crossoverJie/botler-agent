@@ -53,6 +53,34 @@ test("appendTurn preserves a null project for unknown-project turns", () => {
 	assert.equal(store.loadRecentTurns(store.IM_SESSION_KEY, 5)[0].project, null);
 });
 
+test("appendTurn round-trips a multi-project turn with a null legacy project", () => {
+	store.clearSession(store.IM_SESSION_KEY);
+	store.appendTurn(
+		store.IM_SESSION_KEY,
+		{ ts: 1, project: null, projects: ["cook", "vocab"], user: "u", assistant: "a" },
+		5,
+	);
+	const [t] = store.loadRecentTurns(store.IM_SESSION_KEY, 5);
+	assert.deepEqual(t.projects, ["cook", "vocab"]);
+	assert.equal(t.project, null);
+});
+
+test("normalizeTurn falls back to [project] for old single-project data", () => {
+	store.clearSession(store.IM_SESSION_KEY);
+	store.appendTurn(store.IM_SESSION_KEY, turn(1, "cook"), 5);
+	const [t] = store.loadRecentTurns(store.IM_SESSION_KEY, 5);
+	assert.deepEqual(t.projects, ["cook"]);
+	assert.equal(t.project, "cook");
+});
+
+test("formatRecentTurns renders joined project labels for multi-project turns", () => {
+	const turns = [{ ts: 1, project: null, projects: ["cook", "vocab"], user: "u", assistant: "a" }];
+	assert.equal(
+		store.formatRecentTurns(turns, { includeProject: true }),
+		"（项目：cook, vocab）用户：u\nBot：a",
+	);
+});
+
 test("appendTurn truncates user and assistant messages to the configured max chars", () => {
 	store.clearSession(store.IM_SESSION_KEY);
 	store.appendTurn(
