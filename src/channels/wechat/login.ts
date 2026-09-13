@@ -1,19 +1,19 @@
 import { apiGetFetch } from "./api.ts";
 import { saveAccount } from "./account.ts";
 
-const FIXED_BASE_URL = "https://ilinkai.weixin.qq.com";
-const DEFAULT_ILINK_BOT_TYPE = "3";
+export const FIXED_BASE_URL = "https://ilinkai.weixin.qq.com";
+export const DEFAULT_ILINK_BOT_TYPE = "3";
 const GET_QRCODE_TIMEOUT_MS = 5_000;
 const QR_LONG_POLL_TIMEOUT_MS = 35_000;
 /** Max QR-code refreshes before giving up (matches the SDK's MAX_QR_REFRESH_COUNT). */
-const MAX_QR_REFRESH_COUNT = 3;
+export const MAX_QR_REFRESH_COUNT = 3;
 
-interface QRCodeResponse {
+export interface QRCodeResponse {
 	qrcode: string;
 	qrcode_img_content: string;
 }
 
-interface StatusResponse {
+export interface StatusResponse {
 	status: "wait" | "scaned" | "confirmed" | "expired" | "scaned_but_redirect";
 	bot_token?: string;
 	ilink_bot_id?: string;
@@ -22,7 +22,7 @@ interface StatusResponse {
 	redirect_host?: string;
 }
 
-async function fetchQRCode(apiBaseUrl: string, botType: string): Promise<QRCodeResponse> {
+export async function fetchQRCode(apiBaseUrl: string, botType: string): Promise<QRCodeResponse> {
 	const rawText = await apiGetFetch({
 		baseUrl: apiBaseUrl,
 		endpoint: `ilink/bot/get_bot_qrcode?bot_type=${encodeURIComponent(botType)}`,
@@ -32,7 +32,7 @@ async function fetchQRCode(apiBaseUrl: string, botType: string): Promise<QRCodeR
 	return JSON.parse(rawText) as QRCodeResponse;
 }
 
-async function pollQRStatus(apiBaseUrl: string, qrcode: string): Promise<StatusResponse> {
+export async function pollQRStatus(apiBaseUrl: string, qrcode: string): Promise<StatusResponse> {
 	try {
 		const rawText = await apiGetFetch({
 			baseUrl: apiBaseUrl,
