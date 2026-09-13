@@ -3,7 +3,7 @@ import { dispatch, DUPLICATE_SENTINEL } from "../../dispatcher.ts";
 import { IM_SESSION_KEY } from "../../conversation/store.ts";
 import { recordContact } from "../../push/contacts.ts";
 import { getUpdates } from "./api.ts";
-import { loadSyncBuf, saveSyncBuf, resolveAccount } from "./account.ts";
+import { clearSyncBuf, loadSyncBuf, saveSyncBuf, resolveAccount } from "./account.ts";
 import { updateContext } from "./context.ts";
 import {
 	markdownToPlainText,
@@ -266,11 +266,12 @@ function sleep(ms: number): Promise<void> {
  * handle SIGINT either).
  */
 export async function runWechatMonitor(): Promise<void> {
-	const { baseUrl, token, userId: ownerUserId, configured } = resolveAccount();
-	if (!configured) {
+	const initial = resolveAccount();
+	if (!initial.configured) {
 		throw new Error("WeChat account not logged in; please run: npm start -- wechat-login");
 	}
 
+	let { baseUrl, token, userId: ownerUserId } = initial;
 	let getUpdatesBuf = loadSyncBuf() ?? "";
 	let nextTimeoutMs = DEFAULT_LONG_POLL_TIMEOUT_MS;
 	let consecutiveFailures = 0;
@@ -278,7 +279,29 @@ export async function runWechatMonitor(): Promise<void> {
 	console.log(`[wechat] monitor started (${baseUrl})`);
 
 	while (true) {
+		// Re-resolve the account every iteration so a web re-pair takes effect live (no restart).
+		// A token change means the account was swapped: reset both the in-memory and on-disk cursor
+		// so the new session starts clean (see also the reqToken guard on saveSyncBuf below).
+		const acct = resolveAccount();
+		// A token change means the account was swapped (re-pair). Guard against the token going
+		// undefined: if account.json was deleted out-of-band (e.g. `wechat-logout` in another
+		// terminal), keep running with the old token rather than flipping to an unauthenticated
+		// loop and mis-marking the channel as healthy.
+		if (!acct.token) {
+			console.warn("[wechat] account no longer configured; keeping the current session running");
+		} else if (acct.token !== token) {
+			token = acct.token;
+			baseUrl = acct.baseUrl;
+			ownerUserId = acct.userId;
+			getUpdatesBuf = "";
+			clearSyncBuf();
+			consecutiveFailures = 0;
+			setChannelUp("wechat");
+			console.log(`[wechat] account re-resolved (re-pair detected), restarting cursor (${baseUrl})`);
+		}
+
 		try {
+			const reqToken = token; // token this getUpdates is issued against
 			const resp = await getUpdates({
 				baseUrl,
 				token,
@@ -299,7 +322,7 @@ export async function runWechatMonitor(): Promise<void> {
 					resp.errcode === SESSION_EXPIRED_ERRCODE || resp.ret === SESSION_EXPIRED_ERRCODE;
 				if (isSessionExpired) {
 					console.error(
-						`[wechat] session expired (errcode ${SESSION_EXPIRED_ERRCODE}), please re-run: npm start -- wechat-login`,
+						`[wechat] session expired (errcode ${SESSION_EXPIRED_ERRCODE}), please re-pair from the WebUI (or re-run: npm start -- wechat-login)`,
 					);
 					setChannelDown("wechat", "session expired");
 					consecutiveFailures = 0;
@@ -323,7 +346,10 @@ export async function runWechatMonitor(): Promise<void> {
 			// A clean getUpdates round means the long poll is healthy again — recover from any prior down.
 			setChannelUp("wechat");
 
-			if (resp.get_updates_buf != null && resp.get_updates_buf !== "") {
+			// A re-pair may have landed while this request was in flight; the cursor it returned
+			// belongs to the OLD account. Persist it only if the account is still the one it was
+			// issued against — otherwise a stale cursor would resurrect sync.json on a later restart.
+			if (resp.get_updates_buf != null && resp.get_updates_buf !== "" && resolveAccount().token === reqToken) {
 				saveSyncBuf(resp.get_updates_buf);
 				getUpdatesBuf = resp.get_updates_buf;
 			}

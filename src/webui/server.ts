@@ -42,6 +42,7 @@ import {
 import { loadAccount, resolveAccount } from "../channels/wechat/account.ts";
 import { getContext } from "../channels/wechat/context.ts";
 import { reminderStatus } from "../channels/wechat/reminder.ts";
+import { cancelPairing, getPairSession, renderPairQr, startPairing } from "../channels/wechat/pair.ts";
 
 const INDEX_HTML = join(dirname(fileURLToPath(import.meta.url)), "index.html");
 
@@ -146,6 +147,18 @@ function wechatStatus() {
 	};
 }
 
+/** Read-only snapshot of the active pairing session (idle = no session). */
+function pairStatus() {
+	const s = getPairSession();
+	if (!s) return { state: "idle" as const };
+	return {
+		state: s.state,
+		refreshCount: s.refreshCount,
+		scannedAt: s.scannedAt ?? null,
+		error: s.error ?? null,
+	};
+}
+
 /** The full config view returned to GET /api/config. */
 function configView() {
 	return {
@@ -153,6 +166,7 @@ function configView() {
 		schedules: loadSchedules(),
 		backups: listBackups(),
 		wechat: wechatStatus(),
+		pairing: pairStatus(),
 	};
 }
 
@@ -320,6 +334,48 @@ export function startWebui(): void {
 				}
 				res.statusCode = 405;
 				return res.end("Method Not Allowed");
+			}
+
+			// ---- WeChat pairing (start / observe / cancel) ----
+			if (path === "/api/wechat/pair") {
+				if (req.method !== "POST") {
+					res.statusCode = 405;
+					return res.end("Method Not Allowed");
+				}
+				if (!requireUiHeader(req, res)) return;
+				try {
+					const s = await startPairing();
+					if (s.state === "error") {
+						const err = getPairSession()?.error ?? "pairing failed";
+						return json(res, { ok: false, state: "error", error: err });
+					}
+					const qrImage = await renderPairQr(s.content);
+					return json(res, { ok: true, qrImage, state: s.state });
+				} catch (e) {
+					return json(
+						res,
+						{ ok: false, state: "error", error: e instanceof Error ? e.message : String(e) },
+						500,
+					);
+				}
+			}
+
+			if (path === "/api/wechat/pair/status") {
+				if (req.method !== "GET") {
+					res.statusCode = 405;
+					return res.end("Method Not Allowed");
+				}
+				return json(res, pairStatus());
+			}
+
+			if (path === "/api/wechat/pair/cancel") {
+				if (req.method !== "POST") {
+					res.statusCode = 405;
+					return res.end("Method Not Allowed");
+				}
+				if (!requireUiHeader(req, res)) return;
+				cancelPairing();
+				return json(res, { ok: true, state: "idle" });
 			}
 
 			res.statusCode = 404;

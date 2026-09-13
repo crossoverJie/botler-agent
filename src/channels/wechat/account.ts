@@ -70,6 +70,28 @@ export function clearAccount(): void {
 	removeContacts("wechat");
 }
 
+/** Drop the persisted get_updates_buf cursor (sync.json) without touching account.json. */
+export function clearSyncBuf(): void {
+	try {
+		fs.unlinkSync(syncPath());
+	} catch {
+		// ignore (already absent)
+	}
+}
+
+/**
+ * Apply a fresh login (re-pair) while dropping the old owner's stale state. Unlike
+ * `clearAccount()` (logout), this keeps the just-saved account and only clears what is
+ * invalidated by an account swap: the old context_token(s), the old push contact address,
+ * and the old sync cursor.
+ */
+export function applyNewAccount(update: { token?: string; baseUrl?: string; userId?: string }): void {
+	saveAccount(update); // merges + stamps savedAt
+	clearContexts(); // old owner's context_token is invalid now
+	removeContacts("wechat"); // old owner's push address is invalid now
+	clearSyncBuf(); // the monitor starts the new session with an empty cursor
+}
+
 /** Resolve baseUrl + token + owner userId from stored account. */
 export function resolveAccount(): {
 	baseUrl: string;

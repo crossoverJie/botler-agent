@@ -267,8 +267,9 @@
 
       <div class="panel">
         <h2>WeChat channel status</h2>
-        <div class="hint">Read-only status of the WeChat renewal reminder (24h session window). Threshold is set by WECHAT_REMINDER_HOURS in .env.</div>
+        <div class="hint">Pair (or re-pair) the WeChat account from the browser — the running process picks up the new login without a restart. Also shows the 24h session-window reminder state (threshold from WECHAT_REMINDER_HOURS).</div>
         <div class="row-actions" style="margin-bottom:10px">
+          <button class="btn" id="wx-pair">Pair</button>
           <button class="btn ghost" id="wx-refresh">Refresh</button>
         </div>
         <div id="wechat-status"></div>
@@ -1263,10 +1264,98 @@ function renderWechatStatus(w){
 }
 document.getElementById("wx-refresh").onclick = ()=>loadConfig();
 
+// ---- wechat pairing ----
+let pairTimer = null;
+
+const PAIR_LABELS = {
+  pending: "Waiting for scan — open WeChat and scan the QR",
+  scanned: "Scanned — please confirm in WeChat",
+  expired: "QR expired",
+  confirmed: "Connected",
+  error: "Error",
+  idle: "Idle",
+};
+
+function pairClose(m){
+  if(pairTimer){ clearInterval(pairTimer); pairTimer = null; }
+  m.remove();
+}
+
+function updatePairStatus(m, state, err){
+  const el = m.querySelector("#pair-status");
+  const refresh = m.querySelector("#pair-refresh");
+  const qr = m.querySelector("#pair-qr");
+  el.textContent = state === "error"
+    ? "Error" + (err ? ": " + err : "")
+    : (PAIR_LABELS[state] || state);
+  // The QR is only useful while waiting/scanning; hide it once expired/errored so a stale code
+  // isn't scanned, and surface the refresh action instead.
+  const expired = state === "expired";
+  refresh.style.display = expired ? "" : "none";
+  qr.style.opacity = (state === "pending" || state === "scanned") ? "1" : ".35";
+}
+
+async function pairStart(m){
+  m.querySelector("#pair-status").textContent = "Fetching QR…";
+  try {
+    const r = await postJSON("/api/wechat/pair", {});
+    if(r.ok){
+      m.querySelector("#pair-qr").innerHTML = `<img src="${r.qrImage}" alt="WeChat QR code" style="max-width:240px;width:100%;image-rendering:pixelated" />`;
+      updatePairStatus(m, r.state);
+    } else {
+      m.querySelector("#pair-qr").innerHTML = "";
+      updatePairStatus(m, r.state || "error", r.error);
+    }
+  } catch(e){
+    m.querySelector("#pair-qr").innerHTML = "";
+    updatePairStatus(m, "error", e.message);
+  }
+}
+
+async function pairPoll(m){
+  try {
+    const c = await cfgGet("/api/config");
+    const p = (c && c.pairing) || { state: "idle" };
+    updatePairStatus(m, p.state, p.error);
+    if(p.state === "confirmed"){
+      pairClose(m);
+      await loadConfig();
+      toast("WeChat paired successfully");
+    }
+  } catch(e){ /* transient poll failure — keep the modal open and retry next tick */ }
+}
+
+function openPairModal(){
+  if(pairTimer){ clearInterval(pairTimer); pairTimer = null; }
+  const m = document.createElement("div");
+  m.className = "modal-bg";
+  m.innerHTML = `<div class="modal">
+    <h3>Pair WeChat</h3>
+    <div class="hint">Scan the QR code with WeChat, then confirm on your phone. The new login takes effect without restarting the process.</div>
+    <div style="text-align:center;padding:8px 0" id="pair-qr"></div>
+    <div class="muted" style="text-align:center;min-height:20px" id="pair-status">Starting…</div>
+    <div class="actions">
+      <button class="btn ghost" id="pair-cancel">Cancel</button>
+      <button class="btn ghost" id="pair-refresh" style="display:none">Refresh QR</button>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  m.querySelector("#pair-cancel").onclick = async ()=>{
+    try { await postJSON("/api/wechat/pair/cancel", {}); } catch(e){ /* ignore */ }
+    pairClose(m);
+  };
+  m.querySelector("#pair-refresh").onclick = ()=>pairStart(m);
+  pairStart(m);
+  pairTimer = setInterval(()=>pairPoll(m), 2000);
+}
+
+document.getElementById("wx-pair").onclick = openPairModal;
+
 async function loadConfig(){
   const c = await cfgGet("/api/config");
   document.getElementById("sp-text").value = c.systemPrompt || "";
   document.getElementById("sp-count").textContent = `${(c.systemPrompt||"").length} chars`;
+  document.getElementById("wx-pair").textContent = (c.wechat && c.wechat.configured) ? "Re-pair" : "Pair";
   renderWechatStatus(c.wechat);
   await loadBackups();
 }

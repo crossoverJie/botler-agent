@@ -88,8 +88,9 @@ function loop(): void {
 	});
 }
 
-/** Start the renewal reminder loop (fire-and-forget). No-op unless wechatReminderHours >= 1. */
+/** Start the renewal reminder loop (fire-and-forget, idempotent). No-op unless wechatReminderHours >= 1. */
 export function startWechatReminderLoop(): void {
+	if (started) return; // idempotent: a web re-pair may call this after boot
 	if (CONFIG.wechatReminderHours < 1) return;
 	started = true;
 	console.log(`[wechat-reminder] started (threshold ${CONFIG.wechatReminderHours}h, tick ${REMINDER_TICK_MS / 60_000}min)`);
