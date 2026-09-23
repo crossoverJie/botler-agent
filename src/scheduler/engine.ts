@@ -26,11 +26,10 @@ import { dispatch } from "../dispatcher.ts";
 import { deliver } from "../push/deliver.ts";
 import { loadSchedules, setSchedulesSavedListener } from "./store.ts";
 import { nextFireEpoch } from "./cron.ts";
+import { pollDelay } from "./poll.ts";
 import { ensureHolidays, setHolidaysSavedListener, loadHolidays } from "./holidays.ts";
 import type { ScheduleEntry } from "./types.ts";
 import { stats } from "../monitor/stats.ts";
-
-const IDLE_POLL_MS = 60_000;
 
 let lastMtime = -1;
 let wakeSleep: (() => void) | null = null;
@@ -156,8 +155,7 @@ async function loop(): Promise<void> {
 		// Record the next fire instant (Infinity → 0 means "nothing pending").
 		stats.nextFireAt = soonest === Infinity ? 0 : soonest;
 
-		const pollMs = soonest === Infinity ? IDLE_POLL_MS : soonest - Date.now();
-		await sleep(Math.max(1000, pollMs));
+		await sleep(pollDelay(soonest, Date.now()));
 	}
 }
 
