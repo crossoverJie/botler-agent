@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pollDelay, MAX_SLEEP_MS, IDLE_POLL_MS, MIN_SLEEP_MS } from "./engine.ts";
+import { pollDelay, MAX_SLEEP_MS, IDLE_POLL_MS, MIN_SLEEP_MS } from "./poll.ts";
 
 const MAX_INT32 = 2 ** 31 - 1;
 
