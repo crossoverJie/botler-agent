@@ -30,7 +30,21 @@ import { ensureHolidays, setHolidaysSavedListener, loadHolidays } from "./holida
 import type { ScheduleEntry } from "./types.ts";
 import { stats } from "../monitor/stats.ts";
 
-const IDLE_POLL_MS = 60_000;
+export const IDLE_POLL_MS = 60_000;
+export const MIN_SLEEP_MS = 1_000;
+/**
+ * setTimeout clamps any delay above the 32-bit signed integer max (2^31-1 ms, ~24.8 days) to 1 ms
+ * and emits a TimeoutOverflowWarning. Cap just below that so a far-future `once` entry (whose
+ * absolute epoch minus `now` easily exceeds the limit) cannot spin the loop. Sleeping in chunks is
+ * correctness-neutral: each round re-reads schedules.json and recomputes the soonest fire.
+ */
+export const MAX_SLEEP_MS = 2_000_000_000; // ~23.1 days
+
+/** Delay before the next scheduler round: idle when nothing is pending, else the gap to `soonest`. */
+export function pollDelay(soonest: number, now: number): number {
+	const raw = soonest === Infinity ? IDLE_POLL_MS : soonest - now;
+	return Math.min(MAX_SLEEP_MS, Math.max(MIN_SLEEP_MS, raw));
+}
 
 let lastMtime = -1;
 let wakeSleep: (() => void) | null = null;
@@ -156,8 +170,7 @@ async function loop(): Promise<void> {
 		// Record the next fire instant (Infinity → 0 means "nothing pending").
 		stats.nextFireAt = soonest === Infinity ? 0 : soonest;
 
-		const pollMs = soonest === Infinity ? IDLE_POLL_MS : soonest - Date.now();
-		await sleep(Math.max(1000, pollMs));
+		await sleep(pollDelay(soonest, Date.now()));
 	}
 }
 
