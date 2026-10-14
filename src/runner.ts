@@ -511,10 +511,10 @@ export async function runTask(userMessage: string, logCtx?: RunLogContext): Prom
 			}
 			return undefined;
 		},
-		shouldStopAfterTurn: (ctx) => {
-			const hit = countToolTurns(ctx.context.messages) >= CONFIG.maxToolTurns;
+		finishTurn: (turn) => {
+			const hit = countToolTurns(turn.context.messages) >= CONFIG.maxToolTurns;
 			if (hit) toolTurnCapHit = true;
-			return hit;
+			return hit ? { action: "end" } : undefined;
 		},
 	});
 
