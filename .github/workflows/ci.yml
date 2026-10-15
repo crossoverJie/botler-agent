@@ -31,3 +31,29 @@ jobs:
 
       - name: Test
         run: npm test
+
+  docker-smoke:
+    # Build the production image and actually boot the entrypoint, so a regression like
+    # tsx missing from runtime deps (ERR_MODULE_NOT_FOUND) is caught before publish.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
+
+      - name: Build image (local, no push)
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
+        with:
+          context: .
+          push: false
+          load: true
+          platforms: linux/amd64
+          tags: botler-agent:smoke
+
+      - name: Smoke test entrypoint
+        # `init` resolves tsx/esm/api, runs esbuild, and executes src/init.ts to
+        # scaffold /config. A missing/broken runtime dep fails the container with a
+        # non-zero exit, which fails this step.
+        run: docker run --rm botler-agent:smoke init
