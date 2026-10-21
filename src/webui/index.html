@@ -918,7 +918,7 @@ function renderScheduleRow(e){
   return `<div class="sched-row">
     ${idCell}
     <div class="sched-summary">${summary}</div>
-    <div class="sched-summary sched-msg" title="${esc(e.message||"")}">${esc((e.message||"").slice(0,60))}</div>
+    <div class="sched-summary sched-msg" title="${esc(e.message||e.script||"")}">${esc((e.script?("▶ "+e.script):(e.message||"")).slice(0,60))}</div>
     <div class="muted sched-when">Next: ${next}</div>
     <div class="muted sched-when">Last: ${last}</div>
     <div class="row-actions">${actions}</div>
@@ -984,7 +984,13 @@ async function loadSchedulesView(){
 // ScheduleOverviewItem now carries nextFireAt / lastRun / state, and orphan rows carry more.
 // KEEP IN SYNC with normalizeEntry — a field added there but not here is silently dropped on save.
 function scheduleEntryForSave(e){
-  const entry = { id:e.id, enabled:e.enabled!==false, timezone:e.timezone||"Asia/Shanghai", message:e.message };
+  const entry = { id:e.id, enabled:e.enabled!==false, timezone:e.timezone||"Asia/Shanghai" };
+  if(e.message) entry.message = e.message;
+  if(e.script){
+    entry.script = e.script;
+    if(e.scriptArgs) entry.scriptArgs = e.scriptArgs;
+    if(typeof e.commit==="boolean") entry.commit = e.commit;
+  }
   if(e.cron) entry.cron = e.cron;
   else if(e.interval) entry.interval = e.interval;
   else if(e.at) entry.at = e.at;
@@ -1092,8 +1098,9 @@ function openSchedHistory(id){
 }
 
 function openSchedModal(id){
-  const e = id ? JSON.parse(JSON.stringify(schedules.find(x=>x.id===id))) : { id:"", enabled:true, timezone:"Asia/Shanghai", message:"", cron:"", interval:"", at:"", once:"" };
+  const e = id ? JSON.parse(JSON.stringify(schedules.find(x=>x.id===id))) : { id:"", enabled:true, timezone:"Asia/Shanghai", message:"", script:"", scriptArgs:"", commit:true, cron:"", interval:"", at:"", once:"" };
   const mode = e.cron?"cron":e.interval?"interval":e.at?"at":e.once?"once":"cron";
+  const action = e.script ? "script" : "message";
   const m = document.createElement("div");
   m.className="modal-bg";
   m.innerHTML = `<div class="modal">
@@ -1117,7 +1124,23 @@ function openSchedModal(id){
       <div class="flabel">Timezone</div><div><input id="m-tz" value="${esc(e.timezone||"Asia/Shanghai")}" /></div>
     </div>
     <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Action</div>
+      <div>
+        <label><input type="radio" name="m-action" value="message" ${action==="message"?"checked":""}/> Message (→ Agent)</label>
+        <label><input type="radio" name="m-action" value="script" ${action==="script"?"checked":""}/> Run script (direct, no LLM)</label>
+      </div>
+    </div>
+    <div class="field" id="m-msg-field" style="grid-template-columns:140px 1fr">
       <div class="flabel">Message</div><div><textarea id="m-msg" rows="3">${esc(e.message||"")}</textarea></div>
+    </div>
+    <div class="field" id="m-script-field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Script</div><div><input id="m-script" value="${esc(e.script||"")}" placeholder="relative to DATA_ROOT, e.g. notes/scripts/build.py" /></div>
+    </div>
+    <div class="field" id="m-script-args-field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Script args</div><div><input id="m-script-args" value="${esc(Array.isArray(e.scriptArgs)?e.scriptArgs.join(" "):"")}" placeholder="space-separated, e.g. --all" /></div>
+    </div>
+    <div class="field" id="m-commit-field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Commit changes</div><div><label><input type="checkbox" id="m-commit" ${e.commit!==false?"checked":""}/> auto git-commit data changes (off for read-only)</label></div>
     </div>
     <div class="field" style="grid-template-columns:140px 1fr">
       <div class="flabel">project (optional)</div><div><input id="m-project" value="${esc(e.project||"")}" placeholder="routing hint, skip routing" /></div>
@@ -1157,6 +1180,17 @@ function openSchedModal(id){
       if (once) m.querySelector("#m-hm").checked = false; // workday gating is incompatible with once
     };
   });
+  // Action radio: toggle the message / script field groups, and mark which action is required.
+  // The preview/once-time guards below read whichever field the chosen action uses.
+  function syncAction(){
+    const isScript = m.querySelector('input[name="m-action"]:checked').value === "script";
+    m.querySelector("#m-script-field").style.display = isScript ? "" : "none";
+    m.querySelector("#m-script-args-field").style.display = isScript ? "" : "none";
+    m.querySelector("#m-commit-field").style.display = isScript ? "" : "none";
+    m.querySelector("#m-msg-field").style.display = isScript ? "none" : "";
+  }
+  m.querySelectorAll('input[name="m-action"]').forEach(r=>{ r.onchange = syncAction; });
+  syncAction();
   m.querySelector("#m-preview").onclick = async ()=>{
     const mode = m.querySelector('input[name="m-mode"]:checked').value;
     const spec = m.querySelector("#m-spec").value.trim();
@@ -1171,7 +1205,12 @@ function openSchedModal(id){
     const newId = m.querySelector("#m-id").value.trim();
     const mode = m.querySelector('input[name="m-mode"]:checked').value;
     const spec = m.querySelector("#m-spec").value.trim();
+    const actionVal = m.querySelector('input[name="m-action"]:checked').value;
     const msg = m.querySelector("#m-msg").value.trim();
+    const script = m.querySelector("#m-script").value.trim();
+    const scriptArgsRaw = m.querySelector("#m-script-args").value.trim();
+    const scriptArgs = scriptArgsRaw ? scriptArgsRaw.split(/\s+/) : undefined;
+    const commit = m.querySelector("#m-commit").checked;
     const tz = m.querySelector("#m-tz").value.trim()||"Asia/Shanghai";
     const project = m.querySelector("#m-project").value.trim()||undefined;
     // Silent-hours inputs are disabled (but still readable) in once mode; force them empty so an
@@ -1183,7 +1222,13 @@ function openSchedModal(id){
     const rms = Number(m.querySelector("#m-retry-ms").value)||0;
     if(!newId){ m.querySelector("#m-err").textContent="ID cannot be empty"; return; }
     if(!spec){ m.querySelector("#m-err").textContent="Trigger cannot be empty"; return; }
-    if(!msg){ m.querySelector("#m-err").textContent="Message cannot be empty"; return; }
+    // Action-aware required-field check: a script action requires a non-empty script; a message
+    // action requires a non-empty message.
+    if(actionVal==="script"){
+      if(!script){ m.querySelector("#m-err").textContent="Script cannot be empty"; return; }
+    } else {
+      if(!msg){ m.querySelector("#m-err").textContent="Message cannot be empty"; return; }
+    }
     // Future-time guard for one-shot triggers, only on create or when the once value actually
     // changes (so editing message/project of an already-expired once is not blocked).
     // NOTE: this is a UX-only guard. It uses Date.parse, which interprets a naive (no-offset)
@@ -1197,8 +1242,20 @@ function openSchedModal(id){
       const changedOnce = !id || e.once !== spec;
       if(changedOnce && t <= Date.now()){ m.querySelector("#m-err").textContent="once time must be in the future"; return; }
     }
-    const entry = { id:newId, enabled:true, timezone:tz, message:msg };
+    const entry = { id:newId, enabled:true, timezone:tz };
     entry[mode] = spec;
+    // Exactly one action: set the chosen one and clear the other so an edit never persists both.
+    if(actionVal==="script"){
+      entry.script = script;
+      if(scriptArgs) entry.scriptArgs = scriptArgs;
+      entry.commit = commit;
+      delete entry.message;
+    } else {
+      entry.message = msg;
+      delete entry.script;
+      delete entry.scriptArgs;
+      delete entry.commit;
+    }
     // Build only the fields present in the form; omit (delete) the ones cleared, so editing an
     // existing entry and emptying project / silentHours / retry actually removes them.
     if(project) entry.project = project; else delete entry.project;

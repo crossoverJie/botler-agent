@@ -22,6 +22,19 @@ const DEFAULT_TZ = "Asia/Shanghai";
 const MESSAGE_MAX_CHARS = 10 * 1024;
 
 /**
+ * Upper bounds on a schedule's failure-retry. Both chat (schedule tool) and the WebUI go through
+ * {@link normalizeEntry}, so these caps are enforced in exactly one place.
+ *
+ * - `RETRY_MAX_LIMIT`: an unbounded retry count would make a single failing entry re-run forever and
+ *   block the single-threaded scheduler loop (fire() awaits its retries), starving other entries.
+ * - `RETRY_BACKOFF_MS_LIMIT`: backoff is passed to Node's setTimeout; delays above 2^31-1 ms
+ *   (~24.8 days) are silently clamped to ~1 ms, turning a long backoff into a tight retry storm.
+ *   1 hour is comfortably below that clamp and still a generous ceiling.
+ */
+export const RETRY_MAX_LIMIT = 10;
+export const RETRY_BACKOFF_MS_LIMIT = 60 * 60 * 1000; // 1 hour
+
+/**
  * Saved-listener: set by the scheduler engine (engine.ts) at module load so a schedule write
  * wakes the loop immediately. Kept here instead of importing the engine to avoid the
  * engine → dispatcher → runner → tools → schedule → store → engine cycle.
@@ -51,10 +64,33 @@ export function normalizeEntry(item: unknown): ScheduleEntry {
 
 	const id = o.id;
 	if (typeof id !== "string" || !id) throw new Error("missing id");
-	const message = o.message;
-	if (typeof message !== "string" || !message.trim()) throw new Error(`schedule "${id}" missing message`);
-	if (message.length > MESSAGE_MAX_CHARS) {
+
+	// Exactly-one-action: a schedule carries either a `message` (→ LLM pipeline) or a `script`
+	// (→ direct run, bypassing the LLM) — never both, never neither.
+	const hasMessage = typeof o.message === "string" && o.message.trim().length > 0;
+	const hasScript = typeof o.script === "string" && o.script.trim().length > 0;
+	if (!hasMessage && !hasScript) throw new Error(`schedule "${id}" needs a message or a script`);
+	if (hasMessage && hasScript) throw new Error(`schedule "${id}" must specify exactly one of message/script`);
+	if (hasMessage && (o.message as string).length > MESSAGE_MAX_CHARS) {
 		throw new Error(`schedule "${id}" message exceeds ${MESSAGE_MAX_CHARS} chars`);
+	}
+	if (hasScript) {
+		const s = o.script as string;
+		if (!/^(?!\/|~|\.\.)[\w./-]+\.(py|js|mjs)$/.test(s)) {
+			throw new Error(`schedule "${id}" invalid script path "${s}" (relative path, .py/.js/.mjs only)`);
+		}
+		if (o.scriptArgs !== undefined) {
+			if (
+				!Array.isArray(o.scriptArgs) ||
+				o.scriptArgs.some((a) => typeof a !== "string" || a.length > 256)
+			) {
+				throw new Error(`schedule "${id}" invalid scriptArgs`);
+			}
+			if (o.scriptArgs.length > 64) throw new Error(`schedule "${id}" too many scriptArgs`);
+		}
+		if (o.commit !== undefined && typeof o.commit !== "boolean") {
+			throw new Error(`schedule "${id}" invalid commit`);
+		}
 	}
 
 	const hasCron = typeof o.cron === "string" && o.cron.trim().length > 0;
@@ -76,8 +112,16 @@ export function normalizeEntry(item: unknown): ScheduleEntry {
 		id,
 		enabled: o.enabled !== false, // default true unless explicitly false
 		timezone: tz,
-		message,
 	};
+	// Exactly one action (validated above): set the matching field, and forward the script's
+	// optional args / commit flag when the action is a script.
+	if (hasScript) {
+		entry.script = o.script as string;
+		if (o.scriptArgs !== undefined) entry.scriptArgs = o.scriptArgs as string[];
+		if (o.commit !== undefined) entry.commit = o.commit as boolean;
+	} else {
+		entry.message = o.message as string;
+	}
 
 	if (hasCron) entry.cron = o.cron as string;
 	if (hasInterval) {
@@ -114,6 +158,9 @@ export function normalizeEntry(item: unknown): ScheduleEntry {
 		const backoffMs = Number(r.backoffMs);
 		if (!Number.isInteger(max) || max < 0) throw new Error(`schedule "${id}" invalid retry.max`);
 		if (!Number.isInteger(backoffMs) || backoffMs < 0) throw new Error(`schedule "${id}" invalid retry.backoffMs`);
+		if (max > RETRY_MAX_LIMIT) throw new Error(`schedule "${id}" retry.max exceeds ${RETRY_MAX_LIMIT}`);
+		if (backoffMs > RETRY_BACKOFF_MS_LIMIT)
+			throw new Error(`schedule "${id}" retry.backoffMs exceeds ${RETRY_BACKOFF_MS_LIMIT}ms`);
 		entry.retry = { max, backoffMs };
 	}
 

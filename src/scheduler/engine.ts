@@ -22,7 +22,7 @@
 
 import { statSync } from "node:fs";
 import { CONFIG } from "../config.ts";
-import { dispatch } from "../dispatcher.ts";
+import { dispatch, dispatchScriptedTask } from "../dispatcher.ts";
 import { deliver } from "../push/deliver.ts";
 import { loadSchedules, setSchedulesSavedListener } from "./store.ts";
 import { nextFireEpoch } from "./cron.ts";
@@ -80,6 +80,23 @@ export function reloadSchedules(): void {
 	wakeSleep?.();
 }
 
+/**
+ * Signature of a schedule entry's execution-relevant config. A pending retry captures this when it is
+ * scheduled and re-checks it on fire; if the user edits the entry's action / trigger / project during
+ * the backoff window, the retry is cancelled instead of running the now-different task.
+ *
+ * Fields that only tune retry behaviour or delivery — `retry` itself, `enabled`, `recipient`,
+ * `commit`, `timezone` — are deliberately excluded so adjusting those does not cancel an in-flight
+ * retry (e.g. tuning retryMax/backoffMs mid-backoff is harmless and should keep retrying).
+ */
+function retrySignature(e: ScheduleEntry): string {
+	const action = e.script
+		? `script:${e.script}|args:${JSON.stringify(e.scriptArgs ?? [])}`
+		: `message:${e.message ?? ""}`;
+	const trigger = e.cron ?? e.interval ?? e.at ?? e.once ?? "";
+	return `${action}|trigger:${trigger}|project:${e.project ?? ""}`;
+}
+
 function fileMtime(): number {
 	try {
 		return statSync(CONFIG.schedulesFile).mtimeMs;
@@ -93,20 +110,59 @@ function configChanged(): boolean {
 }
 
 async function fire(e: ScheduleEntry, attempt = 0): Promise<void> {
-	const result = await dispatch(e.message, {
-		id: `schedule:${e.id}:${Date.now()}`,
-		source: "scheduler",
-		projectHint: e.project,
-	});
-	const failed = result.status === "error" || result.status === "validation-failed";
-	if (failed && attempt < (e.retry?.max ?? 0)) {
-		await sleep(e.retry!.backoffMs);
-		return fire(e, attempt + 1);
+	// Branch on which action the entry carries: a script runs directly (bypassing the LLM),
+	// otherwise the message goes through the normal routing + execution pipeline. Both paths return
+	// a DispatchResult, so the retry / push / stats logic below is fully shared.
+	const result = e.script
+		? await dispatchScriptedTask({
+				id: `schedule:${e.id}:${Date.now()}`,
+				script: e.script,
+				scriptArgs: e.scriptArgs,
+				commit: e.commit,
+				source: "scheduler",
+			})
+		: await dispatch(e.message!, {
+				id: `schedule:${e.id}:${Date.now()}`,
+				source: "scheduler",
+				projectHint: e.project,
+			});
+	// A script task must retry only on `error` — re-running on `validation-failed` would repeat its
+	// side effects (e.g. write the bad file again). Message tasks retry on both (the LLM self-heals).
+	const failed = result.status === "error" || (result.status === "validation-failed" && !e.script);
+	const retryMax = e.retry?.max ?? 0;
+	if (failed && attempt < retryMax) {
+		// Schedule the retry WITHOUT blocking fire()'s return. The scheduler loop is single-threaded
+		// and awaits each fire(), so a sequential `await sleep` here would starve every other due
+		// task for up to retryMax × backoffMs. Instead we hand the retry to a timer and return, so the
+		// loop keeps processing the rest of this round (and subsequent rounds) while the retry waits
+		// out-of-band; the retry re-enters fire() on its own when the timer fires.
+		const backoffMs = e.retry!.backoffMs;
+		// Capture the execution-relevant config at schedule time; the pending retry is cancelled if the
+		// entry's action / trigger / project is edited during the backoff (see below).
+		const sig = retrySignature(e);
+		setTimeout(() => {
+			try {
+				// Re-validate the entry still exists and is enabled before retrying — it may have been
+				// deleted or disabled while the timer was pending.
+				const current = loadSchedules().find((x) => x.id === e.id);
+				if (!current || !current.enabled) return;
+				// Cancel a stale retry: if the user changed what this entry does during the backoff
+				// (e.g. script A → script B), running it as a retry would execute the wrong task.
+				if (retrySignature(current) !== sig) {
+					console.log(`[scheduler] ${e.id} retry cancelled: entry config changed during backoff`);
+					return;
+				}
+				void fire(current, attempt + 1);
+			} catch (err) {
+				console.error(`[scheduler] ${e.id} retry scheduling failed:`, err instanceof Error ? err.message : err);
+			}
+		}, backoffMs);
+		return;
 	}
 	// A no-project reminder (e.g. "remind user to drink water") has no data subproject to route to, so routing
 	// returns the generic "couldn't decide a project" text. For such entries the schedule's own
 	// message IS the reminder — push it as-is instead of the routing-failure boilerplate.
-	const text = result.status === "unknown-project" ? e.message : result.text;
+	const text = result.status === "unknown-project" && e.message ? e.message : result.text;
 	// Push the result back to the entry's recipient (if any). Failure is only logged, not
 	// retried here: a dead token won't recover inside the retry backoff and deliver() already
 	// tried the channel fallback chain.

@@ -23,11 +23,70 @@ const schema = Type.Object({
 	),
 });
 
+/** Result of a {@link runScript} call. Never throws, so failures can flow into retry/push/stats uniformly. */
+export interface RunResult {
+	/** Whether the script ran and exited zero. */
+	ok: boolean;
+	/** stdout (trimmed) on success, or a human-readable failure description. */
+	text: string;
+	/** Subproject root the script ran in (only on success / runtime failure); absent on pre-condition rejection. */
+	cwd?: string;
+	/** Failure class: `precondition` (bad path / missing file / wrong type — never started) or `runtime` (started but non-zero exit). */
+	errorKind?: "precondition" | "runtime";
+}
+
 /**
- * Execute an existing script inside a data subproject (only python3 .py / node .js|.mjs).
- * No shell (execFileSync passes args as an array), working directory locked to the script's subproject root, 60s timeout.
- * Used to run build/refresh scripts from a project's conventions (AGENTS.md, e.g. build.py); on script failure,
- * stdout/stderr is returned to the Agent as text (rather than throwing and interrupting), so the LLM can decide whether to fix and retry.
+ * Execute an existing script inside a data subproject (only python3 .py / node .js|.mjs) **without
+ * throwing**. No shell (execFileSync passes args as an array), working directory locked to the
+ * script's subproject root, 60s timeout. Reused by both the `run` AgentTool and the scheduler's
+ * direct-script path, so there is a single execution core and a single security boundary.
+ * Pre-condition problems (out-of-bounds path, missing file, wrong type) are returned as a
+ * `precondition` failure rather than thrown, so the scheduler can treat them like any other failure.
+ */
+export function runScript(script: string, args: string[] = []): RunResult {
+	try {
+		const abs = safePath(script, { projects: getTaskProjects() });
+		// Resolve the owning subproject as soon as the path is allowlisted, so precondition failures
+		// that still fall inside a project (missing file / wrong type) can carry `cwd`. This lets the
+		// dispatcher attribute the run's history log to the right project even when the script never ran.
+		const project = projectOf(abs);
+		const cwd = project ? resolve(CONFIG.dataRoot, project) : undefined;
+		if (!existsSync(abs) || !statSync(abs).isFile())
+			return { ok: false, text: `Script does not exist or is not a file: ${script}`, cwd, errorKind: "precondition" };
+		if (!project)
+			return { ok: false, text: `Script is not inside any data subproject: ${script}`, errorKind: "precondition" };
+		const interpreter = interpreterOf(script);
+		if (!interpreter)
+			return { ok: false, text: `Unsupported script type (only .py / .js / .mjs): ${script}`, cwd, errorKind: "precondition" };
+		try {
+			const out = execFileSync(interpreter, [abs, ...args], {
+				cwd,
+				encoding: "utf8",
+				timeout: 60_000,
+				maxBuffer: 1024 * 1024,
+			});
+			return { ok: true, text: out.trim() ? out : "(script ran successfully, no output)", cwd };
+		} catch (e) {
+			const err = e as { stdout?: string; stderr?: string; message?: string };
+			const detail = `${err.stdout ?? ""}${err.stderr ?? ""}`.trim();
+			const msg = detail
+				? `Script failed (${err.message ?? ""}):\n${detail}`
+				: `Script failed: ${err.message ?? String(e)}`;
+			return { ok: false, text: msg, cwd, errorKind: "runtime" };
+		}
+	} catch (e) {
+		return {
+			ok: false,
+			text: `Script path error: ${e instanceof Error ? e.message : String(e)}`,
+			errorKind: "precondition",
+		};
+	}
+}
+
+/**
+ * AgentTool wrapper over {@link runScript}. Preserves the current LLM behaviour: a pre-condition
+ * error still throws (so the agent sees an error and can self-heal), while a runtime failure returns
+ * its output as text for the model to decide whether to fix and retry.
  */
 export const runTool: AgentTool<typeof schema> = {
 	name: "run",
@@ -36,36 +95,11 @@ export const runTool: AgentTool<typeof schema> = {
 		"Run an existing script inside a data subproject (only python3 .py or node .js/.mjs), used to run build/refresh scripts defined by the project's conventions (e.g. build.py). No shell is used; args are passed directly; the working directory is locked to the script's subproject root with a 60-second timeout. Only run it when the project's conventions (AGENTS.md) require it; skip if the project has no such script.",
 	parameters: schema,
 	async execute(_toolCallId, { script, args = [] }) {
-		const abs = safePath(script, { projects: getTaskProjects() });
-		if (!existsSync(abs) || !statSync(abs).isFile()) {
-			throw new Error(`Script does not exist or is not a file: ${script}`);
-		}
-		const project = projectOf(abs);
-		if (!project) throw new Error(`Script is not inside any data subproject: ${script}`);
-		const interpreter = interpreterOf(script);
-		if (!interpreter) throw new Error(`Unsupported script type (only .py / .js / .mjs): ${script}`);
-		const cwd = resolve(CONFIG.dataRoot, project);
-		try {
-			const out = execFileSync(interpreter, [abs, ...args], {
-				cwd,
-				encoding: "utf8",
-				timeout: 60_000,
-				maxBuffer: 1024 * 1024,
-			});
-			return {
-				content: [{ type: "text", text: out.trim() ? out : "(script ran successfully, no output)" }],
-				details: { script, cwd },
-			};
-		} catch (e) {
-			const err = e as { stdout?: string; stderr?: string; message?: string };
-			const detail = `${err.stdout ?? ""}${err.stderr ?? ""}`.trim();
-			const msg = detail
-				? `Script failed (${err.message ?? ""}):\n${detail}`
-				: `Script failed: ${err.message ?? String(e)}`;
-			return {
-				content: [{ type: "text", text: msg }],
-				details: { script, cwd, failed: true },
-			};
-		}
+		const res = runScript(script, args);
+		if (!res.ok && res.errorKind === "precondition") throw new Error(res.text);
+		return {
+			content: [{ type: "text", text: res.text }],
+			details: { script, cwd: res.cwd, failed: !res.ok },
+		};
 	},
 };

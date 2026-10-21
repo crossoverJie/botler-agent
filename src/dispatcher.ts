@@ -5,6 +5,8 @@ import { commitIfChanged } from "./safety/git.ts";
 import { appendTaskLog } from "./logging/store.ts";
 import { CONFIG } from "./config.ts";
 import { appendTurn, shouldRecordTurn } from "./conversation/store.ts";
+import { projectOf } from "./tools/paths.ts";
+import { runScript } from "./tools/run.ts";
 import type { Recipient } from "./push/types.ts";
 import type { TaskLog, TaskStatus, TokenUsageLog } from "./logging/types.ts";
 import type { InboundImage } from "./channels/wechat/download.ts";
@@ -278,6 +280,159 @@ export async function dispatch(message: string, opts: DispatchOptions = {}): Pro
 	});
 
 	// Keep the queue moving forward even if this run errored, so later tasks are not blocked
+	chain = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	return run;
+}
+
+export interface ScriptTaskOptions {
+	/** Task id (already namespaced, e.g. `schedule:<id>:<epoch>`). Used as the dedup/log taskId source. */
+	id: string;
+	/** Script path relative to DATA_ROOT (e.g. "notes/scripts/build.py"). */
+	script: string;
+	/** Args passed to the script (optional). */
+	scriptArgs?: string[];
+	/** Auto git-commit the script's data changes on success (defaults to true). */
+	commit?: boolean;
+	/** Source label for logging (defaults to "scheduler"). */
+	source?: string;
+	/** Recipient echoed through for stats only; actual delivery stays in the engine. */
+	recipient?: Recipient;
+}
+
+/**
+ * Build a history-compatible TaskLog for a direct script run. Mirrors {@link minimalLog} but fills
+ * in the script's own project so WebUI history / per-schedule stats / recent runs stay accurate.
+ */
+function scriptTaskLog(o: {
+	taskId: string;
+	source: string;
+	startedAt: number;
+	status: TaskStatus;
+	script: string;
+	replyText: string;
+	project: string | null;
+	ran: boolean;
+}): TaskLog {
+	return {
+		id: randomUUID(),
+		taskId: o.taskId,
+		phase: "execute",
+		source: o.source,
+		provider: CONFIG.provider,
+		model: CONFIG.model,
+		project: o.project,
+		projects: o.project ? [o.project] : [],
+		status: o.status,
+		startedAt: o.startedAt,
+		endedAt: Date.now(),
+		durationMs: Date.now() - o.startedAt,
+		userMessage: `run ${o.script}`,
+		replyText: o.replyText,
+		images: [],
+		// For scripts, `mutated` means "the script executed, so it MAY have changed data" — not
+		// merely "it succeeded". A script that errors or writes invalid JSON may still have written
+		// partial data, so `ran` (not `status === "success"`) drives this flag.
+		mutated: o.ran,
+		tools: [],
+		conversation: [],
+		usage: ZERO_USAGE,
+		calls: [],
+		modelCache: { queries: 0, hits: 0, hitRate: 0 },
+	};
+}
+
+/**
+ * Run a scheduled script directly (bypassing the LLM) on the same sequential `chain` as
+ * {@link dispatch}, so it never races a chat task's writes and shares the same status accounting.
+ *
+ * Behaviour:
+ * - Pre-condition rejection (bad path / missing file / wrong type): the script never ran, so no
+ *   data was touched — reported as `error`, no validation. `ran` is false.
+ * - Any script that actually started (success OR non-zero exit) may have written data, so its
+ *   project is ALWAYS validated (`validation-failed` if JSON is broken, data left as-is).
+ * - On success, auto git-commit is scoped to the script's own subproject (unless `commit:false`).
+ * - A `validation-failed` run is reported and logged but returns that status (the engine does NOT
+ *   retry it) — re-running would repeat the script's side effects.
+ */
+export async function dispatchScriptedTask(opts: ScriptTaskOptions): Promise<DispatchResult> {
+	const startedAt = Date.now();
+	const source = opts.source ?? "scheduler";
+	markEnqueued();
+	markDispatched();
+	const out = (text: string, status: TaskStatus): DispatchResult => ({ text, images: [], status });
+	const run = chain.then(async (): Promise<DispatchResult> => {
+		markStarted();
+		let finalStatus: TaskStatus = "success";
+		let text = "";
+		let project: string | null = null;
+		let ran = false;
+		try {
+			const res = runScript(opts.script, opts.scriptArgs ?? []);
+			text = res.text;
+			// Resolve the project from the script's cwd on BOTH success and failure, so the task log
+			// (and thus history filtering by project) always has attribution.
+			project = res.cwd ? projectOf(res.cwd) : null;
+			// `ran` = the script actually executed (success OR runtime failure), as opposed to a
+			// pre-condition rejection (bad path / missing file / wrong type) that never started it.
+			ran = res.ok || res.errorKind === "runtime";
+			// Pre-condition errors: the script never ran, so no data was touched — no validation needed.
+			if (!res.ok && res.errorKind === "precondition") {
+				finalStatus = "error";
+				return out(text, "error");
+			}
+			// EVERY script that actually started (success OR non-zero exit) may have written data,
+			// so ALWAYS validate its project — even when the script also failed. This keeps the JSON
+			// safety boundary regardless of the script's exit status.
+			const v = validateState(project ? [project] : []);
+			if (!v.ok) {
+				finalStatus = "validation-failed";
+				// If the script also exited non-zero, combine its output with the data-safety warning
+				// so the pushed / recorded message shows BOTH. The data-safety status wins for history
+				// and stats (it is the more actionable signal), but the script error is not lost.
+				const scriptErr = !res.ok ? `Script failed: ${text}\n` : "";
+				text = `⚠️ ${scriptErr}Script produced invalid data (left as-is, not committed): ${v.fix ?? ""}`;
+				return out(text, "validation-failed");
+			}
+			if (!res.ok) {
+				// Ran, wrote valid data, but exited non-zero.
+				finalStatus = "error";
+				return out(text, "error");
+			}
+			// Ran successfully with valid data.
+			if (opts.commit ?? true) {
+				commitIfChanged(`agent: scheduled script ${opts.id}`, project ? [project] : undefined);
+			}
+			return out(text, "success");
+		} catch (e) {
+			finalStatus = "error";
+			text = `⚠️ Script task error: ${e instanceof Error ? e.message : String(e)}`;
+			return out(text, "error");
+		} finally {
+			// Mirrors dispatch()'s finally AND appends a history-compatible TaskLog so script runs
+			// appear in the WebUI schedule history / recent runs / stats.
+			appendTaskLog(
+				scriptTaskLog({
+					taskId: opts.id,
+					source,
+					startedAt,
+					status: finalStatus,
+					script: opts.script,
+					replyText: text,
+					project,
+					ran,
+				}),
+			);
+			markFinished();
+			recordStatus(finalStatus);
+			stats.lastDispatchDurationMs = Date.now() - startedAt;
+			if (finalStatus === "error" || finalStatus === "validation-failed") markFailed();
+		}
+	});
+
+	// Keep the queue moving even on error (same pattern as dispatch).
 	chain = run.then(
 		() => undefined,
 		() => undefined,

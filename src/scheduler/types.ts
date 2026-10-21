@@ -37,8 +37,18 @@ export interface ScheduleEntry {
 	once?: string;
 	/** IANA timezone; defaults to "Asia/Shanghai". */
 	timezone: string;
-	/** Message sent to the Agent when this fires (goes through normal routing / execution). */
-	message: string;
+	/**
+	 * Action: exactly one of `message` (→ LLM pipeline) or `script` (→ direct run, bypassing the LLM).
+	 * `message` is optional at the type level so `script` entries are valid; `normalizeEntry` enforces
+	 * that exactly one of the two is present.
+	 */
+	message?: string;
+	/** Script path relative to DATA_ROOT (e.g. "notes/scripts/build.py"); runs directly, no LLM. */
+	script?: string;
+	/** Args passed to the script (array of strings), forwarded verbatim (no shell). */
+	scriptArgs?: string[];
+	/** Auto git-commit the script's data changes on success (default true; set false for read-only scripts). */
+	commit?: boolean;
 	/** Optional routing hint; a valid subproject name skips the routing LLM call. */
 	project?: string;
 	/** Optional failure retry. */
