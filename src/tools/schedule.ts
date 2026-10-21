@@ -239,16 +239,23 @@ export const scheduleTool: AgentTool<typeof schema> = {
 		if (newMsg && newScript) {
 			throw new Error("update must not set both message and script; pick exactly one action");
 		}
+		// An actual action-type switch (message <-> script) discards the old retry, which was tuned for
+		// the previous action; carrying it onto, say, a non-idempotent script could repeat side effects.
+		// Editing within the same action type (e.g. a message's text, or a script's path) keeps it.
+		// The caller may explicitly re-supply retry below; otherwise it stays cleared on a switch.
+		const wasScript = !!current[idx].script;
 		if (newScript) {
 			patch.script = newScript;
 			delete patch.message;
 			delete patch.scriptArgs;
 			delete patch.commit;
+			if (!wasScript) delete patch.retry;
 		} else if (newMsg) {
 			patch.message = newMsg;
 			delete patch.script;
 			delete patch.scriptArgs;
 			delete patch.commit;
+			if (wasScript) delete patch.retry;
 		}
 		// scriptArgs / commit only apply alongside a script.
 		if (patch.script) {
