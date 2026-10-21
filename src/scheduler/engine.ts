@@ -22,7 +22,7 @@
 
 import { statSync } from "node:fs";
 import { CONFIG } from "../config.ts";
-import { dispatch } from "../dispatcher.ts";
+import { dispatch, dispatchScriptedTask } from "../dispatcher.ts";
 import { deliver } from "../push/deliver.ts";
 import { loadSchedules, setSchedulesSavedListener } from "./store.ts";
 import { nextFireEpoch } from "./cron.ts";
@@ -93,12 +93,25 @@ function configChanged(): boolean {
 }
 
 async function fire(e: ScheduleEntry, attempt = 0): Promise<void> {
-	const result = await dispatch(e.message, {
-		id: `schedule:${e.id}:${Date.now()}`,
-		source: "scheduler",
-		projectHint: e.project,
-	});
-	const failed = result.status === "error" || result.status === "validation-failed";
+	// Branch on which action the entry carries: a script runs directly (bypassing the LLM),
+	// otherwise the message goes through the normal routing + execution pipeline. Both paths return
+	// a DispatchResult, so the retry / push / stats logic below is fully shared.
+	const result = e.script
+		? await dispatchScriptedTask({
+				id: `schedule:${e.id}:${Date.now()}`,
+				script: e.script,
+				scriptArgs: e.scriptArgs,
+				commit: e.commit,
+				source: "scheduler",
+			})
+		: await dispatch(e.message!, {
+				id: `schedule:${e.id}:${Date.now()}`,
+				source: "scheduler",
+				projectHint: e.project,
+			});
+	// A script task must retry only on `error` — re-running on `validation-failed` would repeat its
+	// side effects (e.g. write the bad file again). Message tasks retry on both (the LLM self-heals).
+	const failed = result.status === "error" || (result.status === "validation-failed" && !e.script);
 	if (failed && attempt < (e.retry?.max ?? 0)) {
 		await sleep(e.retry!.backoffMs);
 		return fire(e, attempt + 1);
@@ -106,7 +119,7 @@ async function fire(e: ScheduleEntry, attempt = 0): Promise<void> {
 	// A no-project reminder (e.g. "remind user to drink water") has no data subproject to route to, so routing
 	// returns the generic "couldn't decide a project" text. For such entries the schedule's own
 	// message IS the reminder — push it as-is instead of the routing-failure boilerplate.
-	const text = result.status === "unknown-project" ? e.message : result.text;
+	const text = result.status === "unknown-project" && e.message ? e.message : result.text;
 	// Push the result back to the entry's recipient (if any). Failure is only logged, not
 	// retried here: a dead token won't recover inside the retry backoff and deliver() already
 	// tried the channel fallback chain.

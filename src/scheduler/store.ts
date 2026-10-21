@@ -51,10 +51,33 @@ export function normalizeEntry(item: unknown): ScheduleEntry {
 
 	const id = o.id;
 	if (typeof id !== "string" || !id) throw new Error("missing id");
-	const message = o.message;
-	if (typeof message !== "string" || !message.trim()) throw new Error(`schedule "${id}" missing message`);
-	if (message.length > MESSAGE_MAX_CHARS) {
+
+	// Exactly-one-action: a schedule carries either a `message` (→ LLM pipeline) or a `script`
+	// (→ direct run, bypassing the LLM) — never both, never neither.
+	const hasMessage = typeof o.message === "string" && o.message.trim().length > 0;
+	const hasScript = typeof o.script === "string" && o.script.trim().length > 0;
+	if (!hasMessage && !hasScript) throw new Error(`schedule "${id}" needs a message or a script`);
+	if (hasMessage && hasScript) throw new Error(`schedule "${id}" must specify exactly one of message/script`);
+	if (hasMessage && (o.message as string).length > MESSAGE_MAX_CHARS) {
 		throw new Error(`schedule "${id}" message exceeds ${MESSAGE_MAX_CHARS} chars`);
+	}
+	if (hasScript) {
+		const s = o.script as string;
+		if (!/^(?!\/|~|\.\.)[\w./-]+\.(py|js|mjs)$/.test(s)) {
+			throw new Error(`schedule "${id}" invalid script path "${s}" (relative path, .py/.js/.mjs only)`);
+		}
+		if (o.scriptArgs !== undefined) {
+			if (
+				!Array.isArray(o.scriptArgs) ||
+				o.scriptArgs.some((a) => typeof a !== "string" || a.length > 256)
+			) {
+				throw new Error(`schedule "${id}" invalid scriptArgs`);
+			}
+			if (o.scriptArgs.length > 64) throw new Error(`schedule "${id}" too many scriptArgs`);
+		}
+		if (o.commit !== undefined && typeof o.commit !== "boolean") {
+			throw new Error(`schedule "${id}" invalid commit`);
+		}
 	}
 
 	const hasCron = typeof o.cron === "string" && o.cron.trim().length > 0;
@@ -76,8 +99,16 @@ export function normalizeEntry(item: unknown): ScheduleEntry {
 		id,
 		enabled: o.enabled !== false, // default true unless explicitly false
 		timezone: tz,
-		message,
 	};
+	// Exactly one action (validated above): set the matching field, and forward the script's
+	// optional args / commit flag when the action is a script.
+	if (hasScript) {
+		entry.script = o.script as string;
+		if (o.scriptArgs !== undefined) entry.scriptArgs = o.scriptArgs as string[];
+		if (o.commit !== undefined) entry.commit = o.commit as boolean;
+	} else {
+		entry.message = o.message as string;
+	}
 
 	if (hasCron) entry.cron = o.cron as string;
 	if (hasInterval) {

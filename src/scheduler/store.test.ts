@@ -51,12 +51,59 @@ test("normalizeEntry rejects an out-of-range interval", () => {
 // message presence + 10KB cap
 // ---------------------------------------------------------------------------
 
-test("normalizeEntry rejects a missing message", () => {
-	assert.throws(() => normalizeEntry({ id: "x", at: "08:00" }), /missing message/);
+test("normalizeEntry rejects an entry with neither message nor script", () => {
+	assert.throws(() => normalizeEntry({ id: "x", at: "08:00" }), /needs a message or a script/);
 });
 
-test("normalizeEntry rejects a blank message", () => {
-	assert.throws(() => normalizeEntry({ id: "x", message: "   ", at: "08:00" }), /missing message/);
+test("normalizeEntry rejects a blank message when there is no script", () => {
+	assert.throws(() => normalizeEntry({ id: "x", message: "   ", at: "08:00" }), /needs a message or a script/);
+});
+
+test("normalizeEntry accepts a script-only entry", () => {
+	const e = normalizeEntry({ id: "x", script: "notes/scripts/build.py", cron: "0 2 * * *" });
+	assert.equal(e.script, "notes/scripts/build.py");
+	assert.equal(e.message, undefined);
+	assert.equal(e.cron, "0 2 * * *");
+});
+
+test("normalizeEntry forwards scriptArgs and commit for a script entry", () => {
+	const e = normalizeEntry({
+		id: "x", script: "notes/scripts/build.py", at: "08:00", scriptArgs: ["--all"], commit: false,
+	});
+	assert.deepEqual(e.scriptArgs, ["--all"]);
+	assert.equal(e.commit, false);
+});
+
+test("normalizeEntry rejects an entry with both message and script", () => {
+	assert.throws(
+		() => normalizeEntry({ id: "x", message: "m", script: "a/b.py", at: "08:00" }),
+		/exactly one of message\/script/,
+	);
+});
+
+test("normalizeEntry rejects an invalid script path", () => {
+	assert.throws(
+		() => normalizeEntry({ id: "x", script: "../escape.py", at: "08:00" }),
+		/invalid script path/,
+	);
+	assert.throws(
+		() => normalizeEntry({ id: "x", script: "a/b.sh", at: "08:00" }),
+		/invalid script path/,
+	);
+});
+
+test("normalizeEntry rejects invalid scriptArgs", () => {
+	assert.throws(
+		() => normalizeEntry({ id: "x", script: "a/b.py", at: "08:00", scriptArgs: "not-array" as unknown as string[] }),
+		/invalid scriptArgs/,
+	);
+});
+
+test("normalizeEntry rejects a non-boolean commit", () => {
+	assert.throws(
+		() => normalizeEntry({ id: "x", script: "a/b.py", at: "08:00", commit: "yes" as unknown as boolean }),
+		/invalid commit/,
+	);
 });
 
 test("normalizeEntry rejects a message over 10KB", () => {
@@ -68,7 +115,7 @@ test("normalizeEntry rejects a message over 10KB", () => {
 
 test("normalizeEntry accepts a message of exactly 10KB", () => {
 	const e = normalizeEntry({ id: "x", message: "x".repeat(MESSAGE_MAX_CHARS), at: "08:00" });
-	assert.equal(e.message.length, MESSAGE_MAX_CHARS);
+	assert.equal(e.message!.length, MESSAGE_MAX_CHARS);
 });
 
 // ---------------------------------------------------------------------------

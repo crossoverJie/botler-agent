@@ -33,7 +33,16 @@ const schema = Type.Object({
 		id: Type.Optional(
 		Type.String({ description: "Scheduled task id (short, e.g. drink-water). Required for update/delete/enable/disable; auto-generated if omitted on create" }),
 	),
-	message: Type.Optional(Type.String({ description: "Message content sent to the Agent when the task fires (required for create)" })),
+	message: Type.Optional(Type.String({ description: "Message content sent to the Agent when the task fires (exactly one of message/script)" })),
+	script: Type.Optional(
+		Type.String({ description: "Run an existing in-project script directly when the task fires, bypassing the LLM (exactly one of message/script). Path relative to DATA_ROOT, e.g. 'notes/scripts/build.py' (.py/.js/.mjs only)." }),
+	),
+	scriptArgs: Type.Optional(
+		Type.Array(Type.String(), { description: "Arguments passed to the script (optional), e.g. ['--all']" }),
+	),
+	commit: Type.Optional(
+		Type.Boolean({ description: "Auto git-commit the script's data changes on success (default true; set false for read-only scripts)" }),
+	),
 	cron: Type.Optional(Type.String({ description: "5-field cron expression, e.g. '0 8 * * *' (recurring; one of four for create)" })),
 	interval: Type.Optional(Type.String({ description: "Simple interval, e.g. '5m' / '2h' / '1d' (recurring; one of four for create)" })),
 	at: Type.Optional(Type.String({ description: "Fixed DAILY time 'HH:MM' — repeats every day (one of four for create). Do NOT use for one-off reminders like 'tonight 10pm'; use once instead." })),
@@ -54,6 +63,9 @@ type ScheduleArgs = {
 	action: "list" | "create" | "update" | "delete" | "enable" | "disable";
 	id?: string;
 	message?: string;
+	script?: string;
+	scriptArgs?: string[];
+	commit?: boolean;
 	cron?: string;
 	interval?: string;
 	at?: string;
@@ -93,7 +105,7 @@ export const scheduleTool: AgentTool<typeof schema> = {
 	name: "schedule",
 	label: "Manage scheduled tasks",
 	description:
-		"Create / view / modify / delete / enable / disable scheduled tasks (writes the fixed schedule config, takes effect immediately). Use when the user says things like 'remind me every morning at 8am…', 'summarize every 2 hours…', 'remind me in X minutes…' that contain scheduling / reminder / calendar intent. create must specify exactly one trigger plus a non-empty message (the instruction sent back to the Agent on fire). Four trigger types: (1) cron — 5-field cron for complex recurring schedules; (2) interval — simple '5m'/'2h'/'1d' recurring; (3) at — a DAILY fixed time 'HH:MM' that REPEATS EVERY DAY; (4) once — a ONE-SHOT absolute date-time (ISO 8601, MUST include the full date) that fires EXACTLY ONCE. CRITICAL DISTINCTION: for one-off reminders like 'tonight 10pm', 'tomorrow 3pm', 'next Monday 8am', or any specific date, you MUST use 'once' (compute the full YYYY-MM-DD from today's date) — do NOT use 'at', because 'at' repeats every day. Use 'at' only when the user explicitly says 'every day'. After creating or modifying, confirm the next fire time to the user in your reply.",
+		"Create / view / modify / delete / enable / disable scheduled tasks (writes the fixed schedule config, takes effect immediately). Use when the user says things like 'remind me every morning at 8am…', 'summarize every 2 hours…', 'remind me in X minutes…' that contain scheduling / reminder / calendar intent. create must specify exactly one trigger plus exactly one ACTION: a non-empty `message` (the instruction sent back to the Agent on fire) OR a `script` (an existing in-project script path relative to DATA_ROOT, e.g. 'notes/scripts/build.py', run directly on fire — bypasses the LLM; optionally `scriptArgs` and `commit`). Four trigger types: (1) cron — 5-field cron for complex recurring schedules; (2) interval — simple '5m'/'2h'/'1d' recurring; (3) at — a DAILY fixed time 'HH:MM' that REPEATS EVERY DAY; (4) once — a ONE-SHOT absolute date-time (ISO 8601, MUST include the full date) that fires EXACTLY ONCE. CRITICAL DISTINCTION: for one-off reminders like 'tonight 10pm', 'tomorrow 3pm', 'next Monday 8am', or any specific date, you MUST use 'once' (compute the full YYYY-MM-DD from today's date) — do NOT use 'at', because 'at' repeats every day. Use 'at' only when the user explicitly says 'every day'. After creating or modifying, confirm the next fire time to the user in your reply.",
 	parameters: schema,
 	async execute(_toolCallId, args: ScheduleArgs) {
 		const { action } = args;
@@ -109,6 +121,7 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			const rec = e.recipient ? ` push=${e.recipient.source}:${e.recipient.userId}` : "";
 			const proj = e.project ? ` project=${e.project}` : "";
 			const hm = e.holidayMode ? ` holidayMode=${e.holidayMode}` : "";
+			const action = e.script ? `▶ ${e.script}` : `msg=${e.message}`;
 			const fire = !e.enabled
 				? " disabled"
 				: next
@@ -116,7 +129,7 @@ export const scheduleTool: AgentTool<typeof schema> = {
 					: e.once
 						? " (expired)"
 						: "";
-			return `- ${e.id} [${e.enabled ? "enabled" : "disabled"}] ${triggerOf(e)} tz=${e.timezone}${proj}${rec}${hm}${fire}`;
+			return `- ${e.id} [${e.enabled ? "enabled" : "disabled"}] ${triggerOf(e)} ${action} tz=${e.timezone}${proj}${rec}${hm}${fire}`;
 		});
 		return textResult(`Scheduled tasks (${entries.length}):\n${lines.join("\n")}`, { count: entries.length });
 		}
@@ -125,7 +138,9 @@ export const scheduleTool: AgentTool<typeof schema> = {
 		if (action === "create") {
 			const id = args.id?.trim() || `sched-${Date.now().toString(36)}`;
 			const message = args.message?.trim();
-			if (!message) throw new Error("create requires a non-empty message (the instruction sent to the Agent on fire)");
+			const script = args.script?.trim();
+			if (!message && !script) throw new Error("create requires a non-empty message OR script");
+			if (message && script) throw new Error("create must specify exactly one of message/script");
 		const tz = args.timezone || "Asia/Shanghai";
 		if (!isValidTimezone(tz)) throw new Error(`invalid timezone "${tz}"`);
 		const triggers: Array<[keyof ScheduleArgs, string]> = [];
@@ -151,9 +166,15 @@ export const scheduleTool: AgentTool<typeof schema> = {
 				id,
 				enabled: true,
 				timezone: tz,
-				message,
 				[triggers[0][0]]: triggers[0][1],
 			};
+			if (script) {
+				raw.script = script;
+				if (args.scriptArgs !== undefined) raw.scriptArgs = args.scriptArgs;
+				if (args.commit !== undefined) raw.commit = args.commit;
+			} else {
+				raw.message = message;
+			}
 			if (args.project?.trim()) raw.project = args.project.trim();
 			// holidayMode only ever carries "workday" from the agent; "off" is the default and is omitted.
 			if (args.holidayMode === "workday") raw.holidayMode = "workday";
@@ -198,10 +219,32 @@ export const scheduleTool: AgentTool<typeof schema> = {
 		// update
 		const patch: Record<string, unknown> = { ...current[idx] };
 		let newOnceForCheck: { val: string; tz: string } | null = null;
-		if (args.message !== undefined) {
-			const m = args.message.trim();
-			if (!m) throw new Error("update message must not be empty");
-			patch.message = m;
+		// Action switching — reject ambiguous input, then switch only when exactly one is set.
+		// Empty strings are ignored (no-op), matching the trigger rule at :219, so an unrelated
+		// field edit can never accidentally empty the entry's only action.
+		const newMsg = args.message?.trim() ?? "";
+		const newScript = args.script?.trim() ?? "";
+		if (newMsg && newScript) {
+			throw new Error("update must not set both message and script; pick exactly one action");
+		}
+		if (newScript) {
+			patch.script = newScript;
+			delete patch.message;
+			delete patch.scriptArgs;
+			delete patch.commit;
+		} else if (newMsg) {
+			patch.message = newMsg;
+			delete patch.script;
+			delete patch.scriptArgs;
+			delete patch.commit;
+		}
+		// scriptArgs / commit only apply alongside a script.
+		if (patch.script) {
+			if (args.scriptArgs !== undefined) patch.scriptArgs = args.scriptArgs;
+			if (args.commit !== undefined) patch.commit = args.commit;
+		} else {
+			delete patch.scriptArgs;
+			delete patch.commit;
 		}
 		if (args.timezone !== undefined) {
 			if (!isValidTimezone(args.timezone)) throw new Error(`invalid timezone "${args.timezone}"`);
@@ -246,6 +289,11 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			if (t <= Date.now()) throw new Error(`once time must be in the future (got ${newOnceForCheck.val})`);
 		}
 		current[idx] = patch as unknown as ScheduleEntry;
+		// Defensive guard: an update must always leave exactly one action (normalizeEntry is the
+		// real SOT, but this blocks a careless edit from persisting a zero/dual-action entry).
+		if (!patch.message && !patch.script) {
+			throw new Error("schedule must have a message or script");
+		}
 		saveSchedules(current);
 		const entry = loadSchedules().find((e) => e.id === id);
 		const next = entry ? nextFireOf(entry) : null;
