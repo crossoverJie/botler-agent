@@ -80,6 +80,23 @@ export function reloadSchedules(): void {
 	wakeSleep?.();
 }
 
+/**
+ * Signature of a schedule entry's execution-relevant config. A pending retry captures this when it is
+ * scheduled and re-checks it on fire; if the user edits the entry's action / trigger / project during
+ * the backoff window, the retry is cancelled instead of running the now-different task.
+ *
+ * Fields that only tune retry behaviour or delivery — `retry` itself, `enabled`, `recipient`,
+ * `commit`, `timezone` — are deliberately excluded so adjusting those does not cancel an in-flight
+ * retry (e.g. tuning retryMax/backoffMs mid-backoff is harmless and should keep retrying).
+ */
+function retrySignature(e: ScheduleEntry): string {
+	const action = e.script
+		? `script:${e.script}|args:${JSON.stringify(e.scriptArgs ?? [])}`
+		: `message:${e.message ?? ""}`;
+	const trigger = e.cron ?? e.interval ?? e.at ?? e.once ?? "";
+	return `${action}|trigger:${trigger}|project:${e.project ?? ""}`;
+}
+
 function fileMtime(): number {
 	try {
 		return statSync(CONFIG.schedulesFile).mtimeMs;
@@ -120,12 +137,22 @@ async function fire(e: ScheduleEntry, attempt = 0): Promise<void> {
 		// loop keeps processing the rest of this round (and subsequent rounds) while the retry waits
 		// out-of-band; the retry re-enters fire() on its own when the timer fires.
 		const backoffMs = e.retry!.backoffMs;
+		// Capture the execution-relevant config at schedule time; the pending retry is cancelled if the
+		// entry's action / trigger / project is edited during the backoff (see below).
+		const sig = retrySignature(e);
 		setTimeout(() => {
 			try {
 				// Re-validate the entry still exists and is enabled before retrying — it may have been
 				// deleted or disabled while the timer was pending.
 				const current = loadSchedules().find((x) => x.id === e.id);
-				if (current && current.enabled) void fire(current, attempt + 1);
+				if (!current || !current.enabled) return;
+				// Cancel a stale retry: if the user changed what this entry does during the backoff
+				// (e.g. script A → script B), running it as a retry would execute the wrong task.
+				if (retrySignature(current) !== sig) {
+					console.log(`[scheduler] ${e.id} retry cancelled: entry config changed during backoff`);
+					return;
+				}
+				void fire(current, attempt + 1);
 			} catch (err) {
 				console.error(`[scheduler] ${e.id} retry scheduling failed:`, err instanceof Error ? err.message : err);
 			}

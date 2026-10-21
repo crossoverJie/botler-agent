@@ -258,11 +258,13 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			delete patch.scriptArgs;
 			delete patch.commit;
 		}
-		// retry: build { max, backoffMs } when retryMax > 0, otherwise drop it. normalizeEntry
-		// re-validates (non-negative integers), so a bad value is rejected with a readable error.
+		// retry: preserve the fields that were NOT provided by merging with the existing retry,
+		// so updating only retryMax does not reset an existing backoffMs (and vice versa). normalizeEntry
+		// re-validates (non-negative integers, upper bounds), so a bad value is rejected with a readable error.
 		if (args.retryMax !== undefined || args.retryBackoffMs !== undefined) {
-			const rmax = args.retryMax ?? 0;
-			const rms = args.retryBackoffMs ?? 0;
+			const existing = patch.retry as { max?: number; backoffMs?: number } | undefined;
+			const rmax = args.retryMax ?? existing?.max ?? 0;
+			const rms = args.retryBackoffMs ?? existing?.backoffMs ?? 0;
 			if (rmax > 0) patch.retry = { max: rmax, backoffMs: rms };
 			else delete patch.retry;
 		}
