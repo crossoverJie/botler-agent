@@ -236,6 +236,38 @@ test("normalizeSchedules accepts a list containing an expired once alongside oth
 });
 
 // ---------------------------------------------------------------------------
+// retry (failure retry) normalization — the schedule tool now sets this via chat
+// ---------------------------------------------------------------------------
+
+test("normalizeEntry preserves a valid retry", () => {
+	const e = normalizeEntry({ id: "r1", message: "m", at: "08:00", retry: { max: 3, backoffMs: 1000 } });
+	assert.deepEqual(e.retry, { max: 3, backoffMs: 1000 });
+});
+
+test("normalizeEntry accepts retry with max 0 (no retry)", () => {
+	const e = normalizeEntry({ id: "r2", script: "a/b.py", at: "08:00", retry: { max: 0, backoffMs: 0 } });
+	assert.deepEqual(e.retry, { max: 0, backoffMs: 0 });
+});
+
+test("normalizeEntry rejects an invalid retry.max", () => {
+	assert.throws(
+		() => normalizeEntry({ id: "r3", message: "m", at: "08:00", retry: { max: -1, backoffMs: 0 } }),
+		/invalid retry\.max/,
+	);
+	assert.throws(
+		() => normalizeEntry({ id: "r4", message: "m", at: "08:00", retry: { max: 1.5, backoffMs: 0 } }),
+		/invalid retry\.max/,
+	);
+});
+
+test("normalizeEntry rejects an invalid retry.backoffMs", () => {
+	assert.throws(
+		() => normalizeEntry({ id: "r5", message: "m", at: "08:00", retry: { max: 1, backoffMs: -5 } }),
+		/invalid retry\.backoffMs/,
+	);
+});
+
+// ---------------------------------------------------------------------------
 // holidayMode ("workday" gating)
 // ---------------------------------------------------------------------------
 

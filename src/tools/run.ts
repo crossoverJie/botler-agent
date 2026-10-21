@@ -46,15 +46,18 @@ export interface RunResult {
 export function runScript(script: string, args: string[] = []): RunResult {
 	try {
 		const abs = safePath(script, { projects: getTaskProjects() });
-		if (!existsSync(abs) || !statSync(abs).isFile())
-			return { ok: false, text: `Script does not exist or is not a file: ${script}`, errorKind: "precondition" };
+		// Resolve the owning subproject as soon as the path is allowlisted, so precondition failures
+		// that still fall inside a project (missing file / wrong type) can carry `cwd`. This lets the
+		// dispatcher attribute the run's history log to the right project even when the script never ran.
 		const project = projectOf(abs);
+		const cwd = project ? resolve(CONFIG.dataRoot, project) : undefined;
+		if (!existsSync(abs) || !statSync(abs).isFile())
+			return { ok: false, text: `Script does not exist or is not a file: ${script}`, cwd, errorKind: "precondition" };
 		if (!project)
 			return { ok: false, text: `Script is not inside any data subproject: ${script}`, errorKind: "precondition" };
 		const interpreter = interpreterOf(script);
 		if (!interpreter)
-			return { ok: false, text: `Unsupported script type (only .py / .js / .mjs): ${script}`, errorKind: "precondition" };
-		const cwd = resolve(CONFIG.dataRoot, project);
+			return { ok: false, text: `Unsupported script type (only .py / .js / .mjs): ${script}`, cwd, errorKind: "precondition" };
 		try {
 			const out = execFileSync(interpreter, [abs, ...args], {
 				cwd,

@@ -43,6 +43,12 @@ const schema = Type.Object({
 	commit: Type.Optional(
 		Type.Boolean({ description: "Auto git-commit the script's data changes on success (default true; set false for read-only scripts)" }),
 	),
+	retryMax: Type.Optional(
+		Type.Integer({ description: "Failure retry count (0 = no retry, the default). For idempotent scripts set >0 so transient failures self-recover; for non-idempotent scripts (sends messages / hits external APIs) keep 0 to avoid repeating side effects." }),
+	),
+	retryBackoffMs: Type.Optional(
+		Type.Integer({ description: "Fixed backoff between retries, in ms (used only when retryMax > 0)." }),
+	),
 	cron: Type.Optional(Type.String({ description: "5-field cron expression, e.g. '0 8 * * *' (recurring; one of four for create)" })),
 	interval: Type.Optional(Type.String({ description: "Simple interval, e.g. '5m' / '2h' / '1d' (recurring; one of four for create)" })),
 	at: Type.Optional(Type.String({ description: "Fixed DAILY time 'HH:MM' — repeats every day (one of four for create). Do NOT use for one-off reminders like 'tonight 10pm'; use once instead." })),
@@ -66,6 +72,8 @@ type ScheduleArgs = {
 	script?: string;
 	scriptArgs?: string[];
 	commit?: boolean;
+	retryMax?: number;
+	retryBackoffMs?: number;
 	cron?: string;
 	interval?: string;
 	at?: string;
@@ -105,7 +113,7 @@ export const scheduleTool: AgentTool<typeof schema> = {
 	name: "schedule",
 	label: "Manage scheduled tasks",
 	description:
-		"Create / view / modify / delete / enable / disable scheduled tasks (writes the fixed schedule config, takes effect immediately). Use when the user says things like 'remind me every morning at 8am…', 'summarize every 2 hours…', 'remind me in X minutes…' that contain scheduling / reminder / calendar intent. create must specify exactly one trigger plus exactly one ACTION: a non-empty `message` (the instruction sent back to the Agent on fire) OR a `script` (an existing in-project script path relative to DATA_ROOT, e.g. 'notes/scripts/build.py', run directly on fire — bypasses the LLM; optionally `scriptArgs` and `commit`). Four trigger types: (1) cron — 5-field cron for complex recurring schedules; (2) interval — simple '5m'/'2h'/'1d' recurring; (3) at — a DAILY fixed time 'HH:MM' that REPEATS EVERY DAY; (4) once — a ONE-SHOT absolute date-time (ISO 8601, MUST include the full date) that fires EXACTLY ONCE. CRITICAL DISTINCTION: for one-off reminders like 'tonight 10pm', 'tomorrow 3pm', 'next Monday 8am', or any specific date, you MUST use 'once' (compute the full YYYY-MM-DD from today's date) — do NOT use 'at', because 'at' repeats every day. Use 'at' only when the user explicitly says 'every day'. After creating or modifying, confirm the next fire time to the user in your reply.",
+		"Create / view / modify / delete / enable / disable scheduled tasks (writes the fixed schedule config, takes effect immediately). Use when the user says things like 'remind me every morning at 8am…', 'summarize every 2 hours…', 'remind me in X minutes…' that contain scheduling / reminder / calendar intent. create must specify exactly one trigger plus exactly one ACTION: a non-empty `message` (the instruction sent back to the Agent on fire) OR a `script` (an existing in-project script path relative to DATA_ROOT, e.g. 'notes/scripts/build.py', run directly on fire — bypasses the LLM; optionally `scriptArgs` and `commit`). Optional `retryMax` / `retryBackoffMs` control failure retries: set retryMax>0 only for idempotent scripts (re-running yields the same result); for non-idempotent scripts (sends messages / hits external APIs) keep retryMax=0 so a failure fires once and is reported, never repeated. Four trigger types: (1) cron — 5-field cron for complex recurring schedules; (2) interval — simple '5m'/'2h'/'1d' recurring; (3) at — a DAILY fixed time 'HH:MM' that REPEATS EVERY DAY; (4) once — a ONE-SHOT absolute date-time (ISO 8601, MUST include the full date) that fires EXACTLY ONCE. CRITICAL DISTINCTION: for one-off reminders like 'tonight 10pm', 'tomorrow 3pm', 'next Monday 8am', or any specific date, you MUST use 'once' (compute the full YYYY-MM-DD from today's date) — do NOT use 'at', because 'at' repeats every day. Use 'at' only when the user explicitly says 'every day'. After creating or modifying, confirm the next fire time to the user in your reply.",
 	parameters: schema,
 	async execute(_toolCallId, args: ScheduleArgs) {
 		const { action } = args;
@@ -122,6 +130,7 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			const proj = e.project ? ` project=${e.project}` : "";
 			const hm = e.holidayMode ? ` holidayMode=${e.holidayMode}` : "";
 			const action = e.script ? `▶ ${e.script}` : `msg=${e.message}`;
+			const rt = e.retry ? ` retry=${e.retry.max}` : "";
 			const fire = !e.enabled
 				? " disabled"
 				: next
@@ -129,7 +138,7 @@ export const scheduleTool: AgentTool<typeof schema> = {
 					: e.once
 						? " (expired)"
 						: "";
-			return `- ${e.id} [${e.enabled ? "enabled" : "disabled"}] ${triggerOf(e)} ${action} tz=${e.timezone}${proj}${rec}${hm}${fire}`;
+			return `- ${e.id} [${e.enabled ? "enabled" : "disabled"}] ${triggerOf(e)} ${action}${rt} tz=${e.timezone}${proj}${rec}${hm}${fire}`;
 		});
 		return textResult(`Scheduled tasks (${entries.length}):\n${lines.join("\n")}`, { count: entries.length });
 		}
@@ -175,6 +184,9 @@ export const scheduleTool: AgentTool<typeof schema> = {
 			} else {
 				raw.message = message;
 			}
+			const rmax = args.retryMax ?? 0;
+			const rms = args.retryBackoffMs ?? 0;
+			if (rmax > 0) raw.retry = { max: rmax, backoffMs: rms };
 			if (args.project?.trim()) raw.project = args.project.trim();
 			// holidayMode only ever carries "workday" from the agent; "off" is the default and is omitted.
 			if (args.holidayMode === "workday") raw.holidayMode = "workday";
@@ -245,6 +257,14 @@ export const scheduleTool: AgentTool<typeof schema> = {
 		} else {
 			delete patch.scriptArgs;
 			delete patch.commit;
+		}
+		// retry: build { max, backoffMs } when retryMax > 0, otherwise drop it. normalizeEntry
+		// re-validates (non-negative integers), so a bad value is rejected with a readable error.
+		if (args.retryMax !== undefined || args.retryBackoffMs !== undefined) {
+			const rmax = args.retryMax ?? 0;
+			const rms = args.retryBackoffMs ?? 0;
+			if (rmax > 0) patch.retry = { max: rmax, backoffMs: rms };
+			else delete patch.retry;
 		}
 		if (args.timezone !== undefined) {
 			if (!isValidTimezone(args.timezone)) throw new Error(`invalid timezone "${args.timezone}"`);
