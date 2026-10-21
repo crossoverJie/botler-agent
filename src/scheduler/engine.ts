@@ -112,9 +112,25 @@ async function fire(e: ScheduleEntry, attempt = 0): Promise<void> {
 	// A script task must retry only on `error` — re-running on `validation-failed` would repeat its
 	// side effects (e.g. write the bad file again). Message tasks retry on both (the LLM self-heals).
 	const failed = result.status === "error" || (result.status === "validation-failed" && !e.script);
-	if (failed && attempt < (e.retry?.max ?? 0)) {
-		await sleep(e.retry!.backoffMs);
-		return fire(e, attempt + 1);
+	const retryMax = e.retry?.max ?? 0;
+	if (failed && attempt < retryMax) {
+		// Schedule the retry WITHOUT blocking fire()'s return. The scheduler loop is single-threaded
+		// and awaits each fire(), so a sequential `await sleep` here would starve every other due
+		// task for up to retryMax × backoffMs. Instead we hand the retry to a timer and return, so the
+		// loop keeps processing the rest of this round (and subsequent rounds) while the retry waits
+		// out-of-band; the retry re-enters fire() on its own when the timer fires.
+		const backoffMs = e.retry!.backoffMs;
+		setTimeout(() => {
+			try {
+				// Re-validate the entry still exists and is enabled before retrying — it may have been
+				// deleted or disabled while the timer was pending.
+				const current = loadSchedules().find((x) => x.id === e.id);
+				if (current && current.enabled) void fire(current, attempt + 1);
+			} catch (err) {
+				console.error(`[scheduler] ${e.id} retry scheduling failed:`, err instanceof Error ? err.message : err);
+			}
+		}, backoffMs);
+		return;
 	}
 	// A no-project reminder (e.g. "remind user to drink water") has no data subproject to route to, so routing
 	// returns the generic "couldn't decide a project" text. For such entries the schedule's own
