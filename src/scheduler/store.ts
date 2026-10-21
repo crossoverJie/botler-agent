@@ -22,6 +22,19 @@ const DEFAULT_TZ = "Asia/Shanghai";
 const MESSAGE_MAX_CHARS = 10 * 1024;
 
 /**
+ * Upper bounds on a schedule's failure-retry. Both chat (schedule tool) and the WebUI go through
+ * {@link normalizeEntry}, so these caps are enforced in exactly one place.
+ *
+ * - `RETRY_MAX_LIMIT`: an unbounded retry count would make a single failing entry re-run forever and
+ *   block the single-threaded scheduler loop (fire() awaits its retries), starving other entries.
+ * - `RETRY_BACKOFF_MS_LIMIT`: backoff is passed to Node's setTimeout; delays above 2^31-1 ms
+ *   (~24.8 days) are silently clamped to ~1 ms, turning a long backoff into a tight retry storm.
+ *   1 hour is comfortably below that clamp and still a generous ceiling.
+ */
+export const RETRY_MAX_LIMIT = 10;
+export const RETRY_BACKOFF_MS_LIMIT = 60 * 60 * 1000; // 1 hour
+
+/**
  * Saved-listener: set by the scheduler engine (engine.ts) at module load so a schedule write
  * wakes the loop immediately. Kept here instead of importing the engine to avoid the
  * engine → dispatcher → runner → tools → schedule → store → engine cycle.
@@ -145,6 +158,9 @@ export function normalizeEntry(item: unknown): ScheduleEntry {
 		const backoffMs = Number(r.backoffMs);
 		if (!Number.isInteger(max) || max < 0) throw new Error(`schedule "${id}" invalid retry.max`);
 		if (!Number.isInteger(backoffMs) || backoffMs < 0) throw new Error(`schedule "${id}" invalid retry.backoffMs`);
+		if (max > RETRY_MAX_LIMIT) throw new Error(`schedule "${id}" retry.max exceeds ${RETRY_MAX_LIMIT}`);
+		if (backoffMs > RETRY_BACKOFF_MS_LIMIT)
+			throw new Error(`schedule "${id}" retry.backoffMs exceeds ${RETRY_BACKOFF_MS_LIMIT}ms`);
 		entry.retry = { max, backoffMs };
 	}
 

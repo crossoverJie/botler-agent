@@ -267,6 +267,20 @@ test("normalizeEntry rejects an invalid retry.backoffMs", () => {
 	);
 });
 
+test("normalizeEntry rejects retry.max above the upper bound", () => {
+	assert.throws(
+		() => normalizeEntry({ id: "r6", message: "m", at: "08:00", retry: { max: 999, backoffMs: 0 } }),
+		/retry\.max exceeds 10/,
+	);
+});
+
+test("normalizeEntry rejects retry.backoffMs above the upper bound", () => {
+	assert.throws(
+		() => normalizeEntry({ id: "r7", message: "m", at: "08:00", retry: { max: 1, backoffMs: 999999999 } }),
+		/retry\.backoffMs exceeds/,
+	);
+});
+
 // ---------------------------------------------------------------------------
 // holidayMode ("workday" gating)
 // ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
-import { loadSchedules, saveSchedules } from "../scheduler/store.ts";
+import { loadSchedules, saveSchedules, RETRY_MAX_LIMIT, RETRY_BACKOFF_MS_LIMIT } from "../scheduler/store.ts";
 import { nextFireEpoch, parseOnceEpoch, isValidTimezone } from "../scheduler/cron.ts";
 import type { ScheduleEntry } from "../scheduler/types.ts";
 import { getTaskContext } from "./task-context.ts";
@@ -44,10 +44,10 @@ const schema = Type.Object({
 		Type.Boolean({ description: "Auto git-commit the script's data changes on success (default true; set false for read-only scripts)" }),
 	),
 	retryMax: Type.Optional(
-		Type.Integer({ description: "Failure retry count (0 = no retry, the default). For idempotent scripts set >0 so transient failures self-recover; for non-idempotent scripts (sends messages / hits external APIs) keep 0 to avoid repeating side effects." }),
+		Type.Integer({ maximum: RETRY_MAX_LIMIT, description: `Failure retry count (0 = no retry, the default; max ${RETRY_MAX_LIMIT}). For idempotent scripts set >0 so transient failures self-recover; for non-idempotent scripts (sends messages / hits external APIs) keep 0 to avoid repeating side effects.` }),
 	),
 	retryBackoffMs: Type.Optional(
-		Type.Integer({ description: "Fixed backoff between retries, in ms (used only when retryMax > 0)." }),
+		Type.Integer({ maximum: RETRY_BACKOFF_MS_LIMIT, description: `Fixed backoff between retries, in ms (used only when retryMax > 0; max ${RETRY_BACKOFF_MS_LIMIT}).` }),
 	),
 	cron: Type.Optional(Type.String({ description: "5-field cron expression, e.g. '0 8 * * *' (recurring; one of four for create)" })),
 	interval: Type.Optional(Type.String({ description: "Simple interval, e.g. '5m' / '2h' / '1d' (recurring; one of four for create)" })),
