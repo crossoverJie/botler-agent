@@ -27,6 +27,8 @@
 #   BOTLER_GITHUB_API    base url     (default: https://api.github.com)
 #   BOTLER_BIN           binary path  (default: target/release/botler)
 #   BOTLER_CARGO         cargo binary (default: cargo)
+#   BOTLER_CARGO_TOOLCHAIN  rustup toolchain override (default: +stable);
+#                        set to "" to honor the repo's rust-toolchain.toml
 #   BOTLER_FEATURES      cargo features (default: channels)
 #   HTTPS_PROXY / https_proxy         used automatically by curl / gh
 
@@ -45,6 +47,19 @@ BIN="${BOTLER_BIN:-$REPO_DIR/target/release/botler}"
 CARGO="${BOTLER_CARGO:-cargo}"
 FEATURES="${BOTLER_FEATURES:-channels}"
 
+# rustup installs cargo into ~/.cargo/bin, which non-interactive shells
+# (launchd, cron, this script) often lack on PATH. Source its env only when
+# cargo is not already resolvable, so a caller-provided BOTLER_CARGO wins.
+if ! command -v "$CARGO" >/dev/null 2>&1 && [[ -f "$HOME/.cargo/env" ]]; then
+  # shellcheck disable=SC1091
+  . "$HOME/.cargo/env"
+fi
+
+# rust-toolchain.toml pins a nightly for the unresolved pi-sdk feature. The
+# deterministic core / channels build is stable-only (see AGENTS.md), so
+# override that pin by default; an empty value honors the pinned toolchain.
+CARGO_TOOLCHAIN="${BOTLER_CARGO_TOOLCHAIN-+stable}"
+
 is_running() {
   [[ -f "$PIDFILE" ]] || return 1
   local pid
@@ -55,7 +70,11 @@ is_running() {
 build() {
   cd "$REPO_DIR"
   echo "building ($FEATURES)..."
-  "$CARGO" build --release --locked --features "$FEATURES" -p botler
+  if [[ -n "$CARGO_TOOLCHAIN" ]]; then
+    "$CARGO" "$CARGO_TOOLCHAIN" build --release --locked --features "$FEATURES" -p botler
+  else
+    "$CARGO" build --release --locked --features "$FEATURES" -p botler
+  fi
 }
 
 stop() {
