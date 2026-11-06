@@ -1,0 +1,87 @@
+{
+  "calendar": {
+    "2026": {
+      "holidays": [
+        "2026-10-01",
+        "2026-10-02",
+        "2026-10-05",
+        "2026-10-06",
+        "2026-10-07"
+      ],
+      "workdays": ["2026-10-10"]
+    }
+  },
+  "cases": [
+    {
+      "name": "daily-cron-next-day",
+      "entry": { "id": "daily", "cron": "0 9 * * *", "timezone": "Asia/Shanghai" },
+      "after": "2026-11-03T10:00:00+08:00",
+      "expect": "2026-11-04T09:00:00+08:00"
+    },
+    {
+      "name": "interval-quarter-hour",
+      "entry": { "id": "int", "interval": "15m", "timezone": "Asia/Shanghai" },
+      "after": "2026-11-03T10:07:00+08:00",
+      "expect": "2026-11-03T10:15:00+08:00"
+    },
+    {
+      "name": "at-daily-time",
+      "entry": { "id": "at", "at": "08:05", "timezone": "Asia/Shanghai" },
+      "after": "2026-11-03T07:00:00+08:00",
+      "expect": "2026-11-03T08:05:00+08:00"
+    },
+    {
+      "name": "once-in-the-future",
+      "entry": {
+        "id": "once",
+        "once": "2026-11-05T08:30:00+08:00",
+        "timezone": "Asia/Shanghai"
+      },
+      "after": "2026-11-05T07:00:00+08:00",
+      "expect": "2026-11-05T08:30:00+08:00"
+    },
+    {
+      "name": "once-in-the-past-is-inert",
+      "entry": {
+        "id": "once",
+        "once": "2026-11-05T08:30:00+08:00",
+        "timezone": "Asia/Shanghai"
+      },
+      "after": "2026-11-05T09:00:00+08:00",
+      "expect": null
+    },
+    {
+      "name": "workday-skips-statutory-holidays",
+      "entry": {
+        "id": "wd",
+        "cron": "0 9 * * *",
+        "timezone": "Asia/Shanghai",
+        "holidayMode": "workday"
+      },
+      "after": "2026-09-30T10:00:00+08:00",
+      "expect": "2026-10-08T09:00:00+08:00"
+    },
+    {
+      "name": "workday-includes-makeup-saturday",
+      "entry": {
+        "id": "wd",
+        "cron": "0 9 * * *",
+        "timezone": "Asia/Shanghai",
+        "holidayMode": "workday"
+      },
+      "after": "2026-10-09T10:00:00+08:00",
+      "expect": "2026-10-10T09:00:00+08:00"
+    },
+    {
+      "name": "silent-hours-push-to-window-end",
+      "entry": {
+        "id": "silent",
+        "cron": "30 23 * * *",
+        "timezone": "Asia/Shanghai",
+        "silentHours": { "from": "23:00", "to": "08:00" }
+      },
+      "after": "2026-11-03T20:00:00+08:00",
+      "expect": "2026-11-04T08:00:00+08:00"
+    }
+  ]
+}

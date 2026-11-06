@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/botler"]
+default-members = ["crates/botler"]
+resolver = "2"
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+rust-version = "1.90"
+
+[profile.release]
+lto = "thin"
+strip = true
