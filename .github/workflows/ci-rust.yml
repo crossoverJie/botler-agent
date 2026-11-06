@@ -1,0 +1,47 @@
+name: Rust CI
+
+# CI for the v2 Rust rewrite (AGENTS.md "Commands"). The v1 npm/Docker
+# release workflows were retired on this branch, so this is the only workflow
+# for the Rust product. It covers both v2 and main so PRs into main are checked.
+#
+# rust-toolchain.toml pins nightly-2026-08-31 for the future pi-sdk spike, so
+# every command is pinned with +stable to keep the deterministic core on
+# stable (AGENTS.md).
+
+on:
+  push:
+    branches: [v2, main]
+  pull_request:
+    branches: [v2, main]
+  workflow_dispatch:
+
+concurrency:
+  group: rust-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install stable Rust
+        # +stable overrides the repo's nightly rust-toolchain.toml; install the
+        # components the fmt/clippy steps need explicitly.
+        run: rustup toolchain install stable --profile minimal --component rustfmt clippy
+
+      - name: Format
+        run: cargo +stable fmt --all -- --check
+
+      - name: Clippy
+        run: cargo +stable clippy --all-targets --features channels -- -D warnings
+
+      - name: Build (release, channels)
+        run: cargo +stable build --release --features channels
+
+      - name: Tests (lib, bin, acceptance, parity + channels)
+        run: cargo +stable test -p botler --features channels
