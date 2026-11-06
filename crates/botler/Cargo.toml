@@ -1,0 +1,49 @@
+[package]
+name = "botler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "botler"
+path = "src/lib.rs"
+
+[[bin]]
+name = "botler"
+path = "src/main.rs"
+
+[features]
+default = []
+# Embeds the pi agent core. Requires nightly-2026-08-31 (see rust-toolchain.toml)
+# and the dependency line below. It is kept commented out so the deterministic
+# core builds and tests on stable while spike S-1/S-5 are unresolved.
+#
+# pi_agent_rust = { package = "pi_agent_rust", git = "https://github.com/Dicklesworthstone/pi_agent_rust", tag = "v0.8.0", default-features = false, features = ["sqlite-sessions"] }
+pi-sdk = []
+# Starts the network channels (Telegram long poll + Feishu webhook).
+channels = ["dep:axum"]
+
+[dependencies]
+aes = "0.8"
+anyhow = "1"
+async-trait = "0.1"
+axum = { version = "0.7", optional = true }
+base64 = "0.22"
+cbc = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = { version = "0.10", features = ["serde"] }
+hex = "0.4"
+md-5 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"

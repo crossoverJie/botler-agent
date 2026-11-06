@@ -1,4 +1,5 @@
 node_modules/
+target/
 .botler.pid
 dist/
 *.log
