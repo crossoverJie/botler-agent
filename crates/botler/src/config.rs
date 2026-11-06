@@ -68,19 +68,14 @@ pub fn parse_dotenv_into(path: &Path, target: &mut HashMap<String, String>) {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderApi {
+    #[default]
     #[serde(alias = "openai", alias = "openai-completions")]
     OpenAiCompletions,
     #[serde(alias = "anthropic", alias = "anthropic-messages")]
     AnthropicMessages,
-}
-
-impl Default for ProviderApi {
-    fn default() -> Self {
-        Self::OpenAiCompletions
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

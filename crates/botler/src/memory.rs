@@ -12,6 +12,7 @@
 //! namespace's visibility is computed from the acting `MemoryContext`; recall
 //! and the injected digest search exactly that union.
 
+use std::cmp::Reverse;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -261,12 +262,12 @@ impl MemoryStore {
                 .into_iter()
                 .filter(|r| r.superseded_by.is_none())
                 .collect();
-            records.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            records.sort_by_key(|r| Reverse(r.updated_at));
             if !records.is_empty() {
                 buckets.push((tier, records));
             }
         }
-        buckets.sort_by(|a, b| b.0.cmp(&a.0)); // 3, 2, 1
+        buckets.sort_by_key(|b| Reverse(b.0)); // 3, 2, 1
 
         let mut lines = Vec::new();
         let mut used = 0usize;
@@ -302,7 +303,7 @@ impl MemoryStore {
                 });
             }
         }
-        out.sort_by(|a, b| b.record.updated_at.cmp(&a.record.updated_at));
+        out.sort_by_key(|s| Reverse(s.record.updated_at));
         out
     }
 

@@ -5,6 +5,7 @@
 //! total-size cap across live, `archived/`, and `.corrupt` files. It never
 //! touches the index, journals, pending rotation intents, or memory stores.
 
+use std::cmp::Reverse;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -146,7 +147,7 @@ pub fn discover(sessions_dir: &Path) -> Result<Vec<SessionFileInfo>> {
         }
     }
 
-    out.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+    out.sort_by_key(|f| Reverse(f.modified_ms));
     Ok(out)
 }
 
