@@ -96,6 +96,50 @@ docker run -d --name botler --restart unless-stopped \
 
 镜像默认值（`WEBUI_HOST=0.0.0.0`、`WEBUI_ENABLED=1`、`SCHEDULER_ENABLED=1`、`MONITOR_ENABLED=1`）优先级高于挂载的 `/config/.env`——如需修改请在创建容器时覆盖（如 `-e WEBUI_ENABLED=0`）。容器内已内置 8899 端口的 `/healthz` 健康检查。关于微信扫码登录、飞书端口、git 提交身份与升级步骤，见 [Docker 部署（NAS）](docs/docker.md)。
 
+**容器内 git push（`GIT_PUSH=1`）**
+
+`GIT_PUSH=1` 时，每次写入任务都会把仍有未推送提交的数据子项目推回远端。镜像只提供 `git` + `openssh-client`，**key / `known_hosts` / 提交身份一律不进镜像**，靠挂载与环境变量注入：
+
+```bash
+# 宿主机执行一次：生成 key、预置 host key、写 ssh config
+mkdir -p ./config/ssh && chmod 700 ./config/ssh
+ssh-keygen -t ed25519 -N '' -f ./config/ssh/id_ed25519
+ssh-keyscan -p 443 ssh.github.com 2>/dev/null > ./config/ssh/known_hosts   # 公钥加到机器用户账号
+printf 'Host github.com\n  HostName ssh.github.com\n  Port 443\n  User git\n  IdentityFile /root/.ssh/id_ed25519\n  IdentitiesOnly yes\n  BatchMode yes\n  StrictHostKeyChecking yes\n  UserKnownHostsFile /root/.ssh/known_hosts\n' > ./config/ssh/config
+chmod 600 ./config/ssh/id_ed25519 ./config/ssh/known_hosts ./config/ssh/config
+printf '[safe]\n\tdirectory = *\n' > ./config/gitconfig   # NAS 挂载场景，避免 "dubious ownership"
+```
+
+```yaml
+services:
+  botler:
+    image: crossoverjie/botler-agent:v0.5.1     # `latest` 只由 `v*` tag 产出（make release）
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      GIT_AUTHOR_NAME: botler-agent
+      GIT_AUTHOR_EMAIL: botler@localhost
+      GIT_COMMITTER_NAME: botler-agent
+      GIT_COMMITTER_EMAIL: botler@localhost
+      GIT_TERMINAL_PROMPT: "0"                  # 需要输入时立刻失败
+      GIT_SSH_COMMAND: ssh -F /root/.ssh/config
+      GIT_CONFIG_GLOBAL: /config/gitconfig
+      GIT_PUSH: "1"                             # 进程 env 优先于 /config/.env
+    volumes:
+      - ./config:/config
+      - ./data:/data
+      - ./config/ssh:/root/.ssh:ro
+      - ./config/gitconfig:/config/gitconfig:ro
+```
+
+```bash
+docker compose up -d
+docker compose exec botler sh -c 'command -v ssh && ssh -F /root/.ssh/config -T git@github.com'
+#   -> "Hi <user>! You've successfully authenticated ..."
+```
+
+key 属于一个专用机器用户，并把该用户加为每个数据仓库的 **collaborator（Write）**——不要一个仓库一把 deploy key。push 与本次 commit 解耦（上次失败的推送会在下一次写入任务自愈），失败只记录 git stderr 首行、不会让任务失败。完整步骤、uid 1000 变体与 14 项验证清单：[容器内 git push](docs/docker-git-push.md)。
+
 ## 快速开始
 
 ```bash
