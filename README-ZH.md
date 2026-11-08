@@ -402,7 +402,7 @@ src/
 | `WECHAT_ALLOW_FROM` | 可选逗号分隔的额外 `ilink_user_id` 白名单（主号始终允许） |
 | `WECHAT_REMINDER_HOURS` | 微信续期提醒阈值：`0`=关闭，`1`-`24`=主号静默 N 小时后提醒（默认 23） |
 | `WECHAT_IMAGE_BATCH_SECONDS` | 微信入站图片批处理窗口（秒）：`0`=关闭批处理（立即分发），正整数则短暂暂存图片，让随后补发的文字合并为同一条任务（默认 60） |
-| `GIT_PUSH` | `=1` 时提交后额外 git push（默认关，push 失败仅告警） |
+| `GIT_PUSH` | `=1` 时提交后额外 git push（默认关，push 失败仅告警）；容器内还需 ssh 与凭据，见 [容器内 git push](docs/docker-git-push.md) |
 | `WEBUI_ENABLED` | `=1` 启动本地任务日志 WebUI（仅绑定 127.0.0.1） |
 | `WEBUI_PORT` | WebUI 监听端口，默认 `8900` |
 | `BOTLER_LOG_DIR` | 任务日志 JSONL 目录（默认 `~/.botler-agent/task-logs/`） |

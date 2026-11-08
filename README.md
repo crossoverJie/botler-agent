@@ -347,7 +347,7 @@ By default a local health/metrics server runs on `127.0.0.1:MONITOR_PORT` (defau
 | `WECHAT_ALLOW_FROM` | Optional comma-separated extra `ilink_user_id` allowlist (owner always allowed) |
 | `WECHAT_REMINDER_HOURS` | WeChat renewal reminder threshold: `0`=off, `1`-`24`=remind owner after N hours (default 23) |
 | `WECHAT_IMAGE_BATCH_SECONDS` | WeChat inbound-image batching window in seconds: `0`=disable batching (dispatch immediately), positive integer holds images briefly so a follow-up caption merges into one task (default 60) |
-| `GIT_PUSH` | `=1` additionally git push after commit (default off; push failure is only a warning) |
+| `GIT_PUSH` | `=1` additionally git push after commit (default off; push failure is only a warning). In a container the push path needs ssh + credentials: see [Git push from the container](docs/docker-git-push.md) |
 | `WEBUI_ENABLED` | `=1` to start the local task-log WebUI (binds `127.0.0.1`) |
 | `WEBUI_PORT` | WebUI listening port, default `8900` |
 | `BOTLER_LOG_DIR` | Task-log JSONL dir (default `~/.botler-agent/task-logs/`) |

@@ -2,14 +2,18 @@
 # Runs the persistent channel via tsx (no build step); tsx is a runtime dependency.
 #
 # Extra system packages (kept minimal):
-#   git        auto-commit of each DATA_ROOT subproject (safety/git.ts)
-#   tzdata     TZ-aware scheduler + __TODAY__ date
-#   python3    the `run` tool executes in-project python3 scripts (.py)
+#   git              auto-commit of each DATA_ROOT subproject (safety/git.ts)
+#   openssh-client   GIT_PUSH over an SSH remote (`git push` shells out to ssh)
+#   tzdata           TZ-aware scheduler + __TODAY__ date
+#   python3          the `run` tool executes in-project python3 scripts (.py)
 #   ca-certificates  outbound TLS to model providers / channels
+#
+# Credentials, git identity and known_hosts are NEVER baked into the image: mount them
+# (ssh config / key) and pass them as env (GIT_AUTHOR_*, GIT_COMMITTER_*, GIT_SSH_COMMAND).
 
 FROM node:20-alpine
 
-RUN apk add --no-cache git tzdata python3 ca-certificates
+RUN apk add --no-cache git openssh-client tzdata python3 ca-certificates
 
 WORKDIR /app
 
