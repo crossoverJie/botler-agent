@@ -380,6 +380,28 @@ Status: the deterministic core (config, paths, tools, routing/prompt, sessions, 
 
 **Go/no-go:** go for the deterministic core on `v2`; **no-go for claiming a pi-backed release, a working WeChat channel, or shippability** until S-1/S-5 (embedding), S-4 (transport), and S-6 (license) close.
 
+#### 13.2.1 P0 spike evidence (Route A, `pi_agent_rust` v0.8.0)
+
+Run in an isolated crate (`/tmp/pi-spike`), **not** in the workspace, so no pi
+dependency entered `Cargo.lock`. Evidence from `cargo +stable build` / `run`:
+
+| Check | Result | Evidence |
+|---|---|---|
+| Dependency source | **crates.io `pi_agent_rust = "0.8.0"`**, not the git dep commented out in `Cargo.toml` | `crates.io` publishes `0.8.0` (crate `pi`, `[lib] name = "pi"`, edition 2024, `rust-version 1.95`). A shallow `git clone` of the tag through the GFW proxy stalled >15 min; the published crate downloads in seconds. §2/"Hard gates" in the v2 parity plan should be corrected accordingly. |
+| Toolchain | **stable is sufficient** on darwin/arm64 | `cargo +stable build` finished in 4m19s with `default-features = false, features = ["sqlite-sessions"]`. The only nightly feature in `src/lib.rs` is `#[cfg_attr(windows, feature(...))]`; `rust-toolchain.toml`'s nightly pin is not required for the SDK build on this platform. The dependency graph is heavy (fsqlite, swc, clap, QuickJS-related crates) — budget compile time accordingly. |
+| S-1 shape | **Partially verified — NOT closed** | `ProviderConfig { base_url, api, api_key, models }` and `models.json` (`{ providers: { <id>: ProviderConfig } }`) map cleanly onto v2's `providers.json`. `ModelRegistry::load_with_credential_resolver(models_path, resolver)` supports injected credentials. But a `SessionOptions { provider: "custom", model: "m1" }` with no registry wiring returns `Validation error: Model custom/m1 not found`. The bridge must generate/load pi's `models.json` and register the provider before constructing a session. |
+| S-2 shape | **Verified (API level)** | `pi::sdk::ToolFactory::create_tool_registry(enabled, cwd, config) -> ToolRegistry` exists; `default_tool_registry` + `enabled_tools: Some(vec![])` disables all built-ins. pi's `Tool` trait (`name/label/description/parameters/execute`) is near-identical to v2's `tools/mod.rs::Tool`, so the adapter is a thin wrapper. Round-trip `ToolOutput` parity still needs a real turn. |
+| S-5 / runtime bridge | **Verified (construction only)** | `create_agent_session(SessionOptions)` is `async` and can be awaited from inside a `#[tokio::main]` runtime; 3 sequential constructions returned the expected validation error rather than panicking/deadlocking. Per-handle memory and multi-handle cost against real sessions remain unmeasured. macOS emits a benign `__eh_frame section too large` linker warning from the heavy graph. |
+| S-6 | **Still open — user decision** | `LICENSE` is literally `MIT License (with OpenAI/Anthropic Rider)`, with an `ADDITIONAL RIDER / RESTRICTION` barring provision/distribution/hosting to Restricted Parties. Workspace is `AGPL-3.0-only`. No compliance conclusion has been supplied yet, so Phase 1 (`pi_bridge` production wiring) has **not** started. |
+
+**P0 conclusion:** Route A is technically viable on stable with a crates.io
+dependency; S-2 and the tokio→asupersync construction path are de-risked.
+**S-1 is the remaining technical hard gate** (provider registration must be
+proved end-to-end), and **S-6 remains the non-technical hard gate**. Per the
+approved plan, implementation stops at this checkpoint for a go/no-go decision;
+Route B (§12) is kept as the reversible fallback if S-1 cannot be closed without
+generating pi config files.
+
 ### 13.3 §10.1 scenario evidence
 
 | # | Scenario | Evidence |
