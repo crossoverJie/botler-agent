@@ -1,0 +1,120 @@
+[
+  {
+    "name": "late-caption-joins",
+    "windowMs": 30000,
+    "steps": [
+      { "sender": "u1", "text": "", "images": [1], "token": "t1" },
+      { "sender": "u1", "text": "what is this", "images": [], "token": "t2" }
+    ],
+    "flush": [],
+    "expect": [
+      { "kind": "buffer" },
+      {
+        "kind": "dispatch",
+        "text": "what is this",
+        "imageCount": 1,
+        "token": "t2",
+        "idPrefix": "u1:batch:"
+      }
+    ]
+  },
+  {
+    "name": "two-photos-flush-uses-placeholder",
+    "windowMs": 30000,
+    "steps": [
+      { "sender": "u1", "text": "", "images": [1] },
+      { "sender": "u1", "text": "", "images": [2] }
+    ],
+    "flush": ["u1"],
+    "expect": [
+      { "kind": "buffer" },
+      { "kind": "buffer" },
+      {
+        "kind": "dispatch",
+        "text": "[图片]",
+        "imageCount": 2,
+        "token": null,
+        "idPrefix": "u1:batch:"
+      }
+    ]
+  },
+  {
+    "name": "zero-window-dispatches-immediately",
+    "windowMs": 0,
+    "steps": [{ "sender": "u1", "text": "", "images": [7], "token": "x" }],
+    "flush": ["u1"],
+    "expect": [
+      {
+        "kind": "dispatch",
+        "text": "[图片]",
+        "imageCount": 1,
+        "token": "x",
+        "idPrefix": "u1:[图片]:"
+      },
+      { "kind": "none" }
+    ]
+  },
+  {
+    "name": "senders-are-isolated",
+    "windowMs": 30000,
+    "steps": [
+      { "sender": "a", "text": "", "images": [1] },
+      { "sender": "b", "text": "", "images": [2] }
+    ],
+    "flush": ["a", "b"],
+    "expect": [
+      { "kind": "buffer" },
+      { "kind": "buffer" },
+      {
+        "kind": "dispatch",
+        "text": "[图片]",
+        "imageCount": 1,
+        "token": null,
+        "idPrefix": "a:batch:"
+      },
+      {
+        "kind": "dispatch",
+        "text": "[图片]",
+        "imageCount": 1,
+        "token": null,
+        "idPrefix": "b:batch:"
+      }
+    ]
+  },
+  {
+    "name": "caption-after-two-photos-merges-both",
+    "windowMs": 30000,
+    "steps": [
+      { "sender": "u1", "text": "", "images": [1] },
+      { "sender": "u1", "text": "", "images": [2] },
+      { "sender": "u1", "text": "two pics", "images": [] }
+    ],
+    "flush": [],
+    "expect": [
+      { "kind": "buffer" },
+      { "kind": "buffer" },
+      {
+        "kind": "dispatch",
+        "text": "two pics",
+        "imageCount": 2,
+        "token": null,
+        "idPrefix": "u1:batch:"
+      }
+    ]
+  },
+  {
+    "name": "text-only-dispatches-standalone",
+    "windowMs": 30000,
+    "steps": [{ "sender": "u1", "text": "hello", "images": [], "token": "t" }],
+    "flush": [],
+    "expect": [
+      {
+        "kind": "dispatch",
+        "text": "hello",
+        "imageCount": 0,
+        "token": "t",
+        "idPrefix": "u1:hello:"
+      }
+    ]
+  }
+]

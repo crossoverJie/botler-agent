@@ -1,194 +1,210 @@
 # AGENTS.md
 
-This file is for AI coding assistants (and any contributors) working in this repo. It explains the project structure, commands, conventions, and the security boundaries that must not be broken.
+This file is for AI coding assistants (and any contributors) working in this repo. It explains the v2 layout, commands, invariants, and the security boundaries that must not be broken.
+
+## Scope: v2 is the Rust rewrite
+
+The `v2` branch is a from-scratch rewrite in Rust (`crates/botler`) of the v1 TypeScript framework. The design and rationale live in [`docs/design/rust-rewrite-v2.md`](docs/design/rust-rewrite-v2.md); read it before changing session, queue, rotation, or memory behavior.
+
+- **Rust is the product** on this branch. Put new behavior in `crates/botler`.
+- **v1 TypeScript sources remain in the tree** (`src/`, `bin/`, `scripts/install.sh`, `Makefile`) as the parity reference and for the `botler-agent-app` submodule tooling. Do not extend them unless the change is explicitly v1 parity work.
+- **Not yet ported**: Docker image, npm packaging, install/one-liner scripts, pi embedding (spikes S-1/S-5). The binary runs the deterministic core against `StubRuntime`; the network channels are behind the `channels` feature. The WebUI is ported behind the `webui` feature, but its token/tool/conversation views are degraded while S-1/S-5 are open and WeChat pairing is blocked by S-4 — see "Channels".
+- **Spikes are unresolved**: S-1 (pi provider registration), S-2 (tool IO parity), S-4 (weixin-agent transport), S-5 (multi-session embedding), S-6 (license). Do not claim any of these work until the spike records a pass.
 
 ## Project overview
 
-`botler-agent` is a **general-purpose, lightweight personal agent framework**: it receives messages from Telegram / Feishu / WeChat and uses `@earendil-works/pi-agent-core` + `@earendil-works/pi-ai` (the pi SDK) to autonomously complete short tasks within each data subproject under the data root (`DATA_ROOT`), then sends the results back.
+`botler-agent` is a general-purpose, lightweight personal agent framework. It receives messages from Telegram / Feishu / WeChat (iLink), completes short tasks inside data subprojects under the data root (`DATA_ROOT`), then sends the result back. An in-process scheduler can fire recurring tasks and push the result to the user.
 
-Key design principles (understand before changing, do not break):
+Non-negotiable design principles (understand before changing):
 
-1. **The framework only defines boundaries, it does not hardcode business logic**: the operable directories (first-level subdirs of `DATA_ROOT`), the toolset (read/write/edit/run + schedule, where run is limited to existing in-project scripts and schedule only writes the fixed externalized `schedules.json`, neither is an arbitrary shell; IM sessions additionally get an IM-only `clear_conversation_context` control), the post-write JSON-validity fallback, and automatic git commit. Business schemas and rules are self-described by each data subproject's root `AGENTS.md`, concatenated into the system prompt at runtime.
-2. **Each message = a brand-new `Agent` instance**, but IM channels inject the most recent user-visible conversation turns as prompt context. The agent still has no internal tool-call / thinking memory, so any "retry/fix" must be a **self-contained instruction** (pointing to the file + location + how to change it), not relying on the previous conversation.
-3. **App / data separation**: this repo (including `.env`) and the `DATA_ROOT` data directory are two separate locations. The data directory contains only the projects being operated on — no source code or secrets.
-4. **Config externalized**: the system prompt, the real `.env`, and `providers.json` (custom model providers) live in `~/.botler-agent/` (overridable via `BOTLER_CONFIG_DIR`), reused across clones / machines. The source-dir `.env` is only a dev fallback.
-5. **Path allowlist is a security boundary**: the agent's tools may only read/write first-level subdirs of `DATA_ROOT`. Do not relax `safePath`, do not add `bash`-class tools to the agent unless explicitly requested and the consequences are understood.
+1. **The framework only defines boundaries, not business logic.** Operable directories are the first-level, non-hidden subdirs of `DATA_ROOT`; the tools are `read / write / edit / run / schedule` plus `retain / recall` memory tools, and the IM-only `clear_conversation_context`. Business schemas and rules are self-described by each subproject's root `AGENTS.md`, selected at routing time and concatenated into the system prompt.
+2. **One persistent session per `(source, conversation_id, project)`.** A message resumes that session instead of creating a fresh agent. The session file name is opaque (`s-<sha256-32>.jsonl`), derived from the canonical key hash; never derive it from a raw conversation id.
+3. **Every inbound message is enqueued at receive time.** `Dispatcher::enqueue` returns a handle immediately; routing, session acquisition, tool execution, validation, and commit all happen on one process-wide worker. There is no per-project or per-channel concurrency: this is the ordering contract.
+4. **A live session is never rotated mid-turn.** Rotation is a 5-step durable WAL (`rotation.rs`): write intent → rename + fsync → update index → append audit journal → delete intent. Recovery runs before any resume; ambiguous states are quarantined, never guessed.
+5. **Freshness beats reuse.** A session is only served when its fingerprint matches: project, prompt fingerprint, provider, model, tool-policy version. The fingerprint is persisted in the session index, so a **cold resume** after restart or LRU eviction is checked too; a missing fingerprint counts as stale. Any mismatch archives the old session and opens a fresh one. A session file that the index does not vouch for is never resumed: it is quarantined (`.unindexed-<ts>.jsonl`) and a fresh session is opened. Never serve a stale prompt, provider, or tool policy.
+6. **Memory is tiered and write-minimized.** Tier 1 personal is the default; tier 2 project-shared and tier 3 user-global require an explicit `tier` argument. Group conversations never read or write tier 3. Only a bounded digest and recall results enter the prompt, never the whole store.
+7. **`PathGuard` (`paths.rs`) is the security boundary.** All file tools resolve through it. Do not relax it: no `realpath` of a new file (it would ENOENT), resolve the deepest existing ancestor and re-join the rest, prefix-match with a separator to block sibling-prefix escapes, and reject symlink escapes. A dangling symlink is rejected too: `symlink_metadata` must not be skipped just because `exists()` is false.
+8. **Validation is syntax-only, with one self-heal retry.** The framework checks that every data JSON file parses; it never validates business semantics. The retry instruction must be self-contained (file, location, fix), because the agent has no memory of the failed turn.
+9. **Config is externalized.** The real `.env`, `providers.json`, `system-prompt.md`, `schedules.json`, `contacts.json`, sessions, and memory live under `~/.botler-agent` (override with `BOTLER_CONFIG_DIR`). The repo `.env` is only a dev fallback. Never commit secrets or point `DATA_ROOT` at this repo.
+
+## Repository layout
+
+```text
+crates/botler/
+  src/
+    main.rs              binary: admin CLI, channel startup, scheduler, retention, WebUI/monitor
+    lib.rs               module tree + tracing init
+    config.rs            two-level .env loader, providers.json, all settings
+    dispatcher.rs        enqueue + serial queue, dedup, validate/commit, task-log writes
+    runner.rs            route -> acquire session -> run turn -> extract reply
+    runtime.rs           AgentRuntime / AgentSession seam + StubRuntime
+    identity.rs          SessionKey, PrincipalKey, MemoryContext/Namespace, opaque names
+    session_registry.rs  hot pool, fingerprint check, acquire/rotate
+    rotation.rs          WAL rotation + crash recovery + audit journal
+    session_index.rs     live/archived index (atomic)
+    retention.rs         session TTL + size-cap sweep, discovery, CLI helpers
+    memory.rs            three-tier store, recall, digest, retain/recall tools
+    prompt.rs            system prompt rendering and routing prompt
+    greeting.rs          greeting short-circuit (zero-cost)
+    paths.rs             PathGuard allowlist (security boundary)
+    fsutil.rs            atomic write, fsync, dirs, time helpers
+    task_log/            v1-shaped TaskLog schema + per-day JSONL store (always compiled)
+    monitor/             health snapshot, Prometheus metrics, 5s sampler (cfg webui)
+    webui/               axum routers, read-only API, config backup/restore, SPA (cfg webui)
+    tools/               read, write, edit, run, schedule, clear, memory, task_context
+    safety/              JSON validation + per-subproject git commit
+    scheduler/           types, store, engine, cron/once, China holidays
+    push/                types, contacts store, deliver with channel fallback
+    channels/            allowlist, image batching, telegram, feishu, wechat/*
+  tests/
+    acceptance.rs        end-to-end scenarios over the real dispatcher
+    parity.rs            table-driven v1 parity fixtures
+    fixtures/            greeting.json, image_batch.json, cron.json, log_query.json
+```
 
 ## Commands
 
-```bash
-npm install            # install dependencies
-npm run init           # initialize ~/.botler-agent/ (.env template + providers.json template + system-prompt.md template)
-npm start              # run: no args starts the persistent channel; a message arg enters CLI mode
-npm start -- "message" # CLI mode: process a single message directly (local debugging)
-npm run restart        # stop + pull latest code (git main) + npm install + restart in background
-npm run restart -- stable  # same, but check out the latest GitHub release tag (falls back to main if none yet)
-npm run typecheck      # tsc --noEmit type check (must pass before committing)
-npm test               # node:test suite (scheduler cron + store)
+The deterministic core builds on stable. The pinned `nightly-2026-08-31` is only for the future pi embedding (`--features pi-sdk`), so use `cargo +stable` explicitly while iterating.
 
-# Process control is also available directly via scripts/botlerctl.sh:
-#   bash scripts/botlerctl.sh {restart|start|stop|status|logs} [main|stable]
-# Implementation: nohup + .botler.pid (gitignored), log to botler.log.
-# IMPORTANT: this script only touches the repo dir — never DATA_ROOT or ~/.botler-agent/.
-# Self-restart triggered *from chat* is NOT supported by the agent's toolset (see Common change scenarios).
+```bash
+cargo +stable build                          # debug build
+cargo +stable build --release --features channels
+cargo +stable build --features webui,channels            # WebUI + health endpoints
+cargo +stable test -p botler --lib           # unit tests
+cargo +stable test -p botler --lib --features webui     # monitor / WebUI unit + HTTP tests
+cargo +stable test -p botler --test acceptance
+cargo +stable test -p botler --test parity
+cargo +stable test -p botler --features channels   # includes channel adapters
+cargo +stable test -p botler --features webui,channels
+cargo +stable fmt --all -- --check
+cargo +stable clippy --all-targets --features channels -- -D warnings
+cargo +stable clippy --all-targets --features webui,channels -- -D warnings
+cargo +stable run -- "had a steamed bun for breakfast"   # one CLI task
+cargo +stable run                                        # server mode (channels + scheduler)
 ```
 
-> Environment variables are in `.env.example`; the real config goes in `~/.botler-agent/.env`. `.env` is gitignored — do not commit real credentials.
+Admin commands (recognized before any task runs, so they never reach the model):
+
+```bash
+botler sessions list
+botler sessions inspect <file>
+botler sessions purge [--older-than-days N] [--max-bytes N] [--all]
+botler memory list [project]
+botler memory delete <id> [project]
+botler memory clear <personal|project|global> [project]
+```
+
+Process control for a local deployment is in `scripts/botlerctl.sh` (`restart|start|build|stop|status|logs`); it only touches the repo directory and `target/`, never `DATA_ROOT` or `~/.botler-agent`. `restart` defaults to the Rust branch (`BOTLER_BRANCH`, default `v2`), not `main` (v1 TypeScript); `restart stable` follows the latest release and falls back to the branch when no tag exists.
 
 ## Architecture and data flow
 
-```
-channel (telegram.ts / feishu.ts)
-   → dispatcher.ts  dispatch(text, {id, source, sessionKey: "im"})
-       ├─ dedup (5-minute window, by id)
-       ├─ sequential queue (Promise chain, serializes writes)
-       └─ runner.ts  runTask(text)
-             ├─ resolveModel() (provider/model resolution + cache)
-             ├─ loadRecentTurns() (shared IM recent visible turns; scheduler / CLI skip)
-             ├─ loadSystemPrompt() (externalized first, fallback to built-in default; injects __DATA_ROOT__ / __PROJECTS__)
-             ├─ new Agent({ systemPrompt, model, tools: fileTools })
-             ├─ agent.prompt(text)
-             ├─ take the body from the last assistant message in state.messages
-             └─ split out markdown image refs (`![](…)`), each validated by safePath
-   → write task: validateState() (all data JSON valid) → commitIfChanged() commits
-   → return `{ text, images }` to the channel (only the WeChat channel sends images; others use text only)
+```text
+channel adapter (telegram / feishu / wechat)
+   |  message
+   v
+Dispatcher::enqueue  (immediate handle; dedup by message id)
+   |
+   v
+single worker  ->  Runner::run
+   |  route: pick a project (or __scheduler__); UNKNOWN asks the user to clarify
+   |  acquire: session registry keyed by (source, conversation_id, project)
+   |           fingerprint mismatch -> archive + fresh session (WAL)
+   |  execute: session turn with the project's tools
+   |  reply:   last assistant text only; images parsed and path-checked
+   v
+Validator (all data JSON parses) -> on failure, one self-contained fix retry
+   v
+Git commit (per independent subproject repo, only if changed)
+   v
+reply to the originating channel (WeChat also sends images)
 
-scheduler (scheduler/engine.ts) → dispatch(schedule.message, {id, source:"scheduler", projectHint})
-   → if entry has a recipient: deliver({text, images}, recipient) pushes the result back
-       → primary channel first, then fallback telegram → feishu → wechat (configured + recorded contacts only)
-```
-
-### Module responsibilities
-
-| File | Responsibility |
-|------|----------------|
-| `src/index.ts` | Entry: positional args → CLI; otherwise start Telegram / Feishu per `.env` |
-| `src/init.ts` | Initialize `~/.botler-agent/` (.env + providers.json + system-prompt.md templates); existing files not overwritten |
-| `src/config.ts` | Two-level `.env` loading (user-level > source-level) + providers.json loading + `CONFIG` construction + `USER_CONFIG_DIR` |
-| `src/dispatcher.ts` | Dedup, sequential queue, validation retry, commit orchestration (**never rejects**) |
-| `src/conversation/store.ts` | Shared `im` session sliding-window store (`~/.botler-agent/conversations/im.json`) + prompt formatting; scheduler / CLI / self-heal do not read or write it |
-| `src/runner.ts` | Build Agent, run task, extract final reply, decide whether it mutated; greeting short-circuit (`greeting.ts`) + image-aware routing |
-| `src/runner/decisions.ts` | Pure routing/reset and turn-recording decisions extracted from `runner.ts` for unit testing |
-| `src/providers.ts` | Build a custom provider config into a pi-ai `Provider` (openai-completions) |
-| `src/prompts/system-prompt.ts` | Built-in generic default prompt + `loadSystemPrompt()` (externalized first + placeholder injection) |
-| `src/tools/paths.ts` | **Security boundary**: `safePath()` allowlist check + `projectOf()` |
-| `src/tools/{read,write,edit,run,schedule}.ts` | Five DATA_ROOT `AgentTool`s; read/write/edit/run checked by `safePath` (run limited to in-project python3/node scripts); `schedule` manages `schedules.json` (fixed file, no path param) |
-| `src/tools/clear-conversation.ts` | IM-only conversation-control `AgentTool`; clears the active task's conversation session via `task-context`, never touches `DATA_ROOT`, and takes no path param |
-| `src/tools/task-context.ts` | Module-level per-task context; injects the message sender for `schedule` and the active conversation session key for `clear_conversation_context` |
-| `src/scheduler/{types,store,engine,cron}.ts` | Schedule config schema + validation/atomic store (`schedules.json`), in-process firing loop (watermark + `nextFireEpoch`), saved-listener so a schedule write wakes the loop immediately |
-| `src/push/{types,contacts,deliver}.ts` | Push types; per-channel known-address store (`contacts.json`); `deliver()` primary-channel send + `telegram → feishu → wechat` fallback |
-| `src/safety/validate.ts` | Post-write check that all data JSON is valid (catches edit breaking syntax), returns a self-contained `fix` instruction |
-| `src/safety/git.ts` | Iterate first-level subdirs of `DATA_ROOT`, commit each independent git repo only if changed (optional push) |
-| `src/channels/allowlist.ts` | Shared sender allowlist helper used by Telegram / Feishu (WeChat has its own owner + extra-sender gate) |
-| `src/channels/{telegram,feishu}.ts` | Channel adapters: grammy long polling / Feishu webhook |
-| `src/channels/wechat/*` | WeChat iLink channel: QR login (`login.ts`), long-poll monitor (`monitor.ts`), media send/upload, context_token persistence (`context.ts`), owner renewal reminder loop (`reminder.ts`), inbound image download + persist (`download.ts`) and per-sender image batching (`image-batch.ts`) |
-
-## Key implementation details (read before changing)
-
-### 1. How to extract the final reply (`runner.ts`)
-
-`agent.prompt()` returns `Promise<void>`; the result is not in the return value. The correct way to get it:
-
-```ts
-const state = agent.state;
-const last = state.messages[state.messages.length - 1];
-// Take only the text block of the last assistant message; do not concatenate all text_delta.
-// (The thinking before a tool call is also a text_delta; concatenating it would mix into the reply.)
+Scheduler -> dispatcher (source = scheduler, id = schedule:<id>:<epoch>)
+   -> optional push via deliver(): primary channel, then telegram/feishu/wechat
 ```
 
-Do not change it to concatenate all deltas. When the LLM fails, the last message is `error`/`aborted` and `content` may be empty — return an error message instead of an empty string.
+## Key implementation details
 
-### 2. Path allowlist (`tools/paths.ts`, security boundary)
+### Sessions and the queue
 
-The allowlist = first-level (non-hidden) subdirs of `DATA_ROOT`, computed dynamically by `computeAllowed()` at module load — **not hardcoded** to specific project names (e.g. notes/vocab). Rules (several historical bugs were fixed here; understand before changing):
+- `identity::SessionKey` hashes length-prefixed parts; two distinct keys can never share a file name. `Dispatcher` owns a single `mpsc` channel and one worker task. Never await a tool or model call outside the worker and then write data, or the ordering contract breaks.
+- `SessionRegistry::acquire` returns a hot handle, a resumed handle, or a fresh one. `rotated` and `fresh` are surfaced so the caller can explain the change. A corrupt/incompatible file is quarantined to `archived/*.corrupt-<ms>.jsonl` and reported once; the process must not crash-loop.
+- `SessionIndex` is the only source of truth for live vs archived locations. It is written atomically. The rotation journal is append-only and idempotent by `rot_id`.
+- `retention.rs` enforces `BOTLER_SESSION_RETENTION_DAYS` and `BOTLER_SESSION_RETENTION_MAX_BYTES` at startup and every 24h. TTL is applied first, then the oldest survivors are removed until the cap holds. `0` disables that dimension. It never touches the index, intents, or journal.
 
-- Relative paths are `resolve`d against `DATA_ROOT`; absolute paths are kept as-is (but still throw if out of bounds).
-- Use `root + sep` prefix matching to avoid `/agent2`, `/agent-bak` slipping in.
-- **Do not** `realpathSync` the target file directly (a new file would cause ENOENT). Instead, `realpath` the "deepest existing ancestor" then concatenate the remaining path back, preventing symlink escapes.
-- Adding a data subproject = just create a directory under `DATA_ROOT`; no change to this file needed.
+### Memory
 
-### 3. Validation and self-healing (`safety/validate.ts` + `dispatcher.ts`)
+- Tiers: 1 personal `(source, principal|conversation, project)`, 2 project `(project)`, 3 user-global `(source, principal)`.
+- `retain` defaults to tier 1; tier 2/3 require the explicit argument. Group contexts are refused tier 3 on both read and write.
+- Prompt injection uses a bounded digest (`BOTLER_MEMORY_DIGEST_MAX_CHARS`); `recall` returns a token-budgeted slice. Never dump the store into the prompt.
+- The admin CLI constructs a synthetic local-owner context; that is the confirmation for a project-wide `clear`.
 
-The framework **does not validate business semantics** (field values, aggregation consistency, etc.) — it only checks "all data JSON is valid JSON". This is the last line of defense against `edit` text replacement breaking JSON syntax (the `write` tool itself guarantees validity). Business rules are guaranteed by each subproject's `AGENTS.md` conventions + the project's own scripts.
+### Tools and safety
 
-Each `runTask` is a brand-new Agent with no internal tool/thinking memory (recent visible turns may be injected as prompt text). On validation failure, the `fix` must be a **self-contained** correction instruction ("read file X, fix the JSON syntax, do not create a new file"). The dispatcher retries at most once; if still failing, it returns an error and does not commit.
+- `run` is not a shell. It executes existing `.py` / `.js` / `.mjs` files inside an allowlisted project, with a fixed interpreter and an argv array (no shell), `cwd` locked to the project, 60s timeout. Both pipes are drained concurrently and only the first 1MB of each is kept, so a noisy script cannot block on a full pipe or exhaust memory. Non-zero exit is returned as text, not an error. `run` reports `mutated` even on failure: a script can write before exiting non-zero, so validation and commit must still run.
+- `schedule` has no path argument; it only writes the configured `schedules.json`, normalizes and caps messages, writes atomically, and keeps a backup. The push `recipient` and the creator `origin` are both injected by task context, never guessed by the model. `origin` (source + principal + conversation kind) is what selects memory identity; the recipient is only the delivery address.
+- `clear_conversation_context` is IM-only and only clears the active session; it takes no path.
+- `write` guarantees valid JSON for `.json` files. `edit` does not, which is why the post-turn validator exists.
+- Commit is per independent git repo under `DATA_ROOT`, only when `git status --porcelain` is non-empty, message `agent: <first 60 chars of the message>`. `GIT_PUSH=1` pushes as a best-effort extra step; push failure is a warning, not a task failure.
 
-### 4. Commit strategy (`safety/git.ts`)
+### Routing and prompt
 
-`commitIfChanged(msg)` iterates each first-level subdir of `DATA_ROOT` and only does `add + commit` for those that are **independent git repos** (have `.git`) and have non-empty `git status --porcelain`. Commit message format: `agent: <user message truncated to first 60 chars>`. When `GIT_PUSH=1`, additionally push (failure is only a warning, not a blocker).
+- Routing is a separate lightweight call over project name + short summary. A single project skips it. `__scheduler__` is a virtual project for scheduling messages.
+- `prompt.rs` renders the externalized `system-prompt.md` if present, otherwise the built-in default. Supported placeholders: `__DATA_ROOT__`, `__PROJECTS__`, `__PROJECT_CONTEXT__`, `__TODAY__`. The rendered system prompt must stay date-free (the date belongs in the per-turn envelope): persistent sessions are reused across days, so a concrete date baked into the prompt would be stale. `__TODAY__` therefore renders an instruction to read the turn envelope, not the date itself.
+- A bare greeting with no images and no project hint short-circuits before routing: deterministic Chinese welcome, zero model cost.
+- The user-facing chat replies stay Chinese; code, comments, logs, and repo docs stay English.
 
-### 5. Config loading (`config.ts`)
+### Channels
 
-Priority: process env vars > `~/.botler-agent/.env` > source `.env` > built-in defaults. In implementation, `parseDotEnv` only fills in when `process.env[key] === undefined`, loading user-level first then source-level, so user-level is never overridden by source-level. `USER_CONFIG_DIR` can only come from the real process env var `BOTLER_CONFIG_DIR` (not from `.env` itself, to avoid a chicken-and-egg situation).
+- Telegram long polling and the Feishu webhook are behind the `channels` feature (`axum`). Sender allowlists are shared helpers; empty means allow all, except WeChat where the account owner is always allowed.
+- The WebUI and health/metrics endpoints are behind a separate `webui` feature (also `axum`); `channels` is not required. `WEBUI_ENABLED=1` serves the SPA on `127.0.0.1:8900` by default and `MONITOR_ENABLED` (default on) serves `/healthz`, `/metrics`, `/healthz/history` on `127.0.0.1:8899`. WebUI enablement is deliberately **not** part of `Config::has_channels()`. Every state-changing write requires `X-Botler-UI: 1`; no CORS headers are emitted. Task-log records are appended only inside the single dispatcher worker, and WebUI handlers hold only read-only handles (`Arc<DispatchStats>` + a store path), never `Arc<Dispatcher>` or `PathGuard`.
+- WebUI parity is **surface-complete but data-degraded**: under `StubRuntime` there is no LLM, so token usage, tool/conversation timelines, system prompt, routing, and model-cache fields are zero/empty (records carry `degraded: true`); the Stats chart and log detail drawer are empty. V8 heap and event-loop-lag metrics are zero; RSS is real only on Linux. WeChat pairing endpoints return an explicit unavailable payload because the `weixin-agent` transport (S-4) is not linked. Never claim these views carry real data.
+- Feishu is fail-closed. `FEISHU_VERIFICATION_TOKEN` is mandatory whenever the app id/secret are set: config load fails fast, and startup refuses to serve a webhook without it. Every event (including `url_verification`) must carry a matching token. When `FEISHU_ENCRYPT_KEY` is configured, plaintext events are rejected and encrypted requests must carry a valid `X-Lark-Signature` (`hex(sha256(timestamp + nonce + encrypt_key + body))`); an invalid or missing signature is `401`.
+- Feishu encryption is AES-128-CBC with `key = md5(encrypt_key)`, IV = first 16 bytes of the ciphertext, PKCS#7 padding. That matches the Feishu spec, not v1's commented AES-256 path; keep the vector test.
+- WeChat app layer (gate, context tokens, batching, reminder, image download/persist) is complete, but the `weixin-agent` transport is spike S-4 and not linked. The channel logs that it cannot receive messages in this build.
+- Inbound WeChat images are held for `WECHAT_IMAGE_BATCH_SECONDS` (default 60, `0` disables) so a late caption joins one task. Persisted files go through `PathGuard` plus an image-extension whitelist. Each buffered image re-arms the flush timer (generation counter), so a burst flushes only after the last image's window expires; an older timer that loses the claim is a no-op.
 
-Custom providers are defined in `~/.botler-agent/providers.json` — the externalized, primary source of truth — with each provider carrying its own `api` (wire protocol: `"openai-completions"` default, or `"anthropic-messages"`), `baseUrl` / `apiKey` / `models`. `loadProvidersFile()` parses it (malformed entries are skipped with a warning); if it is missing or unusable, `buildCustomProviders()` falls back to the legacy `CUSTOM_BASE_URL` / `CUSTOM_API_KEY` env vars + the built-in `CUSTOM_MODELS` list. `runner.ts` registers every resolved custom provider, and `PI_PROVIDER` / `PI_MODEL` select which one is used.
+### Scheduler and push
 
-### 6. System prompt and two-phase routing (`prompts/system-prompt.ts` + `runner.ts`)
+- One of `cron` / `interval` / `at` / `once`; `holidayMode: "workday"` gates cron/interval/at to China legal workdays (skips holidays, includes makeup Saturdays), ignoring cron date fields and honoring only `hour:minute`. `once` is an absolute ISO 8601 instant and bypasses `silentHours`.
+- Saves wake the firing loop immediately. Firing goes through the same global queue with an id that bypasses dedup.
+- A scheduled entry stores two independent identities: `recipient` (where the result is pushed) and `origin` (who created it: source, principal, conversation kind). Memory context is built from `origin`, never from the delivery chat id. A schedule created in a group stays a group context, so tier 3 remains blocked; legacy entries without `origin` keep the old recipient-based behavior.
+- Delivery tries the entry's primary channel first, then `telegram -> feishu -> wechat`, only over configured channels with a recorded contact. WeChat is the only channel that sends images.
 
-`runTask` is split into two phases to avoid the system prompt growing linearly with the number of subprojects:
+## Testing expectations
 
-1. **Routing** (`buildRoutePrompt`): a lightweight LLM call that only gets "project name + first 300 chars of AGENTS.md summary" to decide which subproject the message belongs to; a single project skips routing; undetermined returns `UNKNOWN`, and the dispatcher asks the user to clarify and does not execute.
-2. **Execution** (`loadSystemPrompt(projectName)`): concatenates only the selected subproject's convention doc (`AGENTS.md` > `CLAUDE.md` > `CODEBUDDY.md`, first one found) in full, replacing the `__DATA_ROOT__`/`__PROJECTS__`/`__PROJECT_CONTEXT__`/`__TODAY__` placeholders.
-
-Externalized prompt takes priority (`~/.botler-agent/system-prompt.md`), falling back to the built-in default; re-read on every call, so changes need no restart.
-
-### 7. The run tool (controlled script execution, `tools/run.ts`)
-
-Not an arbitrary shell. Constraints:
-- Can only execute **existing** scripts inside allowlisted projects, with a fixed interpreter per extension (`.py`→python3, `.js/.mjs`→node), eliminating arbitrary execution like `python3 -c`.
-- `execFileSync` passes args as an array, **not through a shell** (no `;`/`&&`/pipe injection).
-- `cwd` is locked to the subproject root of the script, timeout 60s, maxBuffer 1MB.
-- Script failure (non-zero exit) does not throw and interrupt; stdout/stderr are returned as text so the LLM can decide whether to fix and retry.
-
-This is the only relaxation of the "no bash for the agent" red line: the agent can only run scripts the user has placed in the data project (e.g. my-project's build.py), not arbitrary commands. Residual risk: in-project scripts are Turing-complete, so in theory the agent could `write` a new script and then `run` it; the data directory contains no secrets and is self-managed by the user, so this risk is currently accepted.
-
-### 8. Scheduler, the schedule tool, and push delivery (`scheduler/*` + `push/*` + `tools/schedule.ts`)
-
-Scheduled tasks live in `~/.botler-agent/schedules.json` (`schedulesFile`): each entry is one of cron / interval / at / once, plus timezone / message / optional project / retry / silentHours / `holidayMode` / recipient. They are created from chat via the `schedule` tool, from the WebUI, or by hand-editing the file — all the same store, and a save immediately wakes the scheduler loop.
-
-- **`holidayMode: "workday"`** (China legal-workday gating): when set on a cron / interval / at entry, it fires **only on China legal workdays** — skips statutory holidays (法定假日) and **includes 调休 makeup workdays** (补班). The cron's date fields are ignored; only its `hour:minute`(s) matter. `holidayMode: "off"` / absent = normal cron behavior. Cannot be combined with `once`. The calendar is fetched (startup + every 24h) from `BOTLER_HOLIDAY_API_URL` into `BOTLER_HOLIDAYS_FILE`; any outage keeps cached data and degrades to plain Mon–Fri.
-
-- The `schedule` tool is a **narrow, deliberate exception** to the DATA_ROOT allowlist: it takes no file-path parameter, always writes the fixed `schedules.json` through `saveSchedules` (full normalization + 10KB message cap + atomic write + backup), and the push recipient is injected by the framework (task-context), never guessed by the model. `safePath` itself is untouched.
-- `saveSchedules` fires a saved listener (`setSchedulesSavedListener`) that the engine registers with `reloadSchedules` — keeping the dependency store → engine one-way avoids the engine → dispatcher → runner → tools → schedule → engine cycle.
-- The engine fires due entries into `dispatch` (source `scheduler`, id `schedule:<id>:<epoch>` to bypass dedup). If the entry has a `recipient`, the result is pushed via `deliver()`: primary channel first, then fallback `telegram → feishu → wechat`, only over channels that are configured and have a recorded contact address. WeChat pushes strip markdown (same as the reply path) and are the only ones that also send images.
-- **`once` trigger (one-shot)**: a schedule entry may carry `once` — an absolute ISO 8601 datetime (`"2026-08-20T22:00:00+08:00"` or with a `Z`/offset) — instead of `cron`/`interval`/`at`. It fires exactly once at that instant and then becomes inert (`nextFireEpoch` returns `Infinity` after the watermark passes). `silentHours` is intentionally **not** applied to `once` — an explicit, exact instant. `cron.ts` resolves `once` before `compileSchedule()` (which has no `once` case and would otherwise reject the entry).
-- **Routing**: messages about creating/managing schedules route to the virtual project `__scheduler__` (aliases: `scheduler`, or containing the Chinese keywords 定时 / 提醒 / 日程 — matched only AFTER real-project matches so data messages are never stolen). `loadSystemPrompt("__scheduler__")` returns the base prompt plus a scheduling-duties section instead of a data subproject's conventions. The `schedule` tool is in `fileTools`, so it works in any execution context (a single-project setup routes schedule messages to the data project but the tool still works).
-- **WeChat renewal reminders**: the monitor records each allowed sender's `context_token` (+ `contacts.json` address). `wechat/reminder.ts` checks the owner's quiet time against `WECHAT_REMINDER_HOURS` (0 = off, 1-24, default 23) and nudges them via `deliver()` before the 24h window expires; `lastRemindedAt` prevents repeat nudges per quiet stretch. Re-login (`clearAccount`) drops old tokens and contacts.
-
-### 9. WeChat inbound images (vision input)
-
-The WeChat channel can receive images the user sends and feed them to the model as vision input.
-
-- **Download + persist** (`download.ts`): `downloadInboundImage()` fetches the image bytes and sniffs the MIME to pick an extension; `persistInboundImage(img, project)` writes it under `DATA_ROOT/<project>/photos/<date>-<rand>.<ext>` **through `safePath`** (first-level allowlist) plus an image-extension whitelist, so the file can never escape `DATA_ROOT` or be written with a non-image extension. It returns the relative path so the agent can cite/operate on it. The date uses the agent's local `__TODAY__` timezone so filenames match the records.
-- **Batching** (`image-batch.ts` + `monitor.ts`): WeChat delivers a selected photo immediately while the user may still be typing the caption ("选图即发，文字后到"). `ImageBatchCoordinator` holds image-bearing messages for a window (`WECHAT_IMAGE_BATCH_SECONDS` × 1000 ms; `0` disables) so a following text from the same sender joins as ONE task (caption + vision), and multiple photos in the window merge. The coordinator is pure/unit-tested; the monitor owns the flush timer and dispatch. Setting `WECHAT_IMAGE_BATCH_SECONDS=0` dispatches each image immediately.
-- **Image-aware routing** (`runner.ts` + `greeting.ts`): `buildRoutePrompt` gets a `hasImages` flag; a message carrying images is **never** treated as a bare greeting (so the image is not swallowed). If routing cannot resolve a project AND the message had images, `fallbackUnknownReply(hasImages=true)` returns a Chinese hint telling the user to add a short text description (since the model may not be able to read the image). Providers must declare image-input support (see `providers.ts` fix) or images never reach the model.
-
-### 10. Greeting short-circuit + Chinese routing fallback (`greeting.ts`)
-
-- `isGreeting(msg)` strips whitespace/punctuation/symbols/combining marks (incl. full-width spaces and trailing emoji like 👋/❤️) and matches a small Chinese/English greeting set (你好/您好/喂/哈喽/嗨/hi/hello/hey/在吗…). A bare greeting has no subproject to route to.
-- `runner.ts` short-circuits: when there is no `projectHint`, the source is not `scheduler`, there are no inbound images, and `isGreeting` is true, it returns `greetingReply()` **without** calling the routing LLM — a deterministic, zero-cost Chinese welcome that lists available subprojects (`projectCapabilities()`). This keeps greetings free and avoids the confusing English `UNKNOWN` template.
-- `fallbackUnknownReply()` is the Chinese fallback when a (non-greeting) message cannot be routed to any subproject; it lists subprojects and, when `hasImages`, adds the image-specific guidance above. Both functions emit user-facing Chinese chat text (the intentional exception to the English-only rule for code/comments/logs).
+- **Unit tests live with the code** (`#[cfg(test)] mod tests`). Deterministic pieces need tests; time and randomness must be injected or derived from explicit timestamps.
+- **Acceptance** (`tests/acceptance.rs`) exercises the real dispatcher: ordering across projects, channel non-collision, scheduler firing, reset rotation, docs-edit rotation, corrupt resume, hot-session reuse, v1-shaped JSONL task logs. Keep it green.
+- **Parity** (`tests/parity.rs`) runs table-driven fixtures for greeting, image batching, cron/once/workday/silent-hours, and task-log query primitives (`log_query.json`). Add a fixture case rather than a bespoke test when the behavior is pure.
+- **WebUI HTTP tests** live inline in `webui/server.rs` (`#[cfg(feature = "webui")]`): bind `build_router` to `127.0.0.1:0` with `tokio::spawn(axum::serve(...))` and drive it with the existing `reqwest` dependency. No `tower` dev-dep. Cover status codes, `X-Botler-UI` gating, body limits, and v1 response shapes.
+- **Property tests** cover the path boundary and hostile identifiers (`proptest`), including traversal, sibling prefixes, and symlink escapes.
+- `npm run typecheck` and the v1 `node:test` suites do not cover v2. Run the cargo commands above before committing.
 
 ## Conventions
 
-- **Language**: Code (comments, UI text, identifiers), repo docs, config files (`.env`, `.env.example`, `package.json`, etc.), and runtime log/console strings are all in English. The agent-facing system prompt (`src/prompts/system-prompt.ts`) is the one deliberate exception and stays in Chinese so the agent keeps operating in Chinese with the user. Any Chinese that appears in code, config, or log/console strings must be translated into English; do not introduce new Chinese there. Identifiers are in English. **Exception for user-facing chat replies**: the framework's fixed conversational replies to the user (e.g. the greeting / routing-failure templates in `src/greeting.ts`) may be written in the user's language (Chinese) to match the agent's Chinese interaction; only code, comments, and log/console strings stay English.
-- **TypeScript**: `strict: true`, `verbatimModuleSyntax: false`, `moduleResolution: Bundler`, `allowImportingTsExtensions` (imports use the `.ts` suffix, e.g. `import { CONFIG } from "./config.ts"`).
-- **Modules**: `"type": "module"` (ESM), runs directly via `tsx` with no build artifacts (`noEmit`).
-- **Error handling**: channel entry points and `dispatch` always catch exceptions and convert them to readable text — never let a single message crash the whole process.
-- **Dependency discipline**: keep dependencies minimal. Core deps are only `pi-agent-core`, `pi-ai`, `grammy`, `https-proxy-agent`; do not introduce new deps for trivial things (follow YAGNI).
-- **Before committing**: `npm run typecheck` must pass.
+- **Language**: code, comments, identifiers, logs, and repo docs are English. User-facing chat text (system prompt and the fixed greeting/routing-failure replies) is Chinese, matching the user. Do not introduce Chinese into code or logs beyond those reply constants.
+- **Rust**: edition 2021, `rust-version = 1.90`, stable-compatible core. Keep the `AgentRuntime` seam small; pi types must not leak into the deterministic core.
+- **Dependencies**: minimal. Adding a crate needs a reason; prefer std/`tokio`/`serde`/existing crates. `proptest` and `tempfile` are dev-only.
+- **License**: the workspace is `AGPL-3.0-only`, matching the repository `LICENSE` and v1 `package.json`. Do not declare a different license in `Cargo.toml` or a crate manifest.
+- **Errors**: channel entry points, the dispatcher, and the scheduler loop must convert failures into readable text and keep running. A single bad message must never kill the process.
+- **Time**: sessions, retention, scheduler, and tests use epoch milliseconds; do not call `SystemTime::now()` deep in pure logic without an injectable seam.
+- **No comments that restate the code.** Comment only hidden constraints and invariants (why the deepest-ancestor check exists, why a fingerprint excludes `__TODAY__`, why a rotation step is ordered).
 
 ## Common change scenarios
 
-- **Add a data subproject**: create a directory under `DATA_ROOT` and put an `AGENTS.md` describing its data file structure and operating rules (the agent reads it first). Allowlist, validation, and commits are all covered automatically — **no framework source change needed**.
-- **Add a model/provider**: add or edit a provider block in `~/.botler-agent/providers.json` (`api` / `baseUrl` / `apiKey` / `models`), then pick it via `PI_PROVIDER` / `PI_MODEL` in `.env` and restart — **no framework source change needed**. `providers.ts` already generically supports both openai-completions and anthropic-messages gateways.
-- **Add a channel**: add an adapter under `channels/`, reuse `dispatch(text, { id, source })`, and start it from `index.ts` via the `.env` switch.
-- **Add a scheduled task**: just tell the agent "remind me every morning at 8am…" in any channel — it uses the `schedule` tool to write `schedules.json` and reports the next fire time. To have the result pushed back, the entry carries a `recipient` (auto-filled from the sender); you can edit `schedules.json` or the WebUI directly. **No framework source change needed.**
+- **Add a data subproject**: create a directory under `DATA_ROOT` with an `AGENTS.md`. Allowlist, routing, validation, and commits pick it up automatically; no source change.
+- **Add a model/provider**: edit `~/.botler-agent/providers.json` and select with `PI_PROVIDER` / `PI_MODEL`. The core does not need a change; the pi bridge does (spike S-1).
+- **Add a tool**: implement `tools::Tool`, resolve every path through `PathGuard`, set `mutated` honestly, and register it in `runner.rs`. If it is IM-only, gate it there.
+- **Change rotation**: update the plan, the WAL steps, and the kill-point tests together. Any new step must be recoverable from the intent file alone.
+- **Add a channel**: implement the adapter against `Dispatcher` + `PushService`, add an allowlist, and gate it behind a feature or an env switch.
+- **Add a WebUI endpoint**: keep the handler read-only against `AppState` (`MonitorState`), require `X-Botler-UI: 1` on writes, preserve the v1 JSON shape so the SPA needs no edit, and add an HTTP test. Never enqueue work or write task logs from a handler.
 
-## Things not to do (red lines)
+## Red lines
 
-- Do not relax the `safePath` allowlist or add arbitrary `bash`/shell command tools to the agent (the `run`, `schedule`, and IM-only `clear_conversation_context` tools are the only exceptions: `run` only executes existing python3/node scripts inside allowlisted projects, no shell, args passed directly, 60s timeout; `schedule` only writes the fixed `schedules.json`, no file-path parameter; `clear_conversation_context` only clears the active IM session, no file-path parameter).
-- Do not hardcode secrets, paths, or model credentials into source code (always go through `.env`).
-- Do not break "app / data separation": do not put app source code / `.env` into `DATA_ROOT`.
-- Do not change it to concatenate all `text_delta` as the reply.
-- Do not hardcode any specific subproject's business schema in the framework (that belongs in the data project's `AGENTS.md`).
+- Do not relax `PathGuard` or add a general shell/`bash` tool. `run`, `schedule`, and `clear_conversation_context` are the only deliberate exceptions, each with no arbitrary command or path surface.
+- Do not rotate, archive, or replace a session while a turn holds it. Use the WAL path after the turn.
+- Do not enqueue work outside the single dispatcher worker in a way that permits concurrent writes to the same project.
+- Do not make memory tier 2/3 the default, and do not expose tier 3 to group conversations.
+- Do not validate business semantics in the framework; that belongs to each project's `AGENTS.md` and scripts.
+- Do not concatenate all text deltas as the reply; take the last assistant message's text blocks only.
+- Do not commit secrets, real `.env` files, or source code into `DATA_ROOT`; app and data stay separate.
+- Do not claim the pi runtime, WeChat transport, or Docker image works while S-1/S-4/S-5 are open. The WebUI is ported, but do not claim its token/tool/conversation views, WeChat pairing, or monitor lag/heap metrics carry real data while those spikes are open.

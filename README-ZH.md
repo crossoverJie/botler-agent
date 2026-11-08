@@ -1,5 +1,7 @@
 # botler-agent
 
+> **注意：本文档描述的是 v1 `main` 分支（TypeScript 版）。** 本仓库的 `v2` 分支是 Rust 重写版，构建命令、模块结构与功能状态请以 [`README.md`](README.md) 和 [`AGENTS.md`](AGENTS.md) 为准。下文提到的 npm 脚本、`src/` 目录树、Docker 镜像与安装脚本均只适用于 v1。
+
 <p align="center">
   <img src="docs/images/IMG_0592.PNG" alt="botler-agent 运行截图 1" width="32%">
   <img src="docs/images/IMG_0593.PNG" alt="botler-agent 运行截图 2" width="32%">
@@ -330,6 +332,8 @@ Schema——`cron` / `interval` / `at` / `once` 四选一：
 
 设 `WEBUI_ENABLED=1` 启动本地任务日志 WebUI（仅绑定 `127.0.0.1`，端口 `WEBUI_PORT`，默认 8900）。它读取 `task-logs/` 下每日 JSONL 日志，含监控视图（数据与 `/metrics` 一致）。唯一的写操作是删除任务日志。
 
+> **v2（Rust）说明**：WebUI 已移植，但需要用 `cargo +stable build --features webui,channels` 构建（`scripts/botlerctl.sh` 默认已带上 `webui`）。界面、路由、只读 API、配置编辑/备份、定时任务视图与监控端点都已可用，且任务日志保持 v1 的每日 JSONL 格式，迁移期两个分支可读同一目录。但当前二进制跑在 `StubRuntime` 上（S-1/S-5 未解决），日志里没有真实 token 用量、工具调用与对话时间线，Token 统计图和日志详情会是空的；微信配对接口因 S-4 未链接会返回明确的不可用提示。V8 heap / event-loop lag 指标为 0。详情见 [`README.md`](README.md#webui)。
+
 <p align="center">
   <img src="docs/images/webui-tasklog.png" alt="botler-agent WebUI 任务日志界面" width="85%">
 </p>
@@ -337,6 +341,8 @@ Schema——`cron` / `interval` / `at` / `once` 四选一：
 ## 监控
 
 默认启动一个本地健康/指标服务，监听 `127.0.0.1:MONITOR_PORT`（默认 8899，避开 3000=飞书 / 8900=webui），暴露 `/healthz`（JSON）、`/metrics`（Prometheus 文本）、`/healthz/history`（趋势采样）。设 `MONITOR_ENABLED=0` 只关闭独立 scrape 端口；WebUI 监控视图由 WebUI 进程自身采样，不受影响。
+
+> **v2（Rust）说明**：独立 8899 端口与 `/healthz`、`/metrics`、`/healthz/history` 均已移植，和 8900 共用同一个 5 秒采样器。但 Node 专有指标（V8 heap、event-loop lag）在 Rust 里没有对应物，一律返回 0；RSS 仅在 Linux 上是真实值。不得把这些字段当作真实数据解读。
 
 ## 安全边界
 

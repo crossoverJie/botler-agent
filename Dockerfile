@@ -1,32 +1,34 @@
-# botler-agent container.
-# Runs the persistent channel via tsx (no build step); tsx is a runtime dependency.
+# botler-agent v2 (Rust) container.
+# Multi-stage build: the release binary is a single native artifact, so the
+# runtime image carries no toolchain, no Node, and no source tree.
 #
-# Extra system packages (kept minimal):
-#   git        auto-commit of each DATA_ROOT subproject (safety/git.ts)
-#   tzdata     TZ-aware scheduler + __TODAY__ date
-#   python3    the `run` tool executes in-project python3 scripts (.py)
-#   ca-certificates  outbound TLS to model providers / channels
+# System packages (kept minimal):
+#   git              auto-commit of each DATA_ROOT subproject (safety/git.rs)
+#   tzdata           TZ-aware scheduler + __TODAY__ date
+#   python3          the `run` tool executes in-project python3 scripts
+#   nodejs           the `run` tool also supports .js / .mjs scripts
+#   ca-certificates  outbound TLS to model gateways / channels
+#   wget             HEALTHCHECK against the loopback monitor port
 
-FROM node:20-alpine
+FROM rust:1.95-bookworm AS builder
+WORKDIR /build
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates ./crates
+# Keep the deterministic core on stable; pi-sdk is appended via BOTLER_FEATURES
+# only after the license/compliance gate is cleared (and then needs nightly).
+ARG BOTLER_FEATURES=webui,channels
+RUN cargo +stable build --release --locked --features "$BOTLER_FEATURES" -p botler
 
-RUN apk add --no-cache git tzdata python3 ca-certificates
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git tzdata python3 nodejs ca-certificates wget \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /build/target/release/botler /usr/local/bin/botler
 
 WORKDIR /app
-
-COPY package.json package-lock.json ./
-# --ignore-scripts matches the repo CI (ci.yml) and skips native postinstall
-# binaries (e.g. esbuild) that crash under multi-arch QEMU emulation.
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
-
-COPY bin ./bin
-COPY src ./src
-COPY tsconfig.json .env.example ./
-
-# Image-level defaults so a bare `docker run` (or the NAS Docker UI) works out of the
-# box. BOTLER_CONFIG_DIR / DATA_ROOT are container-location concerns; WEBUI_HOST is
-# 0.0.0.0 so the UI is reachable from the host; the three switches are ON by default.
-# These ENV values take precedence over the mounted /config/.env — override them at
-# container creation (e.g. `-e WEBUI_ENABLED=0`), not inside /config/.env.
+# Image-level defaults so a bare `docker run` (or a NAS Docker UI) works out of
+# the box. Override at container creation (-e WEBUI_ENABLED=0), not in /config/.env.
 ENV BOTLER_CONFIG_DIR=/config \
     DATA_ROOT=/data \
     WEBUI_HOST=0.0.0.0 \
@@ -36,9 +38,8 @@ ENV BOTLER_CONFIG_DIR=/config \
 
 VOLUME ["/config", "/data"]
 
-# Liveness: the monitor's /healthz (bound 127.0.0.1 inside the container). Requires
-# MONITOR_ENABLED to stay on (default). 
+# Liveness: the standalone monitor's /healthz (loopback inside the container).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -qO- http://127.0.0.1:8899/healthz >/dev/null 2>&1 || exit 1
 
-ENTRYPOINT ["node", "bin/botler.mjs"]
+ENTRYPOINT ["/usr/local/bin/botler"]

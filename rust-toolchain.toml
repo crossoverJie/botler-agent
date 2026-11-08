@@ -1,0 +1,7 @@
+[toolchain]
+# pi_agent_rust pins this nightly (Rust >= 1.95) and uses nightly-only features.
+# Build the core crate on stable with `cargo +stable test` while the pinned
+# toolchain is unavailable; `--features pi-sdk` requires the nightly below.
+channel = "nightly-2026-08-31"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
