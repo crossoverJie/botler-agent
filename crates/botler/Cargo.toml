@@ -23,6 +23,8 @@ default = []
 pi-sdk = []
 # Starts the network channels (Telegram long poll + Feishu webhook).
 channels = ["dep:axum"]
+# Serves the local WebUI and health/metrics endpoints (no IM transports).
+webui = ["dep:axum"]
 
 [dependencies]
 aes = "0.8"
@@ -35,7 +37,9 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = { version = "0.10", features = ["serde"] }
 hex = "0.4"
 md-5 = "0.10"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# `socks` enables TG_PROXY values like socks5://127.0.0.1:1086 (the v1 proxy
+# setting); no new crate is introduced, only this reqwest feature flag.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

@@ -1,0 +1,1570 @@
+<!-- Source: src/webui/index.html on the v1 main branch. Served verbatim by the Rust WebUI. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>botler-agent · Console</title>
+<style>
+  :root { --bg:#f6f8fb; --panel:#ffffff; --panel2:#f8fafc; --line:#e7ecf3; --fg:#1e293b; --ink:#1e293b; --muted:#64748b; --accent:#6366f1; --brand:#6366f1; --brand-12:rgba(99,102,241,.12); --radius:14px; --shadow:0 1px 2px rgba(16,24,40,.04),0 6px 20px rgba(16,24,40,.06); --ok:#16a34a; --warn:#d97706; --err:#dc2626; --dup:#94a3b8; --ok-bg:#dcfce7; --ok-fg:#166534; --warn-bg:#fef3c7; --warn-fg:#92400e; --err-bg:#fee2e2; --err-fg:#991b1b; --brand-bg:#e0e7ff; --brand-fg:#3730a3; --dup-bg:#f1f5f9; --dup-fg:#475569; --chart-1:#6366f1; --chart-2:#16a34a; --chart-3:#ea580c; --chart-4:#d97706; --chart-5:#db2777; --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Roboto,Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased; }
+  a { color:var(--accent); cursor:pointer; text-decoration:none; transition:color .15s ease; }
+  a:hover { text-decoration:underline; }
+  :focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  #app { max-width:1180px; margin:0 auto; padding:20px 20px 48px; }
+  .topbar { display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:6px 4px 18px; }
+  .brand { font-size:18px; font-weight:700; letter-spacing:.3px; color:var(--fg); }
+  .host { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .view-switch { display:inline-flex; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel); box-shadow:var(--shadow); }
+  .view-btn { border:none; background:transparent; padding:7px 16px; cursor:pointer; color:var(--muted); font-size:14px; transition:all .15s ease; }
+  .view-btn:hover { color:var(--fg); }
+  .view-btn.active { background:var(--brand); color:#fff; }
+  .main { flex:1 1 auto; overflow:auto; }
+  .wrap { padding:0 0 16px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:18px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow); transition:all .15s ease; }
+  .card:hover { border-color:var(--brand); box-shadow:0 0 0 3px var(--brand-12),var(--shadow); }
+  .card .k { color:var(--muted); font-size:12px; }
+  .card .v { font-size:24px; font-weight:700; margin-top:4px; font-variant-numeric:tabular-nums; }
+  .filters { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:14px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:12px; box-shadow:var(--shadow); }
+  .filters label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+  .filters input, .filters select { background:#fff; border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:6px 8px; font-size:13px; transition:all .15s ease; }
+  .filters input:focus, .filters select:focus { border-color:var(--brand); outline:none; box-shadow:0 0 0 3px var(--brand-12); }
+  .filters button { background:var(--accent); border:none; color:#fff; border-radius:8px; padding:7px 14px; cursor:pointer; font-size:13px; font-weight:600; transition:all .15s ease; }
+  .filters button:hover { filter:brightness(1.05); }
+  .filters button.ghost { background:#fff; border:1px solid var(--line); color:var(--fg); }
+  .filters button.ghost:hover { border-color:var(--brand); color:var(--brand); filter:none; }
+  .pager { display:flex; gap:8px; align-items:center; margin:12px 0; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:12px; }
+  td { font-variant-numeric:tabular-nums; }
+  tr.row { cursor:pointer; transition:background .15s ease; }
+  tr.row:hover { background:var(--panel2); }
+  .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+  .b-success { background:var(--ok-bg); color:var(--ok-fg); }
+  .b-auto-fixed { background:var(--brand-bg); color:var(--brand-fg); }
+  .b-validation-failed { background:var(--warn-bg); color:var(--warn-fg); }
+  .b-error { background:var(--err-bg); color:var(--err-fg); }
+  .b-duplicate { background:var(--dup-bg); color:var(--dup-fg); }
+  .b-unknown-project { background:var(--dup-bg); color:var(--dup-fg); }
+  .detail { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:16px; margin-top:14px; box-shadow:var(--shadow); }
+  .detail h2 { margin:0 0 8px; font-size:15px; }
+  .back-link { display:inline-flex; align-items:center; color:var(--muted); text-decoration:none; font-size:13px; height:32px; padding:0 12px; border:1px solid var(--line); border-radius:9px; background:var(--panel); transition:all .15s ease; white-space:nowrap; }
+  .back-link:hover { color:var(--brand); border-color:var(--brand); text-decoration:none; }
+  .kv { display:grid; grid-template-columns:120px 1fr; gap:6px 10px; margin-bottom:12px; }
+  .kv .k { color:var(--muted); }
+  .kv div { font-variant-numeric:tabular-nums; }
+  pre { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px; overflow:auto; max-height:340px; margin:6px 0; font-size:12.5px; white-space:pre-wrap; word-break:break-word; }
+  .timeline { border-left:2px solid var(--line); margin-left:6px; padding-left:12px; }
+  .tl-item { margin:10px 0; }
+  .tl-role { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .tl-role.assistant { color:var(--brand); }
+  .tl-role.toolResult { color:var(--warn); }
+  .tl-role.user { color:var(--ok); }
+  .think { color:var(--muted); font-style:italic; }
+  .err { color:var(--err); }
+  details { margin:6px 0; }
+  summary { cursor:pointer; color:var(--muted); font-size:12px; }
+  .usage-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:10px; margin:8px 0; }
+  .usage-grid .u { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  .usage-grid .u .k { color:var(--muted); font-size:11px; }
+  .usage-grid .u .v { font-size:16px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .token-bar { display:flex; flex-wrap:wrap; gap:18px; align-items:center; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin:10px 0; font-size:13px; box-shadow:var(--shadow); }
+  .token-bar .k { color:var(--muted); }
+  .token-bar b { font-size:15px; margin-left:4px; font-variant-numeric:tabular-nums; }
+  .token-bar .hint { color:var(--muted); font-size:12px; }
+  .section-title { font-size:12px; color:var(--muted); margin:16px 0 6px; text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+  .disk table th, .disk table td { font-size:13px; }
+  .btn { background:var(--accent); border:none; color:#fff; border-radius:9px; padding:7px 14px; cursor:pointer; font-size:13px; font-weight:600; transition:all .15s ease; }
+  .btn:hover { filter:brightness(1.05); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .btn.danger { background:var(--err); }
+  .btn.ghost { background:#fff; border:1px solid var(--line); color:var(--fg); }
+  .btn.ghost:hover { border-color:var(--brand); color:var(--brand); filter:none; }
+  .muted { color:var(--muted); }
+  .row-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--line); padding:10px 16px; border-radius:8px; box-shadow:var(--shadow); z-index:50; color:var(--fg); }
+  .modal-bg { position:fixed; inset:0; background:rgba(15,23,42,.35); display:flex; align-items:center; justify-content:center; z-index:40; }
+  .modal { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; max-width:560px; width:92%; max-height:90vh; overflow:auto; box-shadow:var(--shadow); }
+  .modal h3 { margin-top:0; }
+  .modal .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:16px; }
+  input[type=checkbox] { accent-color:var(--brand); }
+
+  /* Config view */
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:16px; margin-bottom:16px; box-shadow:var(--shadow); }
+  .panel h2 { margin:0 0 4px; font-size:15px; }
+  .panel .hint { color:var(--muted); font-size:12px; margin-bottom:12px; }
+  .cfg-form { display:grid; grid-template-columns:220px 1fr; gap:14px; }
+  .cfg-group { margin-bottom:18px; }
+  .cfg-group > .gtitle { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--brand); margin:8px 0; border-bottom:1px solid var(--line); padding-bottom:4px; }
+  .field { display:grid; grid-template-columns:200px 1fr auto; gap:10px; align-items:start; padding:8px 0; border-bottom:1px solid var(--line); }
+  .field .flabel { font-size:13px; }
+  .field .fdesc { color:var(--muted); font-size:11px; margin-top:2px; }
+  .field input, .field select, .field textarea { background:#fff; border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:6px 8px; font-size:13px; width:100%; transition:all .15s ease; }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color:var(--brand); outline:none; box-shadow:0 0 0 3px var(--brand-12); }
+  .field input[type=checkbox] { width:auto; }
+  .field .verr { color:var(--err); font-size:11px; }
+  .banner { background:var(--warn-bg); border:1px solid var(--warn); color:var(--warn-fg); border-radius:8px; padding:10px 14px; margin-bottom:14px; font-size:13px; display:none; }
+  textarea.code { font-family:var(--font-mono); min-height:340px; width:100%; background:var(--panel2); border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:10px; font-size:12.5px; line-height:1.5; }
+  /* One grid for the whole list so columns line up across rows. Rows are display:contents so their
+     cells become grid items of .sched-list; the bottom border lives on the cells, which stretch to
+     the row height, so per-cell borders read as a single row line. */
+  .sched-list { display:grid; grid-template-columns:minmax(150px,220px) 160px minmax(160px,1fr) 165px 190px auto; column-gap:12px; }
+  .sched-row { display:contents; }
+  /* Cells stretch (default) so their borders line up, but their content stays at the top: a tall
+     cell must never push Next/Last/id down to the row's vertical middle. */
+  .sched-row > * { min-width:0; padding:9px 0; border-bottom:1px solid var(--line); }
+  /* Top-align the flex cells that would otherwise center in the stretched box (the +3px nudge puts
+     the checkbox back on the first line's optical centre). */
+  .sched-id { display:flex; align-items:flex-start; gap:6px; }
+  .sched-id input { margin-top:3px; }
+  .sched-row .row-actions { align-items:flex-start; align-content:flex-start; }
+  /* Cap the message so one long task can't balloon the row height. */
+  .sched-msg { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden; }
+  .sched-id .sid { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sched-summary { font-size:12px; color:var(--muted); }
+  .sched-when { font-size:12px; }
+  /* Group headings and empty states are grid items of .sched-list (rows are display:contents), so
+     they must span every column. */
+  .sched-list > .section-title, .sched-list > .sched-empty { grid-column:1/-1; }
+  /* Lifecycle states that the "Next" column shows in place of a fire time. */
+  .b-paused { background:var(--dup-bg); color:var(--dup-fg); }
+  .b-missed { background:var(--warn-bg); color:var(--warn-fg); }
+  .eye { background:#fff; border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:4px 8px; cursor:pointer; font-size:12px; }
+
+  /* Chart wrappers */
+  #s-chart, #s-table, #m-chart-mem, #m-chart-queue, #m-chart-lag { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:14px; box-shadow:var(--shadow); }
+  #s-chart, #s-table { margin-top:14px; }
+  #m-chart-mem, #m-chart-queue, #m-chart-lag { margin-bottom:14px; }
+
+  /* Responsive */
+  @media (max-width:760px){
+    .view-switch { flex:1 1 100%; }
+    .cards { grid-template-columns:repeat(2,1fr); }
+    .cfg-form, .field { grid-template-columns:1fr; }
+    /* Narrow screens: stack each row into its own block (a row is display:contents, so it needs a
+       real box again to carry the separator). */
+    .sched-list { grid-template-columns:1fr; }
+    .sched-row { display:block; padding:8px 0; border-bottom:1px solid var(--line); }
+    .sched-row > * { padding:2px 0; border-bottom:none; }
+    .modal { width:96%; padding:16px; }
+  }
+  @media (prefers-reduced-motion:reduce){ * { transition:none !important; animation:none !important; } }
+
+  /* Detail drawer */
+  .drawer-backdrop {
+    position:fixed; inset:0; background:rgba(15,23,42,.35);
+    opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:40;
+  }
+  .drawer-backdrop.show { opacity:1; pointer-events:auto; }
+  .drawer {
+    position:fixed; top:0; right:0; height:100%;
+    width:min(720px,94vw);
+    background:var(--panel); box-shadow:-8px 0 30px rgba(16,24,40,.16);
+    transform:translateX(100%); transition:transform .22s ease; z-index:50;
+    display:flex; flex-direction:column;
+  }
+  .drawer.show { transform:translateX(0); }
+  .drawer-head {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 18px; border-bottom:1px solid var(--line);
+  }
+  .drawer-title { font-weight:700; }
+  .drawer-close {
+    border:none; background:transparent; font-size:24px; line-height:1;
+    cursor:pointer; color:var(--muted); border-radius:6px; padding:0 6px; transition:all .15s ease;
+  }
+  .drawer-close:hover { color:var(--fg); }
+  .drawer-body { padding:18px; overflow-y:auto; overflow-x:auto; min-width:0; min-height:0; }
+  .drawer-body .detail { border:none; box-shadow:none; margin:0; padding:0; }
+  .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .table-scroll table { width:auto; min-width:100%; white-space:nowrap; }
+  /* Long text columns (e.g. a run's reply) wrap instead of stretching the table into a scroll. */
+  .table-scroll.wrap table { width:100%; white-space:normal; }
+  .table-scroll.wrap td { max-width:340px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <div class="brand">botler-agent</div>
+    <span class="host" id="host"></span>
+    <div class="view-switch" role="tablist">
+      <button type="button" class="view-btn active" data-view="logs-view">Task logs</button>
+      <button type="button" class="view-btn" data-view="schedules-view">Schedules</button>
+      <button type="button" class="view-btn" data-view="stats-view">Stats</button>
+      <button type="button" class="view-btn" data-view="monitor-view">Monitor</button>
+      <button type="button" class="view-btn" data-view="config-view">Config</button>
+    </div>
+  </div>
+  <div class="main">
+
+    <!-- ============ LOGS VIEW ============ -->
+    <div id="logs-view" class="wrap">
+      <div class="cards" id="cards"></div>
+      <div class="filters">
+        <label>From (date)<input type="date" id="f-from" /></label>
+        <label>To (date)<input type="date" id="f-to" /></label>
+        <label>Project<select id="f-project"><option value="">All</option></select></label>
+        <label>Channel<select id="f-source"><option value="">All</option></select></label>
+        <label>Keyword<input type="text" id="f-q" placeholder="user message / reply / project" /></label>
+        <button id="f-search">Filter</button>
+        <button class="ghost" id="f-reset">Reset</button>
+      </div>
+      <div id="list"></div>
+      <div class="pager" id="pager"></div>
+      <div class="disk" id="disk">
+        <div class="section-title">Disk usage & cleanup</div>
+        <div id="disk-summary"></div>
+        <div id="disk-files"></div>
+      </div>
+    </div>
+
+    <!-- ============ SCHEDULES VIEW ============ -->
+    <div id="schedules-view" class="wrap" style="display:none">
+      <div class="cards" id="sched-cards"></div>
+      <div class="muted" style="margin:0 0 12px;font-size:12px">History is retained as long as task logs are kept.</div>
+      <div class="row-actions" style="margin-bottom:10px">
+        <div class="view-switch" id="sched-filter">
+          <button type="button" class="view-btn active" data-filter="active">Active</button>
+          <button type="button" class="view-btn" data-filter="past">Past</button>
+          <button type="button" class="view-btn" data-filter="all">All</button>
+        </div>
+        <button class="btn" id="sched-add">+ Add</button>
+        <button class="btn ghost" id="sched-reload">Refresh</button>
+        <button class="btn danger" id="sched-clear-past">Clear past</button>
+      </div>
+      <div id="sched-list" class="sched-list"></div>
+    </div>
+
+    <!-- ============ STATS VIEW ============ -->
+    <div id="stats-view" class="wrap" style="display:none">
+      <div class="filters">
+        <label>Granularity<select id="s-gran"><option value="hour">Hour</option><option value="day" selected>Day</option><option value="week">Week</option></select></label>
+        <label>Group<select id="s-group"><option value="">None</option><option value="project">Project</option><option value="source">Channel</option></select></label>
+        <label>Metric<select id="s-field"><option value="total" selected>total</option><option value="input">input</option><option value="output">output</option><option value="cacheRead">Cache read</option><option value="cacheWrite">Cache write</option></select></label>
+        <label>From (date)<input type="date" id="s-from" /></label>
+        <label>To (date)<input type="date" id="s-to" /></label>
+        <button id="s-go">Stats</button>
+      </div>
+      <div class="cards" id="s-cards"></div>
+      <div id="s-chart"></div>
+      <div id="s-table"></div>
+    </div>
+
+    <!-- ============ CONFIG VIEW ============ -->
+    <div id="config-view" class="wrap" style="display:none">
+      <div class="panel">
+        <h2>System prompt</h2>
+        <div class="hint">Takes effect immediately after saving (reloaded on the next task). Supports __DATA_ROOT__ / __PROJECT_CONTEXT__ / __TODAY__ placeholders.</div>
+        <textarea class="code" id="sp-text"></textarea>
+        <div class="row-actions" style="margin-top:10px">
+          <button class="btn" id="sp-save">Save</button>
+          <span class="muted" id="sp-count"></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>WeChat channel status</h2>
+        <div class="hint">Pair (or re-pair) the WeChat account from the browser — the running process picks up the new login without a restart. Also shows the 24h session-window reminder state (threshold from WECHAT_REMINDER_HOURS).</div>
+        <div class="row-actions" style="margin-bottom:10px">
+          <button class="btn" id="wx-pair">Pair</button>
+          <button class="btn ghost" id="wx-refresh">Refresh</button>
+        </div>
+        <div id="wechat-status"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Backup & rollback</h2>
+        <div class="hint">Auto-backed up to ~/.botler-agent/.backups/ before each write (keeps the last 10). Restoring .env requires a restart; system prompt / schedules take effect immediately.</div>
+        <div id="backup-list"></div>
+      </div>
+    </div>
+
+    <!-- ============ MONITOR VIEW ============ -->
+    <div id="monitor-view" class="wrap" style="display:none">
+      <div class="cards" id="m-cards"></div>
+      <div class="section-title">Memory</div>
+      <div id="m-chart-mem"></div>
+      <div class="section-title">Queue / in-flight</div>
+      <div id="m-chart-queue"></div>
+      <div class="section-title">Event-loop lag</div>
+      <div id="m-chart-lag"></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="drawer-backdrop" id="drawer-bg"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-head">
+    <div class="drawer-title" id="drawer-title">Task detail</div>
+    <button type="button" class="drawer-close" id="drawer-close" aria-label="Close">×</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</div>
+
+<div id="toast-host"></div>
+
+<script>
+const API = "";
+function fmtBytes(n){ if(n<1024) return n+" B"; const u=["KB","MB","GB","TB"]; let i=-1; do{ n/=1024; i++; }while(n>=1024&&i<u.length-1); return n.toFixed(1)+" "+u[i]; }
+function fmtTime(ms){ return new Date(ms).toLocaleString(); }
+function fmtDur(ms){ if(ms<1000) return ms+" ms"; return (ms/1000).toFixed(1)+" s"; }
+function fmtDurHuman(ms){
+  if(!Number.isFinite(ms) || ms<0) return "—";
+  const s = Math.floor(ms/1000);
+  const d = Math.floor(s/86400), h = Math.floor((s%86400)/3600), m = Math.floor((s%3600)/60);
+  if(d>0) return `${d} d ${h} h`;
+  if(h>0) return `${h} h ${m} m`;
+  return `${Math.max(m,1)} m`;
+}
+function fmtN(n){ return (n??0).toLocaleString(); }
+// Fixed-width date-time for the schedule table columns (full precision is kept in the title attr).
+function fmtCompactTime(ms){
+  const d = new Date(ms);
+  const p = n=>String(n).padStart(2,"0");
+  return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function estTokens(s){ const cjk=(s.match(/[\u3400-\u9fff]/g)||[]).length; const other=s.length-cjk; return Math.ceil(cjk+other/4); }
+function esc(s){ return String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function toast(msg){ const t=document.createElement("div"); t.className="toast"; t.textContent=msg; document.getElementById("toast-host").appendChild(t); setTimeout(()=>t.remove(),2600); }
+
+let state = { offset:0, limit:50, total:0, filters:{} };
+
+async function getJSON(path){ const r=await fetch(API+path); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+async function postJSON(path,body){ const r=await fetch(API+path,{method:"POST",headers:{"Content-Type":"application/json","X-Botler-UI":"1"},body:JSON.stringify(body)}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+// write to config endpoints (PUT or POST) with the required UI header
+async function cfgWrite(path,body,method){ method=method||"PUT"; const r=await fetch(API+path,{method,headers:{"Content-Type":"application/json","X-Botler-UI":"1"},body:JSON.stringify(body)}); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+async function cfgGet(path){ return getJSON(path); }
+
+function statusBadge(s){ return `<span class="badge b-${s}">${s}</span>`; }
+
+// ---------------- nav ----------------
+// Scoped to the topbar: other views reuse .view-btn for their own segmented controls, and an
+// unscoped selector would bind them here and hide every view (their data-view is undefined).
+document.querySelectorAll(".topbar .view-btn").forEach(btn=>btn.onclick=()=>{
+  document.querySelectorAll(".topbar .view-btn").forEach(x=>x.classList.remove("active"));
+  btn.classList.add("active");
+  document.getElementById("logs-view").style.display = btn.dataset.view==="logs-view"?"block":"none";
+  document.getElementById("schedules-view").style.display = btn.dataset.view==="schedules-view"?"block":"none";
+  document.getElementById("stats-view").style.display = btn.dataset.view==="stats-view"?"block":"none";
+  document.getElementById("monitor-view").style.display = btn.dataset.view==="monitor-view"?"block":"none";
+  document.getElementById("config-view").style.display = btn.dataset.view==="config-view"?"block":"none";
+  // Stop polling whenever we leave the monitor view (avoid stacking timers on repeated visits).
+  clearInterval(monitorTimer);
+  monitorTimer = null;
+  if(btn.dataset.view==="config-view") loadConfig();
+  if(btn.dataset.view==="schedules-view") loadSchedulesView();
+  if(btn.dataset.view==="stats-view") loadStats();
+  if(btn.dataset.view==="monitor-view") startMonitorTimer();
+});
+
+// =====================================================================
+// LOGS
+// =====================================================================
+async function loadSummary(){
+  const s = await getJSON("/api/summary");
+  const cards = [
+    ["Total tasks", s.totalTasks],
+    ["Success", s.byStatus.success||0],
+    ["auto-fixed", s.byStatus["auto-fixed"]||0],
+    ["Failed/unsaved", (s.byStatus["validation-failed"]||0)+(s.byStatus.error||0)],
+    ["Input tokens", s.token.input],
+    ["Output tokens", s.token.output],
+    ["Cache hit", s.token.cacheRead],
+    ["Avg duration", fmtDur(s.avgDurationMs)],
+    ["Model cache hit rate", (s.modelCache.hitRate*100).toFixed(0)+"%"],
+  ];
+  document.getElementById("cards").innerHTML = cards.map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+
+  const projSel = document.getElementById("f-project");
+  const srcSel = document.getElementById("f-source");
+  const curP = projSel.value, curS = srcSel.value;
+  projSel.innerHTML = '<option value="">All</option>' + Object.keys(s.byProject).sort().map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join("");
+  srcSel.innerHTML = '<option value="">All</option>' + Object.keys(s.bySource).sort().map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join("");
+  projSel.value = curP; srcSel.value = curS;
+}
+
+function buildQuery(extra){
+  const f = state.filters;
+  const p = new URLSearchParams();
+  if(f.from!=null) p.set("from", f.from);
+  if(f.to!=null) p.set("to", f.to);
+  if(f.project) p.set("project", f.project);
+  if(f.source) p.set("source", f.source);
+  if(f.q) p.set("q", f.q);
+  p.set("limit", state.limit);
+  p.set("offset", state.offset);
+  if(extra) for(const k in extra) p.set(k, extra[k]);
+  return p.toString();
+}
+
+async function loadList(){
+  const data = await getJSON("/api/logs?"+buildQuery());
+  state.total = data.total;
+  const rows = data.logs.map(l=>{
+    const firstLine = (l.userMessage||"").split("\n")[0];
+    return `<tr class="row" data-id="${esc(l.id)}">
+      <td>${fmtTime(l.startedAt)}</td>
+      <td>${esc(l.source)}</td>
+      <td>${esc(l.projects?.length ? l.projects.join(", ") : (l.project||"—"))}</td>
+      <td>${statusBadge(l.status)}</td>
+      <td>${fmtDur(l.durationMs)}</td>
+      <td>${l.usage.total}</td>
+      <td>${esc(firstLine).slice(0,80)}</td>
+    </tr>`;
+  }).join("");
+  document.getElementById("list").innerHTML = `
+    <table>
+      <thead><tr><th>Time</th><th>Channel</th><th>Project</th><th>Status</th><th>Duration</th><th>Tokens</th><th>Message</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan="7" class="muted">No records</td></tr>'}</tbody>
+    </table>`;
+  document.querySelectorAll("#list tr.row").forEach(tr=>tr.onclick=()=>showDetail(tr.dataset.id));
+
+  const pages = Math.ceil(state.total/state.limit);
+  const cur = Math.floor(state.offset/state.limit)+1;
+  document.getElementById("pager").innerHTML = `
+    <button class="ghost" ${cur<=1?"disabled":""} id="pg-prev">← Prev</button>
+    <span class="muted">Page ${cur} / ${pages||1} · ${state.total} total</span>
+    <button class="ghost" ${cur>=pages?"disabled":""} id="pg-next">Next →</button>`;
+  const prev=document.getElementById("pg-prev"), next=document.getElementById("pg-next");
+  if(prev) prev.onclick=()=>{ state.offset=Math.max(0,state.offset-state.limit); loadList(); };
+  if(next) next.onclick=()=>{ state.offset=Math.min(state.total-state.limit, state.offset+state.limit); if(state.offset<0)state.offset=0; loadList(); };
+}
+
+function renderConversation(conv){
+  if(!conv||!conv.length) return '<div class="muted">None</div>';
+  return `<div class="timeline">${conv.map(e=>{
+    const head=`<div class="tl-role ${e.role}">${e.role}${e.toolName?` · ${esc(e.toolName)}`:""}${e.stopReason?` · ${esc(e.stopReason)}`:""}${e.isError?' · <span class="err">error</span>':""} · ${fmtTime(e.timestamp)}</div>`;
+    let body="";
+    if(e.text) body+=`<div>${esc(e.text)}</div>`;
+    if(e.thinking) body+=`<div class="think">💭 ${esc(e.thinking)}</div>`;
+    if(e.chars && ((e.text&&e.chars>e.text.length)||(e.thinking&&e.chars>e.thinking.length))) body+=`<div class="muted">(truncated, original ${e.chars} chars)</div>`;
+    if(!e.text&&!e.thinking) body+='<div class="muted">—</div>';
+    return `<div class="tl-item">${head}${body}</div>`;
+  }).join("")}</div>`;
+}
+
+function renderTools(tools){
+  if(!tools||!tools.length) return '<div class="muted">No tool calls</div>';
+  return `<div class="table-scroll"><table>
+    <thead><tr><th>Tool</th><th>Args</th><th>Result</th><th>Duration</th><th>Error</th></tr></thead>
+    <tbody>${tools.map(t=>`
+      <tr>
+        <td>${esc(t.name)}</td>
+        <td><details><summary>View</summary><pre>${esc(JSON.stringify(t.arguments,null,2))}</pre></details></td>
+        <td><details><summary>View</summary><pre>${esc(t.resultText)}</pre>${t.resultTruncated?`<span class="muted">(truncated, original ${t.resultChars??"?"} chars)</span>`:""}</details></td>
+        <td>${fmtDur(t.durationMs)}</td>
+        <td>${t.isError?'<span class="err">✗</span>':""}</td>
+      </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function renderCalls(calls){
+  if(!calls||!calls.length) return "";
+  const rows = calls.map((c,i)=>`<tr>
+    <td>#${i+1}</td><td>${fmtTime(c.timestamp)}</td><td>${esc(c.stopReason||"")}</td>
+    <td>${c.input}</td><td>${c.output}</td><td>${c.cacheRead}</td><td>${c.cacheWrite}</td>
+    <td>${c.reasoning??0}</td><td>${c.total}</td><td>${(c.costUsd??0).toFixed(4)}</td></tr>`).join("");
+  return `<div class="section-title">Per LLM call</div>
+    <div class="table-scroll"><table>
+      <thead><tr><th>#</th><th>Time</th><th>stopReason</th><th>input</th><th>output</th><th>cacheRead</th><th>cacheWrite</th><th>reasoning</th><th>total</th><th>cost$</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+function renderPrompt(title, text, note){
+  const tokens = estTokens(text);
+  return `<div class="section-title">${title}</div>
+    <div class="kv">
+      <div class="k">Chars</div><div>${text.length.toLocaleString()}</div>
+      <div class="k">Est. tokens</div><div>≈${tokens.toLocaleString()}<span class="muted">(CJK≈1/char, others≈1/4, rough estimate)</span></div>
+      ${note?`<div class="k">Derived from actual</div><div><b>${note}</b></div>`:""}
+    </div>
+    <details><summary>Expand full text</summary><pre>${esc(text)}</pre></details>`;
+}
+
+function derivedPromptTokens(inputTokens, userMessage){
+  if(!inputTokens) return null;
+  return Math.max(0, inputTokens - estTokens(userMessage));
+}
+
+function renderUsage(u, label){
+  const grid = [["Input",u.input],["Output",u.output],["Cache read",u.cacheRead],["Cache write",u.cacheWrite],["Reasoning",u.reasoning??0],["Total",u.total],["Cost $",(u.costUsd??0).toFixed(4)]];
+  return `<div class="section-title">${label}</div><div class="usage-grid">${grid.map(([k,v])=>`<div class="u"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("")}</div>`;
+}
+
+// opts: { title, back, backLabel } — `back` re-renders the previous drawer content (e.g. schedule
+// history) and turns the back link into "back to" instead of "back to list".
+async function showDetail(id, opts){
+  opts = opts || {};
+  const l = await getJSON("/api/logs/"+encodeURIComponent(id));
+  if(!l){ document.getElementById("drawer-body").innerHTML='<div class="muted">Not found</div>'; openDrawer(opts); return; }
+  const mc = l.modelCache;
+  const backLink = opts.back
+    ? `<a class="back-link" onclick="drawerGoBack()">← ${esc(opts.backLabel||"Back")}</a>`
+    : `<a class="back-link" onclick="closeDetail()">← Back to list</a>`;
+  document.getElementById("drawer-body").innerHTML = `
+    <div class="detail">
+      ${backLink}
+      <h2>Task detail</h2>
+      <div class="kv">
+        <div class="k">Status</div><div>${statusBadge(l.status)} ${l.phase==="self-heal"?'<span class="badge b-auto-fixed">self-heal</span>':""}</div>
+        <div class="k">Start</div><div>${fmtTime(l.startedAt)}</div>
+        <div class="k">End</div><div>${fmtTime(l.endedAt)}</div>
+        <div class="k">Duration</div><div>${fmtDur(l.durationMs)}</div>
+        <div class="k">provider/model</div><div>${esc(l.provider)} / ${esc(l.model)}</div>
+        <div class="k">Project</div><div>${esc(l.projects?.length ? l.projects.join(", ") : (l.project||"—"))}</div>
+        <div class="k">Channel</div><div>${esc(l.source)}</div>
+        <div class="k">mutated</div><div>${l.mutated?"Yes":"No"}</div>
+        <div class="k">Images</div><div>${l.images?.length||0}</div>
+      </div>
+      <div class="token-bar">
+        <span class="k">Input</span><b>${fmtN(l.usage.input)}</b>
+        <span class="k">Output</span><b>${fmtN(l.usage.output)}</b>
+        <span class="k">Cache read</span><b>${fmtN(l.usage.cacheRead)}</b>
+        <span class="k">Total</span><b>${fmtN(l.usage.total)}</b>
+        <span class="hint">Total includes cache read (gateway basis); input = new non-cached tokens</span>
+      </div>
+      ${l.systemPrompt?(()=>{const c=l.calls&&l.calls[0];const d=derivedPromptTokens(c&&c.input,l.userMessage);return renderPrompt("System prompt (execution phase)",l.systemPrompt,d!==null?`${d.toLocaleString()} (first-turn input ${c.input} − user message)`:null);})():""}
+      <div class="section-title">Reply</div>
+      <pre>${esc(l.replyText)}</pre>
+      ${renderCalls(l.calls)}
+      ${renderUsage(l.usage,"Token total (execution + routing)")}
+      <div class="section-title">Model parse-cache snapshot</div>
+      <div class="usage-grid">
+        <div class="u"><div class="k">queries</div><div class="v">${mc.queries}</div></div>
+        <div class="u"><div class="k">hits</div><div class="v">${mc.hits}</div></div>
+        <div class="u"><div class="k">hitRate</div><div class="v">${(mc.hitRate*100).toFixed(0)}%</div></div>
+      </div>
+      ${l.routing?`<div class="section-title">Routing</div>
+        <div class="kv"><div class="k">Candidates</div><div>${l.routing.candidates.map(esc).join(", ")}</div>
+        <div class="k">Decision</div><div>${esc(l.routing.decision||"—")}</div></div>
+        ${renderUsage(l.routing.usage,"Routing tokens")}
+        ${l.routing.prompt?(()=>{const d=derivedPromptTokens(l.routing.usage.input,l.userMessage);return renderPrompt("Routing prompt",l.routing.prompt,d!==null?`${d.toLocaleString()} (routing input ${l.routing.usage.input} − user message)`:null);})():""}`:""}
+      <div class="section-title">Tool calls</div>
+      ${renderTools(l.tools)}
+      <div class="section-title">Conversation timeline</div>
+      ${renderConversation(l.conversation)}
+    </div>`;
+  // Task details opened from the logs list refresh that list on close; ones opened from another
+  // drawer view (schedule history) must not, since the logs view is not what the user is looking at.
+  openDrawer({ title:opts.title, back:opts.back, refreshLogs:!opts.back });
+}
+
+// ---------------- detail drawer ----------------
+// Shared by the logs list and the schedule history. `back` (when set) is rendered as a "← back to"
+// link that re-renders the previous content inside the same drawer.
+let drawerBack = null;
+let drawerRefreshLogs = false;
+
+function openDrawer(opts){
+  opts = opts || {};
+  drawerBack = opts.back || null;
+  drawerRefreshLogs = !!opts.refreshLogs;
+  document.getElementById("drawer-title").textContent = opts.title || "Task detail";
+  document.getElementById("drawer-body").scrollTop = 0;
+  document.getElementById("drawer").classList.add("show");
+  document.getElementById("drawer-bg").classList.add("show");
+  document.body.style.overflow = "hidden";
+}
+function drawerGoBack(){
+  const fn = drawerBack;
+  if(fn) fn();
+}
+function closeDetail(){
+  document.getElementById("drawer").classList.remove("show");
+  document.getElementById("drawer-bg").classList.remove("show");
+  document.body.style.overflow = "";
+  const refresh = drawerRefreshLogs;
+  drawerBack = null;
+  drawerRefreshLogs = false;
+  if(refresh) loadList(); // refresh status / pagination while the drawer was open
+}
+document.getElementById("drawer-close").onclick = closeDetail;
+document.getElementById("drawer-bg").onclick = closeDetail;
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeDetail(); });
+
+async function loadDisk(){
+  const d = await getJSON("/api/usage");
+  document.getElementById("disk-summary").innerHTML = `
+    <div class="usage-grid">
+      <div class="u"><div class="k">Dir</div><div class="v" style="font-size:13px">${esc(d.dir)}</div></div>
+      <div class="u"><div class="k">Total size</div><div class="v">${fmtBytes(d.totalBytes)}</div></div>
+      <div class="u"><div class="k">Files</div><div class="v">${d.fileCount}</div></div>
+      <div class="u"><div class="k">Entries</div><div class="v">${d.entryCount}</div></div>
+      <div class="u"><div class="k">Earliest</div><div class="v" style="font-size:13px">${esc(d.oldestDay||"—")}</div></div>
+      <div class="u"><div class="k">Latest</div><div class="v" style="font-size:13px">${esc(d.newestDay||"—")}</div></div>
+    </div>`;
+  const rows = d.files.map(f=>`<tr>
+    <td><input type="checkbox" class="day-chk" value="${esc(f.day)}"></td>
+    <td>${esc(f.day)}</td><td>${f.entries}</td><td>${fmtBytes(f.bytes)}</td></tr>`).join("");
+  document.getElementById("disk-files").innerHTML = `
+    <table>
+      <thead><tr><th></th><th>Date</th><th>Entries</th><th>Size</th></tr></thead>
+      <tbody>${rows||'<tr><td colspan="4" class="muted">No log files</td></tr>'}</tbody>
+    </table>
+    <div class="row-actions" style="margin-top:12px">
+      <button class="btn danger" id="del-selected">Delete selected</button>
+      <label class="muted">Delete before <input type="date" id="del-before"></label>
+      <button class="btn danger" id="del-before-btn">Delete before</button>
+      <button class="btn ghost" id="dry-run">Preview (before delete)</button>
+    </div>`;
+  document.getElementById("del-selected").onclick = confirmDeleteSelected;
+  document.getElementById("del-before-btn").onclick = confirmDeleteBefore;
+  document.getElementById("dry-run").onclick = dryRunBefore;
+}
+
+async function confirmDeleteSelected(){
+  const days = [...document.querySelectorAll(".day-chk:checked")].map(c=>c.value);
+  if(!days.length){ toast("No days selected"); return; }
+  if(!confirm(`Confirm deleting ${days.length} days of logs? This cannot be undone.`)) return;
+  const r = await postJSON("/api/cleanup",{ days });
+  toast(`Deleted ${r.deleted.length} files, freed ${fmtBytes(r.freedBytes)}`);
+  await loadDisk(); await loadList(); await loadSummary();
+}
+
+async function confirmDeleteBefore(){
+  const v = document.getElementById("del-before").value;
+  if(!v){ toast("Please select a date"); return; }
+  if(!confirm(`Confirm deleting all logs before ${v} (excluding ${v})?`)) return;
+  const r = await postJSON("/api/cleanup",{ before:v });
+  toast(`Deleted ${r.deleted.length} files, freed ${fmtBytes(r.freedBytes)}`);
+  await loadDisk(); await loadList(); await loadSummary();
+}
+
+async function dryRunBefore(){
+  const v = document.getElementById("del-before").value;
+  if(!v){ toast("Please select a date"); return; }
+  const r = await postJSON("/api/cleanup",{ before:v, dryRun:true });
+  toast(`Preview: will delete ${r.deleted.length} files, freeing ${fmtBytes(r.freedBytes)}`);
+}
+
+function applyFilters(){
+  const from = document.getElementById("f-from").value;
+  const to = document.getElementById("f-to").value;
+  state.filters = {
+    from: from? new Date(from+"T00:00:00").getTime(): undefined,
+    to: to? new Date(to+"T23:59:59").getTime(): undefined,
+    project: document.getElementById("f-project").value||undefined,
+    source: document.getElementById("f-source").value||undefined,
+    q: document.getElementById("f-q").value.trim()||undefined,
+  };
+  state.offset = 0;
+  loadList();
+}
+
+// =====================================================================
+// STATS (token time-series)
+// =====================================================================
+const TABLE_PAGE_SIZE = 20;
+let lastSeries = null;   // last fetched /api/token-stats payload
+let lastGran = "day";
+let statsTablePages = {}; // group key -> page index (0-based)
+
+function toDateInput(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function fmtBucket(ts, gran){
+  const d = new Date(ts);
+  if(gran==="hour") return String(d.getHours()).padStart(2,"0")+":00";
+  return (d.getMonth()+1)+"-"+d.getDate();
+}
+function fmtShort(n){
+  if(n>=1e6) return (n/1e6).toFixed(1)+"M";
+  if(n>=1e3) return (n/1e3).toFixed(1)+"K";
+  return String(Math.round(n));
+}
+function statsRangeMs(){
+  const from = document.getElementById("s-from").value;
+  const to = document.getElementById("s-to").value;
+  const fromMs = from? new Date(from+"T00:00:00").getTime() : Date.now()-30*86400000;
+  const toMs = to? new Date(to+"T23:59:59").getTime() : Date.now();
+  return { from:fromMs, to:toMs, range:Math.max(0, toMs-fromMs) };
+}
+
+// Granularity × range cap: hour is selectable only when the range ≤7 days, day only when ≤90 days;
+// beyond that the option is disabled and the current selection is bumped up to week.
+function updateGranOptions(rangeMs){
+  const sel = document.getElementById("s-gran");
+  const dayMs = 86400000;
+  const ok = { hour: rangeMs<=7*dayMs, day: rangeMs<=90*dayMs, week: true };
+  [...sel.options].forEach(o=>o.disabled = !ok[o.value]);
+  if(sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].disabled){
+    const order = ["hour","day","week"];
+    const cur = sel.value;
+    for(const g of order){ if(ok[g]){ sel.value = g; break; } }
+    if(sel.value===cur) sel.value = "week";
+  }
+  return sel.value;
+}
+
+async function loadStats(){
+  const { from, to, range } = statsRangeMs();
+  const gran = updateGranOptions(range);
+  const group = document.getElementById("s-group").value;
+  const p = new URLSearchParams();
+  p.set("from", String(from));
+  p.set("to", String(to));
+  p.set("granularity", gran);
+  if(group) p.set("groupBy", group);
+  try {
+    const series = await getJSON("/api/token-stats?"+p.toString());
+    renderStats(series, gran, group);
+  } catch(e){
+    document.getElementById("s-cards").innerHTML="";
+    document.getElementById("s-chart").innerHTML = '<div class="err">Stats failed: '+esc(e.message)+'</div>';
+    document.getElementById("s-table").innerHTML="";
+  }
+}
+
+function renderStats(series, gran, group){
+  lastSeries = series;
+  lastGran = gran;
+  statsTablePages = {};
+  const groups = series.groups || [];
+  const empty = !groups.length || groups.every(g=>!g.buckets.length);
+  const cardsEl = document.getElementById("s-cards");
+  const chartEl = document.getElementById("s-chart");
+  const tblEl = document.getElementById("s-table");
+  if(empty){
+    cardsEl.innerHTML="";
+    chartEl.innerHTML='<div class="muted">No data</div>';
+    tblEl.innerHTML="";
+    return;
+  }
+  const all = groups.flatMap(g=>g.buckets);
+  const sum = k=>all.reduce((a,b)=>a+(b[k]||0),0);
+  const peak = all.reduce((a,b)=>(b.total>a.total?b:a), all[0]);
+  const field = document.getElementById("s-field").value;
+  const cards = [
+    ["Input tokens", fmtN(sum("input"))],
+    ["Output tokens", fmtN(sum("output"))],
+    ["Cache read tokens", fmtN(sum("cacheRead"))],
+    ["Cache write tokens", fmtN(sum("cacheWrite"))],
+    ["Total tokens", fmtN(sum("total"))],
+    ["Cost $", (sum("costUsd")||0).toFixed(4)],
+    ["Peak bucket"+(group?" (all groups)":""), `${fmtBucket(peak.start, gran)} · ${fmtN(peak.total)}`],
+  ];
+  cardsEl.innerHTML = cards.map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  chartEl.innerHTML = renderStatsChart(series, gran, field);
+  tblEl.innerHTML = renderStatsTable(series, gran);
+  bindStatsPager();
+}
+
+function renderStatsChart(series, gran, field){
+  const groups = series.groups;
+  const W = 960, H = 300, pad = 40;
+  const n = groups[0].buckets.length;
+  const step = n>1 ? (W-pad*2)/n : W-pad*2;
+  const max = Math.max(1, ...groups.flatMap(g=>g.buckets.map(b=>b[field]||0)));
+  const colors = ["var(--chart-1)","var(--chart-2)","var(--chart-3)","var(--chart-4)","var(--chart-5)"];
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" style="max-width:960px" xmlns="http://www.w3.org/2000/svg">`;
+  // axes
+  svg += `<line x1="${pad}" y1="0" x2="${pad}" y2="${H-pad}" stroke="var(--line)"/>`;
+  svg += `<line x1="${pad}" y1="${H-pad}" x2="${W-10}" y2="${H-pad}" stroke="var(--line)"/>`;
+  svg += `<text x="${pad-6}" y="12" text-anchor="end" fill="var(--muted)" font-size="11">${fmtShort(max)}</text>`;
+  const bw = Math.max(2, step/groups.length*0.8);
+  const labelEvery = Math.max(1, Math.ceil(n/40));
+  for(let i=0;i<n;i++){
+    const x = pad + i*step;
+    for(let gi=0;gi<groups.length;gi++){
+      const b = groups[gi].buckets[i];
+      const v = b[field]||0;
+      const h = v/max*(H-pad-12);
+      svg += `<rect x="${x + gi*bw + (step-groups.length*bw)/2}" y="${H-pad-h}" width="${bw}" height="${Math.max(0,h)}" fill="${colors[gi%colors.length]}" rx="1"><title>${esc(groups[gi].key)} · ${fmtBucket(b.start,gran)} · ${fmtN(v)} tokens</title></rect>`;
+    }
+    if(i%labelEvery===0){
+      svg += `<text x="${x+step/2}" y="${H-pad+16}" text-anchor="middle" fill="var(--muted)" font-size="10">${fmtBucket(groups[0].buckets[i].start,gran)}</text>`;
+    }
+  }
+  svg += `</svg>`;
+  return svg;
+}
+
+// Table bucket order: newest first (descending time); each group is paginated independently, TABLE_PAGE_SIZE rows per page.
+function renderStatsTable(series, gran){
+  const groups = series.groups;
+  const header = `<thead><tr><th>Bucket start</th><th>Tasks</th><th>input</th><th>output</th><th>Cache read</th><th>Cache write</th><th>total</th><th>Cost$</th></tr></thead>`;
+  return groups.map((g, gi)=>{
+    const buckets = [...g.buckets].reverse();
+    const totalRows = buckets.length;
+    const pageCount = Math.max(1, Math.ceil(totalRows/TABLE_PAGE_SIZE));
+    const page = Math.min(statsTablePages[g.key]||0, pageCount-1);
+    const slice = buckets.slice(page*TABLE_PAGE_SIZE, (page+1)*TABLE_PAGE_SIZE);
+    const rows = slice.map(b=>`<tr>
+      <td>${fmtBucket(b.start, gran)}</td>
+      <td>${b.tasks}</td>
+      <td>${fmtN(b.input)}</td>
+      <td>${fmtN(b.output)}</td>
+      <td>${fmtN(b.cacheRead)}</td>
+      <td>${fmtN(b.cacheWrite)}</td>
+      <td>${fmtN(b.total)}</td>
+      <td>${(b.costUsd||0).toFixed(4)}</td>
+    </tr>`).join("");
+    const pager = totalRows>TABLE_PAGE_SIZE ? `<div class="pager">
+      <button class="ghost st-prev" data-gi="${gi}" ${page<=0?"disabled":""}>← Prev</button>
+      <span class="muted">Page ${page+1} / ${pageCount} · ${totalRows} total</span>
+      <button class="ghost st-next" data-gi="${gi}" ${page>=pageCount-1?"disabled":""}>Next →</button>
+    </div>` : "";
+    const t = `<table>${header}<tbody>${rows}</tbody></table>${pager}`;
+    return groups.length>1 ? `<div class="section-title">${esc(g.key)}</div>${t}` : t;
+  }).join("");
+}
+
+function bindStatsPager(){
+  const tbl = document.getElementById("s-table");
+  tbl.querySelectorAll(".st-prev").forEach(b=>b.onclick=()=>statsPage(-1, Number(b.dataset.gi)));
+  tbl.querySelectorAll(".st-next").forEach(b=>b.onclick=()=>statsPage(1, Number(b.dataset.gi)));
+}
+function statsPage(delta, gi){
+  const g = ((lastSeries&&lastSeries.groups)||[])[gi];
+  if(!g) return;
+  const pageCount = Math.max(1, Math.ceil(g.buckets.length/TABLE_PAGE_SIZE));
+  let page = statsTablePages[g.key]||0;
+  statsTablePages[g.key] = Math.min(Math.max(0, page+delta), pageCount-1);
+  document.getElementById("s-table").innerHTML = renderStatsTable(lastSeries, lastGran);
+  bindStatsPager();
+}
+
+// =====================================================================
+// CONFIG
+// =====================================================================
+let schedules = [];      // config entries, exactly as returned by /api/schedules/overview
+let schedOrphans = [];   // log-derived rows, normalized to the same shape by orphanToRow()
+let schedFilter = "active";
+
+// ---- system prompt ----
+document.getElementById("sp-text").addEventListener("input", ()=>{
+  const len = document.getElementById("sp-text").value.length;
+  document.getElementById("sp-count").textContent = `${len} chars`;
+});
+document.getElementById("sp-save").onclick = async ()=>{
+  const content = document.getElementById("sp-text").value;
+  try {
+    const r = await cfgWrite("/api/config/system-prompt", { content });
+    if(r.error) return toast("Error: "+r.error);
+    toast("Saved; takes effect on the next task");
+  } catch(e){ toast("Save failed: "+e.message); }
+};
+
+// ---- schedules ----
+let schedHistory = { id: null, offset: 0, limit: 20, total: 0 };
+
+function scheduleSummary(e){
+  if(e.cron) return "cron: "+e.cron;
+  if(e.interval) return "interval: "+e.interval;
+  if(e.at) return "at: "+e.at+" (daily)";
+  if(e.once){
+    const d = new Date(e.once);
+    return "once: " + (isNaN(d.getTime()) ? e.once : d.toLocaleString());
+  }
+  return "(no trigger)";
+}
+
+// Cards: Total = Enabled + Disabled and Enabled = Active + Past, since the three states are
+// mutually exclusive. "Removed" is the only log-derived card — it counts schedules that were
+// deleted from schedules.json but still have runs, which is exactly the discoverability gap.
+function renderScheduleCards(){
+  const total = schedules.length;
+  const enabled = schedules.filter(e=>e.enabled).length;
+  document.getElementById("sched-cards").innerHTML = [
+    ["Total", total, "Entries in schedules.json"],
+    ["Active", schedules.filter(e=>e.state==="active").length, "Enabled with a computed next fire time"],
+    ["Disabled", total-enabled, "enabled=false — never fires"],
+    ["Past", schedules.filter(e=>e.state==="past").length, "Spent one-time schedules; safe to clear"],
+    ["Removed", schedOrphans.length, "Deleted schedules whose run history is still in the task logs"],
+  ].map(([k,v,t])=>`<div class="card" title="${esc(t)}"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+}
+
+/**
+ * A log-derived orphan has no config spec left, so it is shaped like an overview item that is
+ * permanently in the "past" state and read-only. Orphans are kept in their own array and never
+ * merged into `schedules`, so persistSchedules() / openSchedModal() can never see one.
+ */
+function orphanToRow(o){
+  return {
+    id:o.scheduleId, removed:true, state:"past", enabled:false, nextFireAt:null,
+    timezone:"", message:o.lastMessage, runCount:o.runCount,
+    lastRun:{ startedAt:o.lastRunAt, status:o.lastStatus, project:o.lastProject, durationMs:0, tokenTotal:0 },
+  };
+}
+
+function renderScheduleRow(e){
+  const last = e.lastRun
+    ? `<span title="${esc(fmtTime(e.lastRun.startedAt))}">${fmtCompactTime(e.lastRun.startedAt)}</span> ${statusBadge(e.lastRun.status)}`
+    : "—";
+  // "Next" used to be a bare "—" for three different reasons; `state` (computed server-side) splits
+  // them. A past row with no run at all is the actionable one: its time passed without firing.
+  const next =
+      e.state === "active" ? `<span title="${esc(fmtTime(e.nextFireAt))}">${fmtCompactTime(e.nextFireAt)}</span>`
+    : e.state === "paused" ? `<span class="badge b-paused">paused</span>`
+    : e.lastRun            ? "—"
+    : `<span class="badge b-missed" title="Its time passed with no run recorded — the process was not running, or it crashed before the run was logged.">missed</span>`;
+  const idCell = e.removed
+    ? `<div class="sched-id" title="${esc(e.id)}"><span class="sid">${esc(e.id)}</span></div>`
+    : `<label class="sched-id" title="${esc(e.id)}"><input type="checkbox" class="sched-enable" data-id="${esc(e.id)}" ${e.enabled?"checked":""}/> <span class="sid">${esc(e.id)}</span></label>`;
+  const summary = e.removed
+    ? `removed<br/><span class="muted">${e.runCount} run(s)</span>`
+    : `${esc(scheduleSummary(e))}<br/>tz:${esc(e.timezone||"Asia/Shanghai")}${e.project?("<br/>project:"+esc(e.project)):""}`;
+  // Orphans have no config entry left: nothing to edit, nothing to enable, nothing to delete.
+  const actions = e.removed
+    ? `<button class="btn ghost sched-history" data-id="${esc(e.id)}">History</button>`
+    : `<button class="btn ghost sched-history" data-id="${esc(e.id)}">History</button>
+       <button class="btn ghost sched-edit" data-id="${esc(e.id)}">Edit</button>
+       <button class="btn danger sched-del" data-id="${esc(e.id)}">Delete</button>`;
+  return `<div class="sched-row">
+    ${idCell}
+    <div class="sched-summary">${summary}</div>
+    <div class="sched-summary sched-msg" title="${esc(e.message||e.script||"")}">${esc((e.script?("▶ "+e.script):(e.message||"")).slice(0,60))}</div>
+    <div class="muted sched-when">Next: ${next}</div>
+    <div class="muted sched-when">Last: ${last}</div>
+    <div class="row-actions">${actions}</div>
+  </div>`;
+}
+
+function renderSchedules(){
+  const groups = [];
+  // "Active" also covers disabled entries: they are still live config, and hiding them from the
+  // default view would decouple this list from the Disabled card.
+  if(schedFilter!=="past") groups.push({
+    title:"Active & paused", rows:schedules.filter(e=>e.state!=="past"),
+    empty:'No active scheduled tasks. Click "Add" to create one.' });
+  if(schedFilter!=="active") groups.push(
+    { title:"Past · no further runs", rows:schedules.filter(e=>e.state==="past"),
+      empty:"No spent one-time schedules." },
+    { title:"Removed · history only", rows:schedOrphans,
+      empty:"No deleted schedules with retained history." },
+  );
+  // Headings only when more than one group is shown, so the default view stays flat.
+  const titles = schedFilter!=="active";
+  document.getElementById("sched-list").innerHTML = groups.map(g=>{
+    const head = titles ? `<div class="section-title">${esc(g.title)}</div>` : "";
+    const body = g.rows.length ? g.rows.map(renderScheduleRow).join("")
+      : `<div class="muted sched-empty">${esc(g.empty)}</div>`;
+    return head + body;
+  }).join("");
+  bindScheduleRows();
+  const clear = document.getElementById("sched-clear-past");
+  clear.disabled = !schedules.some(e=>e.state==="past");
+}
+
+function bindScheduleRows(){
+  document.querySelectorAll(".sched-enable").forEach(c=>c.onchange=async()=>{
+    const id=c.dataset.id; const e=schedules.find(x=>x.id===id); if(!e) return;
+    e.enabled=c.checked;
+    await persistSchedules();
+  });
+  document.querySelectorAll(".sched-history").forEach(b=>b.onclick=()=>openSchedHistory(b.dataset.id));
+  document.querySelectorAll(".sched-edit").forEach(b=>b.onclick=()=>openSchedModal(b.dataset.id));
+  document.querySelectorAll(".sched-del").forEach(b=>b.onclick=async()=>{
+    if(!confirm("Confirm deleting scheduled task "+b.dataset.id+"?")) return;
+    schedules=schedules.filter(x=>x.id!==b.dataset.id);
+    await persistSchedules();
+  });
+}
+
+async function loadSchedulesView(){
+  // Two independent GETs: the index stays a separate endpoint (no shape change to /overview) but is
+  // always fetched, so the Removed card and the post-clear refresh are never stale. Best-effort —
+  // a failing index must not take the whole view down.
+  const [overview, index] = await Promise.all([
+    getJSON("/api/schedules/overview"),
+    getJSON("/api/schedules/history-index").catch(()=>({ items: [] })),
+  ]);
+  schedules = overview || [];
+  schedOrphans = ((index && index.items) || []).map(orphanToRow);
+  renderScheduleCards();
+  renderSchedules();
+}
+
+// Whitelist mirroring normalizeEntry() in src/scheduler/store.ts. A blacklist no longer scales:
+// ScheduleOverviewItem now carries nextFireAt / lastRun / state, and orphan rows carry more.
+// KEEP IN SYNC with normalizeEntry — a field added there but not here is silently dropped on save.
+function scheduleEntryForSave(e){
+  const entry = { id:e.id, enabled:e.enabled!==false, timezone:e.timezone||"Asia/Shanghai" };
+  if(e.message) entry.message = e.message;
+  if(e.script){
+    entry.script = e.script;
+    if(e.scriptArgs) entry.scriptArgs = e.scriptArgs;
+    if(typeof e.commit==="boolean") entry.commit = e.commit;
+  }
+  if(e.cron) entry.cron = e.cron;
+  else if(e.interval) entry.interval = e.interval;
+  else if(e.at) entry.at = e.at;
+  else if(e.once) entry.once = e.once;
+  if(e.project) entry.project = e.project;
+  if(e.retry) entry.retry = e.retry;
+  if(e.silentHours) entry.silentHours = e.silentHours;
+  if(e.holidayMode) entry.holidayMode = e.holidayMode;
+  if(e.recipient) entry.recipient = e.recipient;
+  return entry;
+}
+
+async function persistSchedules(){
+  const payload = schedules.map(scheduleEntryForSave);
+  try {
+    const r = await cfgWrite("/api/config/schedules", { schedules: payload });
+    if(r.error) return toast("Error: "+r.error);
+    toast("Saved; takes effect immediately");
+    await loadSchedulesView();
+  } catch(e){
+    toast("Save failed: "+e.message);
+  }
+}
+
+function renderSchedStats(s){
+  const success = s.byStatus.success || 0;
+  const failed = (s.byStatus.error || 0) + (s.byStatus["validation-failed"] || 0);
+  document.getElementById("sched-stats").innerHTML = [
+    ["Runs", s.totalRuns],
+    ["Success", success],
+    ["Failed", failed],
+    ["Avg duration", fmtDur(s.avgDurationMs)],
+    ["Output tokens", s.token.output],
+  ].map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+}
+
+// Renders into the shared right-hand drawer (same place as a task-log detail). The drawer is the
+// only feedback the History button has, so a failed load is surfaced there instead of in console.
+async function loadSchedHistory(){
+  if(!schedHistory.id) return;
+  const body = document.getElementById("drawer-body");
+  try {
+    const p = new URLSearchParams();
+    p.set("limit", schedHistory.limit);
+    p.set("offset", schedHistory.offset);
+    const [data, s] = await Promise.all([
+      getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/runs?${p}`),
+      getJSON(`/api/schedules/${encodeURIComponent(schedHistory.id)}/stats`),
+    ]);
+    schedHistory.total = data.total;
+    const rows = data.logs.map(l=>{
+      return `<tr class="row" data-log="${esc(l.id)}">
+        <td>${fmtTime(l.startedAt)}</td>
+        <td>${statusBadge(l.status)}</td>
+        <td>${l.phase==="self-heal"?'<span class="badge b-auto-fixed">self-heal</span>':""}</td>
+        <td>${esc(l.projects?.length ? l.projects.join(", ") : (l.project||"—"))}</td>
+        <td>${fmtDur(l.durationMs)}</td>
+        <td>${l.usage.total}</td>
+        <td>${esc((l.replyText||"").slice(0,80))}</td>
+      </tr>`;
+    }).join("");
+    const bodyRows = data.logs.length ? rows : '<tr><td colspan="7" class="muted">No records</td></tr>';
+
+    body.innerHTML = `
+      <div class="detail">
+        <div class="muted" style="font-size:12px;margin-bottom:10px">Runs are matched by schedule id; if an id is reused, runs from earlier schedules with the same id appear here too.</div>
+        <div class="cards" id="sched-stats"></div>
+        <div class="table-scroll wrap">
+          <table>
+            <thead><tr><th>Time</th><th>Status</th><th>Phase</th><th>Project</th><th>Duration</th><th>Tokens</th><th>Reply</th></tr></thead>
+            <tbody>${bodyRows}</tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button class="ghost" id="sh-prev" ${schedHistory.offset<=0?"disabled":""}>← Prev</button>
+          <span class="muted">Page ${Math.floor(schedHistory.offset/schedHistory.limit)+1} · ${schedHistory.total} total</span>
+          <button class="ghost" id="sh-next" ${schedHistory.offset+schedHistory.limit>=schedHistory.total?"disabled":""}>Next →</button>
+        </div>
+      </div>`;
+
+    renderSchedStats(s);
+    // A run opens its task detail in the same drawer, with a link back to this history.
+    const taskOpts = { back:loadSchedHistory, backLabel:"Back to history" };
+    body.querySelectorAll("tr.row").forEach(tr=>tr.onclick=()=>showDetail(tr.dataset.log, taskOpts));
+    body.querySelector("#sh-prev").onclick=()=>{
+      schedHistory.offset=Math.max(0, schedHistory.offset-schedHistory.limit);
+      loadSchedHistory();
+    };
+    body.querySelector("#sh-next").onclick=()=>{
+      const nextOffset = schedHistory.offset + schedHistory.limit;
+      if(nextOffset >= schedHistory.total) return;
+      schedHistory.offset = nextOffset;
+      loadSchedHistory();
+    };
+    openDrawer({ title:"History · "+schedHistory.id });
+  } catch(e){
+    body.innerHTML = `<div class="detail"><div class="err">Failed to load history: ${esc(e.message)}</div></div>`;
+    openDrawer({ title:"History · "+schedHistory.id });
+  }
+}
+
+function openSchedHistory(id){
+  schedHistory = { id, offset:0, limit:20, total:0 };
+  loadSchedHistory();
+}
+
+function openSchedModal(id){
+  const e = id ? JSON.parse(JSON.stringify(schedules.find(x=>x.id===id))) : { id:"", enabled:true, timezone:"Asia/Shanghai", message:"", script:"", scriptArgs:"", commit:true, cron:"", interval:"", at:"", once:"" };
+  const mode = e.cron?"cron":e.interval?"interval":e.at?"at":e.once?"once":"cron";
+  const action = e.script ? "script" : "message";
+  const m = document.createElement("div");
+  m.className="modal-bg";
+  m.innerHTML = `<div class="modal">
+    <h3>${id?"Edit":"Add"} scheduled task</h3>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">ID (unique)</div><div><input id="m-id" value="${esc(e.id)}" ${id?"disabled":""} /></div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Trigger</div>
+      <div>
+        <label><input type="radio" name="m-mode" value="cron" ${mode==="cron"?"checked":""}/> cron (5 fields)</label>
+        <label><input type="radio" name="m-mode" value="interval" ${mode==="interval"?"checked":""}/> interval (5m/2h/1d)</label>
+        <label><input type="radio" name="m-mode" value="at" ${mode==="at"?"checked":""}/> daily time (HH:MM, repeats daily)</label>
+        <label><input type="radio" name="m-mode" value="once" ${mode==="once"?"checked":""}/> once (one-time date-time)</label>
+      </div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">cron / interval / at / once</div><div><input id="m-spec" value="${esc(e.cron||e.interval||e.at||e.once||"")}" placeholder="e.g. 0 8 * * * | 1h | 23:30 | 2026-08-20T22:00+08:00" /></div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Timezone</div><div><input id="m-tz" value="${esc(e.timezone||"Asia/Shanghai")}" /></div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Action</div>
+      <div>
+        <label><input type="radio" name="m-action" value="message" ${action==="message"?"checked":""}/> Message (→ Agent)</label>
+        <label><input type="radio" name="m-action" value="script" ${action==="script"?"checked":""}/> Run script (direct, no LLM)</label>
+      </div>
+    </div>
+    <div class="field" id="m-msg-field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Message</div><div><textarea id="m-msg" rows="3">${esc(e.message||"")}</textarea></div>
+    </div>
+    <div class="field" id="m-script-field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Script</div><div><input id="m-script" value="${esc(e.script||"")}" placeholder="relative to DATA_ROOT, e.g. notes/scripts/build.py" /></div>
+    </div>
+    <div class="field" id="m-script-args-field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Script args</div><div><input id="m-script-args" value="${esc(Array.isArray(e.scriptArgs)?e.scriptArgs.join(" "):"")}" placeholder="space-separated, e.g. --all" /></div>
+    </div>
+    <div class="field" id="m-commit-field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Commit changes</div><div><label><input type="checkbox" id="m-commit" ${e.commit!==false?"checked":""}/> auto git-commit data changes (off for read-only)</label></div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">project (optional)</div><div><input id="m-project" value="${esc(e.project||"")}" placeholder="routing hint, skip routing" /></div>
+    </div>
+    <div class="row-actions" style="margin:8px 0">
+      <button class="btn ghost" id="m-preview">Preview next fire</button>
+      <span id="m-preview-out" class="muted"></span>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Silent hours (optional)</div>
+      <div>from <input id="m-sh-from" value="${esc(e.silentHours?.from||"")}" placeholder="22:00" style="width:80px" ${mode==="once"?"disabled":""}/> to <input id="m-sh-to" value="${esc(e.silentHours?.to||"")}" placeholder="07:00" style="width:80px" ${mode==="once"?"disabled":""}/> (supports crossing midnight; ignored for once)</div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Legal workday only</div>
+      <div><label><input type="checkbox" id="m-hm" ${e.holidayMode==="workday"?"checked":""} ${mode==="once"?"disabled":""}/> China legal workday (skip 法定假, include 调休补班)</label></div>
+    </div>
+    <div class="field" style="grid-template-columns:140px 1fr">
+      <div class="flabel">Failure retry (optional)</div>
+      <div>count <input id="m-retry-max" type="number" value="${esc(e.retry?.max??0)}" style="width:70px"/> interval(ms) <input id="m-retry-ms" type="number" value="${esc(e.retry?.backoffMs??0)}" style="width:90px"/></div>
+    </div>
+    <div id="m-err" class="err" style="min-height:16px"></div>
+    <div class="actions">
+      <button class="btn ghost" id="m-cancel">Cancel</button>
+      <button class="btn" id="m-save">Save</button>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  const close = ()=>m.remove();
+  m.querySelector("#m-cancel").onclick = close;
+  // Silent hours do not apply to one-shot triggers; toggle the inputs live as the mode changes.
+  m.querySelectorAll('input[name="m-mode"]').forEach(r=>{
+    r.onchange = ()=>{
+      const once = m.querySelector('input[name="m-mode"]:checked').value === "once";
+      m.querySelector("#m-sh-from").disabled = once;
+      m.querySelector("#m-sh-to").disabled = once;
+      m.querySelector("#m-hm").disabled = once;
+      if (once) m.querySelector("#m-hm").checked = false; // workday gating is incompatible with once
+    };
+  });
+  // Action radio: toggle the message / script field groups, and mark which action is required.
+  // The preview/once-time guards below read whichever field the chosen action uses.
+  function syncAction(){
+    const isScript = m.querySelector('input[name="m-action"]:checked').value === "script";
+    m.querySelector("#m-script-field").style.display = isScript ? "" : "none";
+    m.querySelector("#m-script-args-field").style.display = isScript ? "" : "none";
+    m.querySelector("#m-commit-field").style.display = isScript ? "" : "none";
+    m.querySelector("#m-msg-field").style.display = isScript ? "none" : "";
+  }
+  m.querySelectorAll('input[name="m-action"]').forEach(r=>{ r.onchange = syncAction; });
+  syncAction();
+  m.querySelector("#m-preview").onclick = async ()=>{
+    const mode = m.querySelector('input[name="m-mode"]:checked').value;
+    const spec = m.querySelector("#m-spec").value.trim();
+    const tz = m.querySelector("#m-tz").value.trim()||"Asia/Shanghai";
+    const body = { timezone: tz };
+    body[mode] = spec;
+    if (m.querySelector("#m-hm").checked) body.holidayMode = "workday";
+    try { const r = await cfgWrite("/api/config/schedules/preview", body, "POST"); if(r.error) return m.querySelector("#m-preview-out").textContent="Error: "+r.error; m.querySelector("#m-preview-out").textContent = (r.next===null||r.next===0) ? "Next fire: (expired / no upcoming fire)" : "Next fire: " + fmtTime(r.next); }
+    catch(e){ m.querySelector("#m-preview-out").textContent = "Error: "+e.message; }
+  };
+  m.querySelector("#m-save").onclick = async ()=>{
+    const newId = m.querySelector("#m-id").value.trim();
+    const mode = m.querySelector('input[name="m-mode"]:checked').value;
+    const spec = m.querySelector("#m-spec").value.trim();
+    const actionVal = m.querySelector('input[name="m-action"]:checked').value;
+    const msg = m.querySelector("#m-msg").value.trim();
+    const script = m.querySelector("#m-script").value.trim();
+    const scriptArgsRaw = m.querySelector("#m-script-args").value.trim();
+    const scriptArgs = scriptArgsRaw ? scriptArgsRaw.split(/\s+/) : undefined;
+    const commit = m.querySelector("#m-commit").checked;
+    const tz = m.querySelector("#m-tz").value.trim()||"Asia/Shanghai";
+    const project = m.querySelector("#m-project").value.trim()||undefined;
+    // Silent-hours inputs are disabled (but still readable) in once mode; force them empty so an
+    // entry switched to/from once never persists a misleading silentHours (engine ignores it for
+    // once, but the stored field would contradict the design).
+    const shFrom = mode==="once" ? "" : m.querySelector("#m-sh-from").value.trim();
+    const shTo = mode==="once" ? "" : m.querySelector("#m-sh-to").value.trim();
+    const rmax = Number(m.querySelector("#m-retry-max").value)||0;
+    const rms = Number(m.querySelector("#m-retry-ms").value)||0;
+    if(!newId){ m.querySelector("#m-err").textContent="ID cannot be empty"; return; }
+    if(!spec){ m.querySelector("#m-err").textContent="Trigger cannot be empty"; return; }
+    // Action-aware required-field check: a script action requires a non-empty script; a message
+    // action requires a non-empty message.
+    if(actionVal==="script"){
+      if(!script){ m.querySelector("#m-err").textContent="Script cannot be empty"; return; }
+    } else {
+      if(!msg){ m.querySelector("#m-err").textContent="Message cannot be empty"; return; }
+    }
+    // Future-time guard for one-shot triggers, only on create or when the once value actually
+    // changes (so editing message/project of an already-expired once is not blocked).
+    // NOTE: this is a UX-only guard. It uses Date.parse, which interprets a naive (no-offset)
+    // value in the BROWSER's local timezone rather than the entry's `timezone` field. On a machine
+    // whose timezone differs from the entry's (default Asia/Shanghai) it could mis-reject a valid
+    // naive once; the backend never enforces this, and actual firing uses parseOnceEpoch in the
+    // entry timezone. Explicit-offset forms (e.g. ...+08:00) are unaffected.
+    if(mode==="once"){
+      const t = Date.parse(spec);
+      if(Number.isNaN(t)){ m.querySelector("#m-err").textContent="once must be a valid ISO 8601 date-time, e.g. 2026-08-20T22:00:00+08:00"; return; }
+      const changedOnce = !id || e.once !== spec;
+      if(changedOnce && t <= Date.now()){ m.querySelector("#m-err").textContent="once time must be in the future"; return; }
+    }
+    const entry = { id:newId, enabled:true, timezone:tz };
+    entry[mode] = spec;
+    // Exactly one action: set the chosen one and clear the other so an edit never persists both.
+    if(actionVal==="script"){
+      entry.script = script;
+      if(scriptArgs) entry.scriptArgs = scriptArgs;
+      entry.commit = commit;
+      delete entry.message;
+    } else {
+      entry.message = msg;
+      delete entry.script;
+      delete entry.scriptArgs;
+      delete entry.commit;
+    }
+    // Build only the fields present in the form; omit (delete) the ones cleared, so editing an
+    // existing entry and emptying project / silentHours / retry actually removes them.
+    if(project) entry.project = project; else delete entry.project;
+    if(shFrom && shTo) entry.silentHours = { from:shFrom, to:shTo }; else delete entry.silentHours;
+    if(rmax>0) entry.retry = { max:rmax, backoffMs:rms }; else delete entry.retry;
+    if(m.querySelector("#m-hm").checked) entry.holidayMode = "workday"; else delete entry.holidayMode;
+    if(id){ // edit: replace, keep enabled + recipient
+      const old = schedules.find(x=>x.id===id);
+      entry.enabled = old? old.enabled : true;
+      // The form has no recipient field; keep the original one so an edit never silently drops it.
+      if(old && old.recipient) entry.recipient = old.recipient;
+      schedules = schedules.map(x=>x.id===id?entry:x);
+    } else {
+      if(schedules.some(x=>x.id===newId)){ m.querySelector("#m-err").textContent="ID already exists"; return; }
+      schedules.push(entry);
+    }
+    close();
+    await persistSchedules();
+  };
+}
+
+// ---- backups ----
+async function loadBackups(){
+  const data = await cfgGet("/api/config/backups");
+  if(!data.length){ document.getElementById("backup-list").innerHTML='<div class="muted">No backups yet.</div>'; return; }
+  const rows = data.map(b=>`<tr>
+    <td>${esc(b.name)}</td>
+    <td>${fmtTime(b.ts)}</td>
+    <td>${fmtBytes(b.bytes)}</td>
+    <td><button class="btn ghost backup-restore" data-name="${esc(b.name)}" data-file="${esc(b.file)}">Restore</button></td>
+  </tr>`).join("");
+  document.getElementById("backup-list").innerHTML = `<table>
+    <thead><tr><th>File</th><th>Time</th><th>Size</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+  document.querySelectorAll(".backup-restore").forEach(b=>b.onclick=async()=>{
+    if(!confirm("Confirm restoring this backup? Restoring .env requires a restart to take effect.")) return;
+    try { const r = await cfgWrite("/api/config/backups/restore", { name:b.dataset.name, file:b.dataset.file }, "POST"); if(r.error) return toast("Error: "+r.error); toast(r.live?"Restored; takes effect immediately":"Restored; restart to take effect"); await loadConfig(); }
+    catch(e){ toast("Restore failed: "+e.message); }
+  });
+}
+
+// ---- wechat status ----
+function renderWechatStatus(w){
+  const el = document.getElementById("wechat-status");
+  if(!w){ el.innerHTML = '<div class="muted">No WeChat status available.</div>'; return; }
+  if(!w.configured){ el.innerHTML = '<div class="muted">WeChat channel not logged in (not configured or logged out).</div>'; return; }
+  const row = (label, value)=>`<div class="field"><div><div class="flabel">${label}</div></div><div>${value}</div></div>`;
+  const ts = (t)=> t? fmtTime(t) : "—";
+  const loginBadge = '<span class="badge b-success">Logged in</span>';
+  const loopBadge = w.reminderLoopStarted ? '<span class="badge b-success">running</span>' : '<span class="badge b-error">not running</span>';
+  const remindedBadge = w.remindedThisStretch ? '<span class="badge b-success">reminded</span>' : '<span class="badge b-duplicate">not reminded</span>';
+  const rows = [];
+  rows.push(row("Login", `${loginBadge} owner: ${esc(w.owner||"—")}${w.loginAt?` · logged in ${fmtDurHuman(w.loginAgeMs)}`:" · duration unknown"}`));
+  rows.push(row("Renewal reminder", `${w.reminderEnabled?`threshold ${w.thresholdHours} h`:"disabled"} · loop ${loopBadge} · check interval ${Math.round((w.reminderTickMs||600000)/60000)} min`));
+  rows.push(row("Loop check", `Last ${ts(w.lastTickAt)} · Next ${ts(w.nextTickAt)}`));
+  if(!w.ownerHasContext){
+    rows.push(row("owner session", '<span class="muted">Owner has never messaged the bot (no context, cannot determine silence)</span>'));
+  } else {
+    rows.push(row("Last message", `${ts(w.lastMsgAt)} · silent for ${fmtDurHuman(w.quietMs)}`));
+    rows.push(row("This silence stretch", `${remindedBadge} · last reminded ${ts(w.lastRemindedAt)} · next reminder due ${ts(w.nextReminderAt)}`));
+  }
+  el.innerHTML = rows.join("");
+}
+document.getElementById("wx-refresh").onclick = ()=>loadConfig();
+
+// ---- wechat pairing ----
+let pairTimer = null;
+
+const PAIR_LABELS = {
+  pending: "Waiting for scan — open WeChat and scan the QR",
+  scanned: "Scanned — please confirm in WeChat",
+  expired: "QR expired",
+  confirmed: "Connected",
+  error: "Error",
+  idle: "Idle",
+};
+
+function pairClose(m){
+  if(pairTimer){ clearInterval(pairTimer); pairTimer = null; }
+  m.remove();
+}
+
+function updatePairStatus(m, state, err){
+  const el = m.querySelector("#pair-status");
+  const refresh = m.querySelector("#pair-refresh");
+  const qr = m.querySelector("#pair-qr");
+  el.textContent = state === "error"
+    ? "Error" + (err ? ": " + err : "")
+    : (PAIR_LABELS[state] || state);
+  // The QR is only useful while waiting/scanning; hide it once expired/errored so a stale code
+  // isn't scanned, and surface the refresh action instead.
+  const expired = state === "expired";
+  refresh.style.display = expired ? "" : "none";
+  qr.style.opacity = (state === "pending" || state === "scanned") ? "1" : ".35";
+}
+
+async function pairStart(m){
+  m.querySelector("#pair-status").textContent = "Fetching QR…";
+  try {
+    const r = await postJSON("/api/wechat/pair", {});
+    if(r.ok){
+      m.querySelector("#pair-qr").innerHTML = `<img src="${r.qrImage}" alt="WeChat QR code" style="max-width:240px;width:100%;image-rendering:pixelated" />`;
+      updatePairStatus(m, r.state);
+    } else {
+      m.querySelector("#pair-qr").innerHTML = "";
+      updatePairStatus(m, r.state || "error", r.error);
+    }
+  } catch(e){
+    m.querySelector("#pair-qr").innerHTML = "";
+    updatePairStatus(m, "error", e.message);
+  }
+}
+
+async function pairPoll(m){
+  try {
+    const c = await cfgGet("/api/config");
+    const p = (c && c.pairing) || { state: "idle" };
+    updatePairStatus(m, p.state, p.error);
+    if(p.state === "confirmed"){
+      pairClose(m);
+      await loadConfig();
+      toast("WeChat paired successfully");
+    }
+  } catch(e){ /* transient poll failure — keep the modal open and retry next tick */ }
+}
+
+function openPairModal(){
+  if(pairTimer){ clearInterval(pairTimer); pairTimer = null; }
+  const m = document.createElement("div");
+  m.className = "modal-bg";
+  m.innerHTML = `<div class="modal">
+    <h3>Pair WeChat</h3>
+    <div class="hint">Scan the QR code with WeChat, then confirm on your phone. The new login takes effect without restarting the process.</div>
+    <div style="text-align:center;padding:8px 0" id="pair-qr"></div>
+    <div class="muted" style="text-align:center;min-height:20px" id="pair-status">Starting…</div>
+    <div class="actions">
+      <button class="btn ghost" id="pair-cancel">Cancel</button>
+      <button class="btn ghost" id="pair-refresh" style="display:none">Refresh QR</button>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  m.querySelector("#pair-cancel").onclick = async ()=>{
+    try { await postJSON("/api/wechat/pair/cancel", {}); } catch(e){ /* ignore */ }
+    pairClose(m);
+  };
+  m.querySelector("#pair-refresh").onclick = ()=>pairStart(m);
+  pairStart(m);
+  pairTimer = setInterval(()=>pairPoll(m), 2000);
+}
+
+document.getElementById("wx-pair").onclick = openPairModal;
+
+async function loadConfig(){
+  const c = await cfgGet("/api/config");
+  document.getElementById("sp-text").value = c.systemPrompt || "";
+  document.getElementById("sp-count").textContent = `${(c.systemPrompt||"").length} chars`;
+  document.getElementById("wx-pair").textContent = (c.wechat && c.wechat.configured) ? "Re-pair" : "Pair";
+  renderWechatStatus(c.wechat);
+  await loadBackups();
+}
+
+// ---- wire schedules buttons ----
+document.getElementById("sched-add").onclick = ()=>openSchedModal(null);
+document.getElementById("sched-reload").onclick = async ()=>{ await loadSchedulesView(); toast("Refreshed"); };
+
+document.querySelectorAll("#sched-filter .view-btn").forEach(btn=>btn.onclick=()=>{
+  schedFilter = btn.dataset.filter;
+  document.querySelectorAll("#sched-filter .view-btn").forEach(x=>x.classList.toggle("active", x===btn));
+  renderSchedules();
+});
+
+document.getElementById("sched-clear-past").onclick = async ()=>{
+  const n = schedules.filter(e=>e.state==="past").length;
+  if(!n) return toast("Nothing to clear");
+  const ok = confirm(
+    `Remove ${n} spent schedule(s) from schedules.json?\n\n`+
+    `They cannot fire again, so nothing stops working.\n`+
+    `Run history lives in the task logs, not in the config — it is kept, and these schedules stay `+
+    `browsable here under "Removed · history only".`
+  );
+  if(!ok) return;
+  schedules = schedules.filter(e=>e.state!=="past");
+  await persistSchedules();
+};
+
+// =====================================================================
+// MONITOR (process health / metrics)
+// =====================================================================
+let monitorTimer = null;
+const MONITOR_REFRESH_MS = 5000;
+const LAG_WARN_MS = 100; // p99 event-loop lag above this turns the line red
+
+// Inline SVG line chart (zero deps, same style as the token-stats chart). Draws one or more
+// series sharing a single auto-scaled Y axis. `defs` = [{field, color}].
+function renderLines(points, defs, opts){
+  opts = opts || {};
+  if(!points || !points.length) return '<div class="muted">No data yet (sampling every '+MONITOR_REFRESH_MS/1000+'s)</div>';
+  const W = 960, H = 180, pad = { l:48, r:12, t:10, b:20 };
+  let max = opts.max || 1;
+  for(const d of defs) for(const p of points) max = Math.max(max, p[d.field]||0);
+  const n = points.length;
+  const X = i => pad.l + (n>1 ? i/(n-1)*(W-pad.l-pad.r) : (W-pad.l-pad.r)/2);
+  const Y = v => H-pad.b - (v/max)*(H-pad.t-pad.b);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:960px" xmlns="http://www.w3.org/2000/svg">`;
+  svg += `<line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${H-pad.b}" stroke="var(--line)"/>`;
+  svg += `<line x1="${pad.l}" y1="${H-pad.b}" x2="${W-pad.r}" y2="${H-pad.b}" stroke="var(--line)"/>`;
+  svg += `<text x="${pad.l-6}" y="${pad.t+10}" text-anchor="end" fill="var(--muted)" font-size="11">${fmtShort(max)}${opts.unit||""}</text>`;
+  for(const i of [0, Math.floor((n-1)/2), n-1]){
+    if(i<0) continue;
+    svg += `<text x="${X(i)}" y="${H-pad.b+16}" text-anchor="middle" fill="var(--muted)" font-size="10">${new Date(points[i].ts).toLocaleTimeString()}</text>`;
+  }
+  for(const d of defs){
+    const pts = points.map((p,i)=>`${X(i).toFixed(1)},${Y(p[d.field]||0).toFixed(1)}`).join(" ");
+    svg += `<polyline points="${pts}" fill="none" stroke="${d.color}" stroke-width="1.5"/>`;
+  }
+  svg += `</svg>`;
+  // Inline legend so each colored line is self-explanatory (no need to cross-reference the title).
+  const legend = `<div style="display:flex;flex-wrap:wrap;gap:16px;margin:2px 0 12px;font-size:12px;color:var(--muted)">` +
+    defs.map(d=>`<span style="display:inline-flex;align-items:center;gap:6px"><i style="width:14px;height:3px;background:${d.color};display:inline-block;border-radius:2px"></i>${d.label||d.field}</span>`).join("") +
+    `</div>`;
+  return svg + legend;
+}
+
+function chanBadge(name, c){
+  const cls = c.up ? "b-success" : "b-error";
+  const txt = c.up ? "online" : "offline";
+  return `<span class="badge ${cls}">${name}: ${txt}</span>`;
+}
+
+function renderMonitorCards(s){
+  const cards = [
+    ["Uptime", fmtDurHuman(s.uptimeSec*1000)],
+    ["RSS", fmtBytes(s.memory.rss)],
+    ["Heap used", fmtBytes(s.memory.heapUsed)],
+    ["Queue depth", s.queueDepth],
+    ["In-flight tasks", s.activeTasks],
+    ["In-flight agents", s.activeAgents],
+    ["Total tasks", s.totalDispatched],
+    ["Failed", s.totalFailed],
+    ["Dedup dropped", s.duplicatesTotal],
+    ["Lag p50", s.eventLoopLagMs.p50.toFixed(2)+" ms"],
+    ["Lag p99", s.eventLoopLagMs.p99.toFixed(2)+" ms"],
+  ];
+  let html = cards.map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  const chans = Object.entries(s.channels||{});
+  if(chans.length){
+    html += `<div class="card" style="grid-column:1/-1"><div class="k">Channels</div><div class="v" style="font-size:14px">${chans.map(([n,c])=>chanBadge(n,c)).join(" ")}</div></div>`;
+  }
+  document.getElementById("m-cards").innerHTML = html;
+}
+
+function renderMonitorCharts(samples){
+  document.getElementById("m-chart-mem").innerHTML = renderLines(samples, [
+    { field:"rss", color:"var(--brand)", label:"RSS (resident set, incl. off-heap / buffers)" },
+    { field:"heapUsed", color:"var(--ok)", label:"Heap used (V8 heap)" },
+  ]);
+  document.getElementById("m-chart-queue").innerHTML = renderLines(samples, [
+    { field:"queueDepth", color:"var(--warn)", label:"Queue depth (tasks waiting to run)" },
+    { field:"activeTasks", color:"var(--brand)", label:"In-flight tasks (running)" },
+  ]);
+  const lagColor = samples.some(s=>(s.lagP99||0) >= LAG_WARN_MS) ? "var(--err)" : "var(--brand)";
+  document.getElementById("m-chart-lag").innerHTML = renderLines(samples, [
+    { field:"lagP99", color:lagColor, label:"Event-loop lag p99 (turns red above "+LAG_WARN_MS+"ms)" },
+  ]);
+}
+
+async function loadMonitor(){
+  try {
+    const snap = await getJSON("/healthz");
+    renderMonitorCards(snap);
+    const hist = await getJSON("/healthz/history");
+    renderMonitorCharts(hist.samples || []);
+  } catch(e){
+    document.getElementById("m-cards").innerHTML = '<div class="err">Failed to fetch monitor data: '+esc(e.message)+'</div>';
+  }
+}
+
+function startMonitorTimer(){
+  if(monitorTimer) return;
+  loadMonitor();
+  monitorTimer = setInterval(loadMonitor, MONITOR_REFRESH_MS);
+}
+function stopMonitorTimer(){
+  if(monitorTimer){ clearInterval(monitorTimer); monitorTimer = null; }
+}
+
+// =====================================================================
+// INIT
+// =====================================================================
+async function init(){
+  document.getElementById("host").textContent = `http://127.0.0.1:${location.port||""}`;
+  document.getElementById("f-search").onclick = applyFilters;
+  document.getElementById("f-reset").onclick = ()=>{
+    document.getElementById("f-from").value=""; document.getElementById("f-to").value="";
+    document.getElementById("f-project").value=""; document.getElementById("f-source").value="";
+    document.getElementById("f-q").value=""; state.filters={}; state.offset=0; loadList();
+  };
+  // stats: default range = last 30 days; metric switch re-renders
+  const now = new Date();
+  document.getElementById("s-from").value = toDateInput(new Date(now.getTime()-30*86400000));
+  document.getElementById("s-to").value = toDateInput(now);
+  document.getElementById("s-go").onclick = loadStats;
+  document.getElementById("s-field").onchange = loadStats;
+  await loadSummary();
+  await loadList();
+  await loadDisk();
+}
+init().catch(e=>{ document.body.innerHTML = '<div class="wrap"><pre class="err">'+esc(e.message)+'</pre></div>'; });
+</script>
+</body>
+</html>

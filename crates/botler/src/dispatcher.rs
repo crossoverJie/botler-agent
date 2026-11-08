@@ -5,7 +5,7 @@
 //! self-heal → commit → post-turn rotation. Scheduler and CLI go through the
 //! same queue. `dispatch` never rejects: every failure becomes readable text.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -13,13 +13,16 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::config::Config;
+use crate::fsutil::now_epoch_ms;
 use crate::identity::{ChannelSource, ConversationKind};
 use crate::paths::PathGuard;
-use crate::runner::{Phase, RunContext, Runner};
+use crate::runner::{Phase, RunContext, Runner, TaskResult};
 use crate::runtime::InboundImage;
 use crate::safety::git::{commit_if_changed, commit_subject};
 use crate::safety::validate::validate_state;
 use crate::scheduler::types::{Recipient, ScheduleOrigin};
+use crate::task_log::record::{make_id, RecordInput, TaskLog};
+use crate::task_log::store::TaskLogStore;
 use crate::tools::run::{run_script, ErrorKind};
 
 pub const DUPLICATE_SENTINEL: &str = "(duplicate message ignored)";
@@ -126,6 +129,45 @@ pub struct DispatchStats {
     pub finished: AtomicU64,
     pub duplicates: AtomicU64,
     pub failures: AtomicU64,
+    success: AtomicU64,
+    auto_fixed: AtomicU64,
+    unknown_project: AtomicU64,
+    validation_failed: AtomicU64,
+    error: AtomicU64,
+    duplicate: AtomicU64,
+}
+
+impl DispatchStats {
+    /// Called only from the single worker that owns the log writes.
+    pub fn bump(&self, status: TaskStatus) {
+        let counter = match status {
+            TaskStatus::Success => &self.success,
+            TaskStatus::AutoFixed => &self.auto_fixed,
+            TaskStatus::UnknownProject => &self.unknown_project,
+            TaskStatus::ValidationFailed => &self.validation_failed,
+            TaskStatus::Error => &self.error,
+            TaskStatus::Duplicate => &self.duplicate,
+        };
+        counter.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn status_counts(&self) -> BTreeMap<String, u64> {
+        let mut out = BTreeMap::new();
+        for (name, counter) in [
+            ("success", &self.success),
+            ("auto-fixed", &self.auto_fixed),
+            ("unknown-project", &self.unknown_project),
+            ("validation-failed", &self.validation_failed),
+            ("error", &self.error),
+            ("duplicate", &self.duplicate),
+        ] {
+            let count = counter.load(Ordering::SeqCst);
+            if count > 0 {
+                out.insert(name.to_string(), count);
+            }
+        }
+        out
+    }
 }
 
 struct Inner {
@@ -133,7 +175,9 @@ struct Inner {
     config: Config,
     guard: PathGuard,
     dedup: Mutex<HashMap<String, std::time::Instant>>,
-    stats: DispatchStats,
+    stats: Arc<DispatchStats>,
+    task_log: TaskLogStore,
+    log_seq: AtomicU64,
     task_seq: AtomicU64,
 }
 
@@ -146,6 +190,13 @@ enum WorkerRequest {
     Script {
         options: ScriptTaskOptions,
         reply: oneshot::Sender<DispatchResult>,
+    },
+    /// Dedup hit (detected in the concurrent `enqueue` path). Fire-and-forget:
+    /// the worker appends the log so all writes stay on the serial queue.
+    Duplicate {
+        message: String,
+        options: DispatchOptions,
+        started_ms: i64,
     },
 }
 
@@ -177,12 +228,15 @@ impl EnqueuedTask {
 
 impl Dispatcher {
     pub fn new(runner: Runner, config: Config, guard: PathGuard) -> Arc<Self> {
+        let task_log = TaskLogStore::new(config.log_dir.clone());
         let inner = Arc::new(Inner {
             runner,
             config,
             guard,
             dedup: Mutex::new(HashMap::new()),
-            stats: DispatchStats::default(),
+            stats: Arc::new(DispatchStats::default()),
+            task_log,
+            log_seq: AtomicU64::new(0),
             task_seq: AtomicU64::new(0),
         });
         let (tx, mut rx) = mpsc::unbounded_channel::<WorkerRequest>();
@@ -202,6 +256,13 @@ impl Dispatcher {
                         let result = process_script(&worker_inner, &options).await;
                         let _ = reply.send(result);
                     }
+                    WorkerRequest::Duplicate {
+                        message,
+                        options,
+                        started_ms,
+                    } => {
+                        append_duplicate_log(&worker_inner, &message, &options, started_ms);
+                    }
                 }
             }
         });
@@ -210,6 +271,16 @@ impl Dispatcher {
 
     pub fn stats(&self) -> &DispatchStats {
         &self.inner.stats
+    }
+
+    /// Read-only handles for the WebUI: atomics plus a cloned store path. No
+    /// handler can enqueue work or bypass the serial worker through these.
+    pub fn stats_handle(&self) -> Arc<DispatchStats> {
+        Arc::clone(&self.inner.stats)
+    }
+
+    pub fn task_log_handle(&self) -> TaskLogStore {
+        self.inner.task_log.clone()
     }
 
     /// Enqueue at arrival time and wait for the serial worker to finish.
@@ -224,6 +295,11 @@ impl Dispatcher {
             if self.is_duplicate(id) {
                 self.inner.stats.duplicates.fetch_add(1, Ordering::SeqCst);
                 tracing::info!("[dispatch] ignoring duplicate message {id}");
+                let _ = self.tx.send(WorkerRequest::Duplicate {
+                    message: message.to_string(),
+                    options,
+                    started_ms: now_epoch_ms(),
+                });
                 return EnqueuedTask {
                     result: Some(DispatchResult {
                         text: DUPLICATE_SENTINEL.to_string(),
@@ -289,6 +365,38 @@ impl Dispatcher {
     }
 }
 
+/// Logging must never break the main flow (v1 `appendTaskLog` posture).
+fn append_best_effort(inner: &Inner, log: &TaskLog) {
+    if let Err(err) = inner.task_log.append(log) {
+        tracing::warn!("[task-log] append failed: {err}");
+    }
+}
+
+fn append_duplicate_log(inner: &Inner, message: &str, options: &DispatchOptions, started_ms: i64) {
+    let ended_ms = now_epoch_ms();
+    let task_id = options.id.clone().unwrap_or_else(|| "duplicate".into());
+    let seq = inner.log_seq.fetch_add(1, Ordering::SeqCst);
+    let log = TaskLog::new(RecordInput {
+        id: make_id(&task_id, "execute", ended_ms, seq),
+        task_id,
+        phase: "execute".into(),
+        source: options.source.as_str().into(),
+        provider: inner.config.provider.clone(),
+        model: inner.config.model.clone(),
+        projects: Vec::new(),
+        status: TaskStatus::Duplicate.as_str().into(),
+        started_ms,
+        ended_ms,
+        user_message: message.to_string(),
+        reply_text: DUPLICATE_SENTINEL.into(),
+        images: Vec::new(),
+        inbound_image_count: None,
+        mutated: false,
+    });
+    append_best_effort(inner, &log);
+    inner.stats.bump(TaskStatus::Duplicate);
+}
+
 async fn process_message(
     inner: &Arc<Inner>,
     message: &str,
@@ -296,6 +404,9 @@ async fn process_message(
 ) -> DispatchResult {
     inner.stats.started.fetch_add(1, Ordering::SeqCst);
     let started = std::time::Instant::now();
+    let started_ms = now_epoch_ms();
+    // (fix instruction, heal result, start, end) for the optional second log.
+    let mut heal: Option<(String, TaskResult, i64, i64)> = None;
     let conversation = options.conversation.clone();
     let ctx = RunContext {
         task_id: options.id.clone().unwrap_or_else(|| {
@@ -348,7 +459,10 @@ async fn process_message(
                 conversation_kind: ConversationKind::Synthetic,
                 origin: None,
             };
-            let _ = inner.runner.run(&fix, &heal_ctx).await;
+            let heal_started_ms = now_epoch_ms();
+            let heal_result = inner.runner.run(&fix, &heal_ctx).await;
+            let heal_ended_ms = now_epoch_ms();
+            heal = Some((fix, heal_result, heal_started_ms, heal_ended_ms));
             validation = validate_state(&inner.guard, scope);
             if !validation.ok {
                 let fix = validation.fix.unwrap_or_default();
@@ -392,12 +506,67 @@ async fn process_message(
         inner.stats.failures.fetch_add(1, Ordering::SeqCst);
     }
     inner.stats.finished.fetch_add(1, Ordering::SeqCst);
+    inner.stats.bump(status);
     tracing::info!(
         "[dispatch] {:?} -> {} in {}ms",
         options.source,
         status.as_str(),
         started.elapsed().as_millis()
     );
+
+    // Single append point, inside the worker. Main record first, then the
+    // self-heal record (v1 dispatcher.ts order).
+    let ended_ms = now_epoch_ms();
+    let seq = inner.log_seq.fetch_add(1, Ordering::SeqCst);
+    append_best_effort(
+        inner,
+        &TaskLog::new(RecordInput {
+            id: make_id(&ctx.task_id, "execute", ended_ms, seq),
+            task_id: ctx.task_id.clone(),
+            phase: "execute".into(),
+            source: options.source.as_str().into(),
+            provider: inner.config.provider.clone(),
+            model: inner.config.model.clone(),
+            projects: result.projects.clone(),
+            status: status.as_str().into(),
+            started_ms,
+            ended_ms,
+            user_message: message.to_string(),
+            reply_text: result.text.clone(),
+            images: result.images.clone(),
+            inbound_image_count: Some(options.inbound_images.len()),
+            mutated: result.mutated,
+        }),
+    );
+    if let Some((fix, heal_result, heal_started_ms, heal_ended_ms)) = heal {
+        let heal_status = if status == TaskStatus::AutoFixed {
+            "success"
+        } else {
+            "validation-failed"
+        };
+        let seq = inner.log_seq.fetch_add(1, Ordering::SeqCst);
+        append_best_effort(
+            inner,
+            &TaskLog::new(RecordInput {
+                id: make_id(&ctx.task_id, "self-heal", heal_ended_ms, seq),
+                task_id: ctx.task_id.clone(),
+                phase: "self-heal".into(),
+                source: options.source.as_str().into(),
+                provider: inner.config.provider.clone(),
+                model: inner.config.model.clone(),
+                projects: result.projects.clone(),
+                status: heal_status.into(),
+                started_ms: heal_started_ms,
+                ended_ms: heal_ended_ms,
+                user_message: fix,
+                reply_text: heal_result.text.clone(),
+                images: Vec::new(),
+                inbound_image_count: None,
+                mutated: heal_result.mutated,
+            }),
+        );
+    }
+
     DispatchResult {
         text: result.text,
         images: result.images,
@@ -408,6 +577,7 @@ async fn process_message(
 async fn process_script(inner: &Arc<Inner>, options: &ScriptTaskOptions) -> DispatchResult {
     inner.stats.started.fetch_add(1, Ordering::SeqCst);
     let started = std::time::Instant::now();
+    let started_ms = now_epoch_ms();
     let result = run_script(&inner.guard, None, &options.script, &options.script_args).await;
     let project = result
         .cwd
@@ -449,12 +619,39 @@ async fn process_script(inner: &Arc<Inner>, options: &ScriptTaskOptions) -> Disp
         inner.stats.failures.fetch_add(1, Ordering::SeqCst);
     }
     inner.stats.finished.fetch_add(1, Ordering::SeqCst);
+    inner.stats.bump(status);
     tracing::info!(
         "[dispatch] script {} -> {} (ran={ran}) in {}ms",
         options.id,
         status.as_str(),
         started.elapsed().as_millis()
     );
+
+    // Script tasks keep the `schedule:<id>:<epoch>` id so the derived schedule
+    // history in the WebUI finds them.
+    let ended_ms = now_epoch_ms();
+    let seq = inner.log_seq.fetch_add(1, Ordering::SeqCst);
+    append_best_effort(
+        inner,
+        &TaskLog::new(RecordInput {
+            id: make_id(&options.id, "execute", ended_ms, seq),
+            task_id: options.id.clone(),
+            phase: "execute".into(),
+            source: options.source.as_str().into(),
+            provider: inner.config.provider.clone(),
+            model: inner.config.model.clone(),
+            projects: project.iter().cloned().collect(),
+            status: status.as_str().into(),
+            started_ms,
+            ended_ms,
+            user_message: format!("run {}", options.script),
+            reply_text: text.clone(),
+            images: Vec::new(),
+            inbound_image_count: None,
+            mutated: ran,
+        }),
+    );
+
     DispatchResult {
         text,
         images: Vec::new(),

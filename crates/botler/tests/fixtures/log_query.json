@@ -1,0 +1,87 @@
+{
+  "dayFiles": [
+    { "name": "2026-11-06.jsonl", "valid": true },
+    { "name": "1999-01-01.jsonl", "valid": true },
+    { "name": "2026-11-6.jsonl", "valid": false },
+    { "name": "2026-11-06.json", "valid": false },
+    { "name": "2026-11-06.jsonl.bak", "valid": false },
+    { "name": "202a-11-06.jsonl", "valid": false },
+    { "name": "../../.env", "valid": false },
+    { "name": "notes.jsonl", "valid": false }
+  ],
+  "scheduleIds": [
+    { "taskId": "schedule:morning:1700000000000", "expect": "morning" },
+    { "taskId": "schedule:a:b:1700000000000", "expect": "a:b" },
+    { "taskId": "schedule:x:abc", "expect": null },
+    { "taskId": "task-1", "expect": null },
+    { "taskId": "schedule::1700000000000", "expect": null }
+  ],
+  "queryMatches": [
+    {
+      "name": "empty query matches everything",
+      "log": { "source": "cli", "status": "success", "phase": "execute", "taskId": "task-1", "userMessage": "hello", "replyText": "ok", "projects": ["cook"] },
+      "query": {},
+      "matches": true
+    },
+    {
+      "name": "project matches the projects array",
+      "log": { "source": "cli", "status": "success", "phase": "execute", "taskId": "task-1", "userMessage": "hello", "replyText": "ok", "projects": ["cook", "ledger"] },
+      "query": { "project": "ledger" },
+      "matches": true
+    },
+    {
+      "name": "project falls back to the legacy singular field",
+      "log": { "source": "cli", "status": "success", "phase": "execute", "taskId": "task-1", "userMessage": "hello", "replyText": "ok", "project": "cook" },
+      "query": { "project": "cook" },
+      "matches": true
+    },
+    {
+      "name": "project mismatch is rejected",
+      "log": { "source": "cli", "status": "success", "phase": "execute", "taskId": "task-1", "userMessage": "hello", "replyText": "ok", "projects": ["cook"] },
+      "query": { "project": "ledger" },
+      "matches": false
+    },
+    {
+      "name": "source and phase are exact",
+      "log": { "source": "telegram", "status": "success", "phase": "execute", "taskId": "task-1", "userMessage": "hello", "replyText": "ok" },
+      "query": { "source": "telegram", "phase": "execute" },
+      "matches": true
+    },
+    {
+      "name": "phase mismatch is rejected",
+      "log": { "source": "telegram", "status": "success", "phase": "execute", "taskId": "task-1", "userMessage": "hello", "replyText": "ok" },
+      "query": { "phase": "self-heal" },
+      "matches": false
+    },
+    {
+      "name": "scheduleId parses the taskId prefix",
+      "log": { "source": "scheduler", "status": "success", "phase": "execute", "taskId": "schedule:morning:1700000000000", "userMessage": "run daily.sh", "replyText": "ok" },
+      "query": { "scheduleId": "morning" },
+      "matches": true
+    },
+    {
+      "name": "scheduleId mismatch is rejected",
+      "log": { "source": "scheduler", "status": "success", "phase": "execute", "taskId": "schedule:morning:1700000000000", "userMessage": "run daily.sh", "replyText": "ok" },
+      "query": { "scheduleId": "evening" },
+      "matches": false
+    },
+    {
+      "name": "free-text query is case-insensitive across message and reply",
+      "log": { "source": "cli", "status": "success", "phase": "execute", "taskId": "task-1", "userMessage": "hello", "replyText": "DONE already", "projects": [] },
+      "query": { "q": "done" },
+      "matches": true
+    },
+    {
+      "name": "free-text query also searches project names",
+      "log": { "source": "cli", "status": "success", "phase": "execute", "taskId": "task-1", "userMessage": "hello", "replyText": "ok", "projects": ["CookBook"] },
+      "query": { "q": "cookbook" },
+      "matches": true
+    },
+    {
+      "name": "free-text miss is rejected",
+      "log": { "source": "cli", "status": "success", "phase": "execute", "taskId": "task-1", "userMessage": "hello", "replyText": "ok", "projects": [] },
+      "query": { "q": "absent" },
+      "matches": false
+    }
+  ]
+}

@@ -18,7 +18,7 @@
 #   - Only touches the repo directory. Never touches DATA_ROOT or ~/.botler-agent/.
 #   - `restart` discards local working-tree changes (git checkout -f).
 #   - stable mode resolves the latest GitHub release tag; if none exists yet,
-#     it falls back to main with a warning.
+#     it falls back to the branch (default: v2) with a warning.
 #   - The binary loads its own config from ~/.botler-agent/.env (and the source
 #     .env fallback), so nothing is exported by this script.
 #
@@ -29,7 +29,7 @@
 #   BOTLER_CARGO         cargo binary (default: cargo)
 #   BOTLER_CARGO_TOOLCHAIN  rustup toolchain override (default: +stable);
 #                        set to "" to honor the repo's rust-toolchain.toml
-#   BOTLER_FEATURES      cargo features (default: channels)
+#   BOTLER_FEATURES      cargo features (default: webui,channels)
 #   HTTPS_PROXY / https_proxy         used automatically by curl / gh
 
 set -euo pipefail
@@ -45,7 +45,7 @@ GITHUB_REPO="${BOTLER_GITHUB_REPO:-crossoverJie/botler-agent}"
 GITHUB_API="${BOTLER_GITHUB_API:-https://api.github.com}"
 BIN="${BOTLER_BIN:-$REPO_DIR/target/release/botler}"
 CARGO="${BOTLER_CARGO:-cargo}"
-FEATURES="${BOTLER_FEATURES:-channels}"
+FEATURES="${BOTLER_FEATURES:-webui,channels}"
 
 # rustup installs cargo into ~/.cargo/bin, which non-interactive shells
 # (launchd, cron, this script) often lack on PATH. Source its env only when

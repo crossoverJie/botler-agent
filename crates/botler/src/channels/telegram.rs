@@ -27,11 +27,19 @@ pub struct TelegramApi {
 }
 
 impl TelegramApi {
-    pub fn new(token: impl Into<String>) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(LONG_POLL_SECONDS + 15))
-            .build()
-            .unwrap_or_default();
+    /// `proxy` corresponds to `TG_PROXY` in the v1 config (e.g.
+    /// `http://127.0.0.1:7890` or `socks5://127.0.0.1:1086`). An invalid value
+    /// is ignored rather than breaking channel startup; reqwest also honors
+    /// the standard `HTTPS_PROXY` / `ALL_PROXY` environment variables.
+    pub fn new(token: impl Into<String>, proxy: Option<&str>) -> Self {
+        let mut builder = Client::builder().timeout(Duration::from_secs(LONG_POLL_SECONDS + 15));
+        if let Some(raw) = proxy.filter(|p| !p.trim().is_empty()) {
+            match reqwest::Proxy::all(raw.trim()) {
+                Ok(proxy) => builder = builder.proxy(proxy),
+                Err(err) => tracing::warn!("[telegram] ignoring invalid TG_PROXY: {err}"),
+            }
+        }
+        let client = builder.build().unwrap_or_default();
         Self {
             client,
             token: token.into(),

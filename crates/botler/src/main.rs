@@ -24,6 +24,12 @@ use botler::scheduler::holidays::HolidayCalendar;
 #[tokio::main]
 async fn main() -> Result<()> {
     botler::init_tracing();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // `init` must run before Config::load / PathGuard::new: on a fresh machine
+    // DATA_ROOT does not exist yet, and scaffolding must not require it.
+    if args.len() == 1 && args[0] == "init" {
+        return botler::init::run_cli();
+    }
     let config = Arc::new(Config::load()?);
     let guard = PathGuard::new(&config.data_root)?;
     tracing::info!(
@@ -32,7 +38,6 @@ async fn main() -> Result<()> {
         guard.project_names()
     );
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some((command, rest)) = admin_command(&args) {
         return match command {
             "sessions" => handle_sessions(&config, rest),
@@ -75,6 +80,9 @@ async fn main() -> Result<()> {
         if !result.text.trim().is_empty() {
             println!("{}", result.text);
         }
+        if !result.images.is_empty() {
+            println!("[images] {}", result.images.join(", "));
+        }
         return Ok(());
     }
     if !config.has_channels() {
@@ -82,6 +90,9 @@ async fn main() -> Result<()> {
     }
     start_channel_tasks(&config, &dispatcher, &contacts, &push).await;
 
+    // The WebUI needs the holiday calendar for next-fire / preview, but the
+    // engine takes ownership below.
+    let webui_holidays = holidays.clone();
     let engine = SchedulerEngine::new(
         Arc::clone(&config),
         Arc::clone(&dispatcher) as Arc<dyn SchedulerDispatch>,
@@ -92,6 +103,7 @@ async fn main() -> Result<()> {
         engine.start().await;
     });
     spawn_retention(Arc::clone(&config));
+    start_webui_tasks(&config, &dispatcher, webui_holidays);
 
     // Server mode never exits: channel and scheduler tasks are detached.
     std::future::pending::<()>().await;
@@ -106,6 +118,7 @@ fn register_channel_sinks(config: &Config, push: &mut PushService) {
     if let Some(token) = config.telegram_token.clone() {
         push.register(Arc::new(TelegramSink::new(Arc::new(TelegramApi::new(
             token,
+            config.tg_proxy.as_deref(),
         )))));
     }
     if let (Some(app_id), Some(app_secret)) = (
@@ -136,7 +149,7 @@ async fn start_channel_tasks(
 
     if let Some(token) = config.telegram_token.clone() {
         let channel = TelegramChannel::new(
-            Arc::new(TelegramApi::new(token)),
+            Arc::new(TelegramApi::new(token, config.tg_proxy.as_deref())),
             Arc::clone(dispatcher),
             config.telegram_allow_from.clone(),
             contacts.clone(),
@@ -206,6 +219,24 @@ async fn start_channel_tasks(
     _contacts: &ContactsStore,
     _push: &Arc<PushService>,
 ) {
+}
+
+#[cfg(feature = "webui")]
+fn start_webui_tasks(
+    config: &Arc<Config>,
+    dispatcher: &Arc<Dispatcher>,
+    holidays: HolidayCalendar,
+) {
+    botler::webui::start_tasks(config, dispatcher, holidays);
+}
+
+#[cfg(not(feature = "webui"))]
+fn start_webui_tasks(
+    _config: &Arc<Config>,
+    _dispatcher: &Arc<Dispatcher>,
+    _holidays: HolidayCalendar,
+) {
+    tracing::info!("[webui] built without the `webui` feature; HTTP surface disabled");
 }
 
 /// Admin subcommands only take over when the second token is a known verb, so a

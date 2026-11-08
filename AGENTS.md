@@ -7,8 +7,8 @@ This file is for AI coding assistants (and any contributors) working in this rep
 The `v2` branch is a from-scratch rewrite in Rust (`crates/botler`) of the v1 TypeScript framework. The design and rationale live in [`docs/design/rust-rewrite-v2.md`](docs/design/rust-rewrite-v2.md); read it before changing session, queue, rotation, or memory behavior.
 
 - **Rust is the product** on this branch. Put new behavior in `crates/botler`.
-- **v1 TypeScript sources remain in the tree** (`src/`, `bin/`, `install.sh`, `Makefile`) as the parity reference and for the `botler-agent-app` submodule tooling. Do not extend them unless the change is explicitly v1 parity work.
-- **Not yet ported**: WebUI, Docker image, npm packaging, install/one-liner scripts, pi embedding (spikes S-1/S-5). The binary runs the deterministic core against `StubRuntime`; the network channels are behind the `channels` feature.
+- **v1 TypeScript sources remain in the tree** (`src/`, `bin/`, `scripts/install.sh`, `Makefile`) as the parity reference and for the `botler-agent-app` submodule tooling. Do not extend them unless the change is explicitly v1 parity work.
+- **Not yet ported**: Docker image, npm packaging, install/one-liner scripts, pi embedding (spikes S-1/S-5). The binary runs the deterministic core against `StubRuntime`; the network channels are behind the `channels` feature. The WebUI is ported behind the `webui` feature, but its token/tool/conversation views are degraded while S-1/S-5 are open and WeChat pairing is blocked by S-4 — see "Channels".
 - **Spikes are unresolved**: S-1 (pi provider registration), S-2 (tool IO parity), S-4 (weixin-agent transport), S-5 (multi-session embedding), S-6 (license). Do not claim any of these work until the spike records a pass.
 
 ## Project overview
@@ -32,10 +32,10 @@ Non-negotiable design principles (understand before changing):
 ```text
 crates/botler/
   src/
-    main.rs              binary: admin CLI, channel startup, scheduler, retention loop
+    main.rs              binary: admin CLI, channel startup, scheduler, retention, WebUI/monitor
     lib.rs               module tree + tracing init
     config.rs            two-level .env loader, providers.json, all settings
-    dispatcher.rs        enqueue + serial queue, dedup, validate/commit orchestration
+    dispatcher.rs        enqueue + serial queue, dedup, validate/commit, task-log writes
     runner.rs            route -> acquire session -> run turn -> extract reply
     runtime.rs           AgentRuntime / AgentSession seam + StubRuntime
     identity.rs          SessionKey, PrincipalKey, MemoryContext/Namespace, opaque names
@@ -48,6 +48,9 @@ crates/botler/
     greeting.rs          greeting short-circuit (zero-cost)
     paths.rs             PathGuard allowlist (security boundary)
     fsutil.rs            atomic write, fsync, dirs, time helpers
+    task_log/            v1-shaped TaskLog schema + per-day JSONL store (always compiled)
+    monitor/             health snapshot, Prometheus metrics, 5s sampler (cfg webui)
+    webui/               axum routers, read-only API, config backup/restore, SPA (cfg webui)
     tools/               read, write, edit, run, schedule, clear, memory, task_context
     safety/              JSON validation + per-subproject git commit
     scheduler/           types, store, engine, cron/once, China holidays
@@ -56,7 +59,7 @@ crates/botler/
   tests/
     acceptance.rs        end-to-end scenarios over the real dispatcher
     parity.rs            table-driven v1 parity fixtures
-    fixtures/            greeting.json, image_batch.json, cron.json
+    fixtures/            greeting.json, image_batch.json, cron.json, log_query.json
 ```
 
 ## Commands
@@ -66,12 +69,16 @@ The deterministic core builds on stable. The pinned `nightly-2026-08-31` is only
 ```bash
 cargo +stable build                          # debug build
 cargo +stable build --release --features channels
+cargo +stable build --features webui,channels            # WebUI + health endpoints
 cargo +stable test -p botler --lib           # unit tests
+cargo +stable test -p botler --lib --features webui     # monitor / WebUI unit + HTTP tests
 cargo +stable test -p botler --test acceptance
 cargo +stable test -p botler --test parity
 cargo +stable test -p botler --features channels   # includes channel adapters
+cargo +stable test -p botler --features webui,channels
 cargo +stable fmt --all -- --check
 cargo +stable clippy --all-targets --features channels -- -D warnings
+cargo +stable clippy --all-targets --features webui,channels -- -D warnings
 cargo +stable run -- "had a steamed bun for breakfast"   # one CLI task
 cargo +stable run                                        # server mode (channels + scheduler)
 ```
@@ -149,6 +156,8 @@ Scheduler -> dispatcher (source = scheduler, id = schedule:<id>:<epoch>)
 ### Channels
 
 - Telegram long polling and the Feishu webhook are behind the `channels` feature (`axum`). Sender allowlists are shared helpers; empty means allow all, except WeChat where the account owner is always allowed.
+- The WebUI and health/metrics endpoints are behind a separate `webui` feature (also `axum`); `channels` is not required. `WEBUI_ENABLED=1` serves the SPA on `127.0.0.1:8900` by default and `MONITOR_ENABLED` (default on) serves `/healthz`, `/metrics`, `/healthz/history` on `127.0.0.1:8899`. WebUI enablement is deliberately **not** part of `Config::has_channels()`. Every state-changing write requires `X-Botler-UI: 1`; no CORS headers are emitted. Task-log records are appended only inside the single dispatcher worker, and WebUI handlers hold only read-only handles (`Arc<DispatchStats>` + a store path), never `Arc<Dispatcher>` or `PathGuard`.
+- WebUI parity is **surface-complete but data-degraded**: under `StubRuntime` there is no LLM, so token usage, tool/conversation timelines, system prompt, routing, and model-cache fields are zero/empty (records carry `degraded: true`); the Stats chart and log detail drawer are empty. V8 heap and event-loop-lag metrics are zero; RSS is real only on Linux. WeChat pairing endpoints return an explicit unavailable payload because the `weixin-agent` transport (S-4) is not linked. Never claim these views carry real data.
 - Feishu is fail-closed. `FEISHU_VERIFICATION_TOKEN` is mandatory whenever the app id/secret are set: config load fails fast, and startup refuses to serve a webhook without it. Every event (including `url_verification`) must carry a matching token. When `FEISHU_ENCRYPT_KEY` is configured, plaintext events are rejected and encrypted requests must carry a valid `X-Lark-Signature` (`hex(sha256(timestamp + nonce + encrypt_key + body))`); an invalid or missing signature is `401`.
 - Feishu encryption is AES-128-CBC with `key = md5(encrypt_key)`, IV = first 16 bytes of the ciphertext, PKCS#7 padding. That matches the Feishu spec, not v1's commented AES-256 path; keep the vector test.
 - WeChat app layer (gate, context tokens, batching, reminder, image download/persist) is complete, but the `weixin-agent` transport is spike S-4 and not linked. The channel logs that it cannot receive messages in this build.
@@ -164,8 +173,9 @@ Scheduler -> dispatcher (source = scheduler, id = schedule:<id>:<epoch>)
 ## Testing expectations
 
 - **Unit tests live with the code** (`#[cfg(test)] mod tests`). Deterministic pieces need tests; time and randomness must be injected or derived from explicit timestamps.
-- **Acceptance** (`tests/acceptance.rs`) exercises the real dispatcher: ordering across projects, channel non-collision, scheduler firing, reset rotation, docs-edit rotation, corrupt resume, hot-session reuse. Keep it green.
-- **Parity** (`tests/parity.rs`) runs table-driven fixtures for greeting, image batching, and cron/once/workday/silent-hours. Add a fixture case rather than a bespoke test when the behavior is pure.
+- **Acceptance** (`tests/acceptance.rs`) exercises the real dispatcher: ordering across projects, channel non-collision, scheduler firing, reset rotation, docs-edit rotation, corrupt resume, hot-session reuse, v1-shaped JSONL task logs. Keep it green.
+- **Parity** (`tests/parity.rs`) runs table-driven fixtures for greeting, image batching, cron/once/workday/silent-hours, and task-log query primitives (`log_query.json`). Add a fixture case rather than a bespoke test when the behavior is pure.
+- **WebUI HTTP tests** live inline in `webui/server.rs` (`#[cfg(feature = "webui")]`): bind `build_router` to `127.0.0.1:0` with `tokio::spawn(axum::serve(...))` and drive it with the existing `reqwest` dependency. No `tower` dev-dep. Cover status codes, `X-Botler-UI` gating, body limits, and v1 response shapes.
 - **Property tests** cover the path boundary and hostile identifiers (`proptest`), including traversal, sibling prefixes, and symlink escapes.
 - `npm run typecheck` and the v1 `node:test` suites do not cover v2. Run the cargo commands above before committing.
 
@@ -186,6 +196,7 @@ Scheduler -> dispatcher (source = scheduler, id = schedule:<id>:<epoch>)
 - **Add a tool**: implement `tools::Tool`, resolve every path through `PathGuard`, set `mutated` honestly, and register it in `runner.rs`. If it is IM-only, gate it there.
 - **Change rotation**: update the plan, the WAL steps, and the kill-point tests together. Any new step must be recoverable from the intent file alone.
 - **Add a channel**: implement the adapter against `Dispatcher` + `PushService`, add an allowlist, and gate it behind a feature or an env switch.
+- **Add a WebUI endpoint**: keep the handler read-only against `AppState` (`MonitorState`), require `X-Botler-UI: 1` on writes, preserve the v1 JSON shape so the SPA needs no edit, and add an HTTP test. Never enqueue work or write task logs from a handler.
 
 ## Red lines
 
@@ -196,4 +207,4 @@ Scheduler -> dispatcher (source = scheduler, id = schedule:<id>:<epoch>)
 - Do not validate business semantics in the framework; that belongs to each project's `AGENTS.md` and scripts.
 - Do not concatenate all text deltas as the reply; take the last assistant message's text blocks only.
 - Do not commit secrets, real `.env` files, or source code into `DATA_ROOT`; app and data stay separate.
-- Do not claim the pi runtime, WeChat transport, WebUI, or Docker image works while S-1/S-4/S-5 are open.
+- Do not claim the pi runtime, WeChat transport, or Docker image works while S-1/S-4/S-5 are open. The WebUI is ported, but do not claim its token/tool/conversation views, WeChat pairing, or monitor lag/heap metrics carry real data while those spikes are open.

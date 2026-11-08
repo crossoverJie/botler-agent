@@ -6,7 +6,10 @@ pub mod dispatcher;
 pub mod fsutil;
 pub mod greeting;
 pub mod identity;
+pub mod init;
 pub mod memory;
+#[cfg(feature = "webui")]
+pub mod monitor;
 pub mod paths;
 pub mod prompt;
 pub mod push;
@@ -18,7 +21,10 @@ pub mod safety;
 pub mod scheduler;
 pub mod session_index;
 pub mod session_registry;
+pub mod task_log;
 pub mod tools;
+#[cfg(feature = "webui")]
+pub mod webui;
 
 pub fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()

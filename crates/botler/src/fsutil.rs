@@ -74,9 +74,10 @@ pub fn append_jsonl_fsync(path: &Path, value: &serde_json::Value) -> Result<()> 
         .append(true)
         .open(path)
         .with_context(|| format!("open journal {}", path.display()))?;
-    let line = serde_json::to_string(value)?;
+    // One write so a concurrent reader never observes half a JSON line.
+    let mut line = serde_json::to_string(value)?;
+    line.push('\n');
     file.write_all(line.as_bytes())?;
-    file.write_all(b"\n")?;
     file.sync_all()?;
     Ok(())
 }

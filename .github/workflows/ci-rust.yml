@@ -37,11 +37,14 @@ jobs:
       - name: Format
         run: cargo +stable fmt --all -- --check
 
-      - name: Clippy
-        run: cargo +stable clippy --all-targets --features channels -- -D warnings
+      - name: Clippy (default features, cfg stubs)
+        run: cargo +stable clippy --all-targets -- -D warnings
 
-      - name: Build (release, channels)
-        run: cargo +stable build --release --features channels
+      - name: Clippy (webui + channels)
+        run: cargo +stable clippy --all-targets --features webui,channels -- -D warnings
 
-      - name: Tests (lib, bin, acceptance, parity + channels)
-        run: cargo +stable test -p botler --features channels
+      - name: Build (release, webui + channels)
+        run: cargo +stable build --release --features webui,channels
+
+      - name: Tests (lib, bin, acceptance, parity + webui + channels)
+        run: cargo +stable test -p botler --features webui,channels

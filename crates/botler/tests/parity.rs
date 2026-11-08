@@ -211,3 +211,93 @@ fn cron_fixtures_match() {
         assert_eq!(actual, expected, "{}", case.name);
     }
 }
+
+// ---- Task-log query primitives (shared by the WebUI's /api/logs) ----
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LogQueryFixture {
+    day_files: Vec<DayFileCase>,
+    schedule_ids: Vec<ScheduleIdCase>,
+    query_matches: Vec<QueryMatchCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DayFileCase {
+    name: String,
+    valid: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScheduleIdCase {
+    task_id: String,
+    expect: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QueryMatchCase {
+    name: String,
+    log: serde_json::Value,
+    query: QuerySpec,
+    matches: bool,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct QuerySpec {
+    project: Option<String>,
+    source: Option<String>,
+    schedule_id: Option<String>,
+    phase: Option<String>,
+    q: Option<String>,
+}
+
+#[test]
+fn log_query_fixtures_match() {
+    use botler::task_log::record::TaskLog;
+    use botler::task_log::store::{
+        is_day_file, matches_log_query, schedule_id_from_task_id, LogQuery,
+    };
+
+    let data: LogQueryFixture = serde_json::from_str(&fixture("log_query.json")).unwrap();
+    assert!(!data.day_files.is_empty());
+    assert!(!data.schedule_ids.is_empty());
+    assert!(!data.query_matches.is_empty());
+
+    for case in data.day_files {
+        assert_eq!(
+            is_day_file(&case.name),
+            case.valid,
+            "is_day_file({:?})",
+            case.name
+        );
+    }
+    for case in data.schedule_ids {
+        assert_eq!(
+            schedule_id_from_task_id(&case.task_id),
+            case.expect,
+            "schedule_id_from_task_id({:?})",
+            case.task_id
+        );
+    }
+    for case in data.query_matches {
+        let log: TaskLog = serde_json::from_value(case.log).unwrap();
+        let query = LogQuery {
+            project: case.query.project,
+            source: case.query.source,
+            schedule_id: case.query.schedule_id,
+            phase: case.query.phase,
+            q: case.query.q,
+            ..LogQuery::default()
+        };
+        assert_eq!(
+            matches_log_query(&log, &query),
+            case.matches,
+            "{}",
+            case.name
+        );
+    }
+}

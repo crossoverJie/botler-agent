@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use botler::channels::fake::FakeChannel;
 use botler::config::Config;
-use botler::dispatcher::Dispatcher;
+use botler::dispatcher::{DispatchOptions, Dispatcher};
 use botler::identity::{ChannelSource, ConversationKind};
 use botler::paths::PathGuard;
 use botler::push::{ContactsStore, PushService};
@@ -402,4 +402,62 @@ async fn hot_session_is_reused_across_turns_with_a_fresh_preamble() {
     assert!(prompts[1].1.contains(&today), "{}", prompts[1].1);
     // The session file was not rewritten between turns (no rotation).
     assert!(harness.archived_files().is_empty());
+}
+
+// 10. Every dispatched turn appends a v1-shaped JSONL record, and a dedup hit
+// is logged through the worker funnel (never from a concurrent context).
+#[tokio::test]
+async fn dispatched_tasks_write_v1_shaped_jsonl_logs() {
+    let _serial = serial().await;
+    let harness = Harness::new(&["notes"]);
+    let runtime = Arc::new(StubRuntime::new().with_route(&["notes"]).with_reply("ok"));
+    let dispatcher = harness.dispatcher(runtime);
+
+    let mut options = DispatchOptions::cli();
+    options.id = Some("telegram:c1:42".into());
+    options.source = ChannelSource::Telegram;
+
+    dispatcher.dispatch("notes hello", options.clone()).await;
+    let duplicate = dispatcher.dispatch("notes hello", options.clone()).await;
+    assert!(duplicate.text.contains("duplicate"));
+
+    // Awaiting a third, non-duplicate dispatch guarantees the worker has
+    // already processed the fire-and-forget duplicate request ahead of it.
+    let mut third = options;
+    third.id = Some("telegram:c1:43".into());
+    dispatcher.dispatch("notes again", third).await;
+
+    let log_dir = harness.config().log_dir.clone();
+    let mut records = Vec::new();
+    for entry in fs::read_dir(&log_dir).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".jsonl") {
+            continue;
+        }
+        for line in fs::read_to_string(entry.path()).unwrap().lines() {
+            if !line.trim().is_empty() {
+                records.push(serde_json::from_str::<serde_json::Value>(line).unwrap());
+            }
+        }
+    }
+    assert_eq!(records.len(), 3, "records: {records:?}");
+    for record in &records {
+        assert!(record["taskId"].is_string());
+        assert_eq!(record["source"], "telegram");
+        assert_eq!(record["degraded"], true);
+        assert_eq!(record["usage"]["total"], 0);
+        assert!(record["startedAt"].is_number());
+        assert!(record["durationMs"].is_number());
+    }
+    assert_eq!(
+        records
+            .iter()
+            .filter(|r| r["status"] == "duplicate")
+            .count(),
+        1
+    );
+    assert_eq!(
+        dispatcher.stats().status_counts().get("duplicate"),
+        Some(&1)
+    );
 }

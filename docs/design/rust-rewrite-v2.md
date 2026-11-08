@@ -23,6 +23,7 @@ Dependencies under evaluation:
    Deliberate scope wording: this is **not "unlimited context."** History is still bounded by the model window, compaction summarization is lossy, and recall only returns what was explicitly retained or survives in session files. §4.2 states exactly what compaction does *not* guarantee.
 3. Keep the v1 security red lines intact (AGENTS.md "Things not to do"), re-expressed on top of pi's tool framework: `safePath` allowlist, no arbitrary shell, `schedule` writing only `schedules.json`, app/data separation.
 4. Config compatibility: reuse `~/.botler-agent/.env` semantics and the two-level loading order wherever possible, so switching between v1 and v2 during migration is low-friction.
+5. Port the v1 WebUI and observability surface (task-log SPA, read-only JSON API, config editing with backup/restore, derived schedule views, `/healthz` + `/metrics` + the standalone 8899 monitor) behind a `webui` feature, with v1-shaped JSONL task logs so both branches can read the same log directory during a cutover. See §13.4.
 
 ### Non-goals
 
@@ -30,6 +31,7 @@ Dependencies under evaluation:
 - No new channels beyond the existing three.
 - No change to the "framework defines boundaries, data projects self-describe rules" philosophy.
 - Do not embed or vendor the pi binary; depend on the crate as a library.
+- The WebUI port is **surface-complete, not data-complete**: while S-1/S-5 are open the deterministic core runs on `StubRuntime`, so task logs have no real token/tool/conversation data, and while S-4 is open WeChat pairing cannot work. Node-only metrics (V8 heap, event-loop lag) have no Rust equivalent. These are reported as honest zeros / explicit `unavailable` payloads, never as parity.
 
 ---
 
@@ -81,7 +83,16 @@ src/channels/feishu.ts      webhook            crates/botler/src/channels/feishu
 src/channels/wechat/*       hand-rolled iLink  ✂ protocol layer → weixin-agent crate;
                                                 app layer ported: allowlist, image-batch,
                                                 contacts, reminder (§5.3)
+src/logging/{types,collect,store}.ts           crates/botler/src/task_log/*  (v1-shaped JSONL)
+src/webui/{server,config-store}                crates/botler/src/webui/*     (axum, cfg webui)
+src/webui/index.html                           crates/botler/src/webui/index.html (embedded verbatim)
+src/monitor/{stats,health}.ts                  crates/botler/src/monitor/*     (cfg webui)
+src/scheduler/history.ts    derived views      crates/botler/src/webui/schedule_history.rs
 ```
+
+The last five rows were **added by the P6 WebUI port**: the original §1 goal list and §3
+mapping omitted v1's WebUI / logging / monitor modules, which is why `AGENTS.md` and the
+README still described WebUI as "not ported". See §13.4.
 
 Single crate, module layout mirroring v1. Do not split into a cargo workspace of many crates until a real need appears (YAGNI; the only reason to split would be compile-time isolation of the `pi` dependency, which is acceptable at ~1 crate since `pi` is one dependency regardless).
 
@@ -307,6 +318,11 @@ Greeting short-circuit and two-phase routing (route LLM → project) port verbat
 | S-6 | License review of pi's "MIT + Rider" terms for this use and redistribution posture. **P0 hard gate** — a no-go here kills Route A before any P1 investment. | P0 hard gate (shippability) |
 | S-7 | Does pi expose a per-prompt **ephemeral (not session-persisted) context channel** for the dynamic preamble (§4.6)? "No" ships the honest persistence baseline; "yes" is an optimization, not a blocker. | P0 evaluation (non-blocking) |
 
+The WebUI / observability port (§13.4) is **not** a P0 gate and needs no new spike: it is
+a deterministic read-only surface over the dispatcher's task-log records. It is, however,
+degraded by the spikes above — S-1/S-5 (no real LLM ⇒ sparse logs), S-4 (no WeChat pairing).
+Its acceptance is added as a P6 milestone, not folded into the §10.1 behavioural gate.
+
 ### 10.1 P0 acceptance scenarios (behavioral gate, beyond the spikes)
 
 These probe the risks the session-model change introduces — they matter more than routine channel parity. All run on the P0 skeleton via a fake channel adapter driving the real dispatcher + real pi sessions (no live WeChat required):
@@ -333,6 +349,7 @@ P0 exit requires: all spikes written-up **and** all eleven scenarios green.
 - **P3 — Scheduler & push**: engine, holiday calendar, contacts, deliver; parity tests.
 - **P4 — WeChat**: weixin-agent integration, allowlist/batching/contacts/reminder ports, inbound images.
 - **P5 — Hardening**: parity checklist, load check (idle RAM vs v1), restart-resume drill, **session-data retention policy** (persistent sessions store raw conversation text and project excerpts under `BOTLER_CONFIG_DIR` — a new long-lived local copy that v1 never had: configurable TTL + size cap covering active, `archived/`, and `.corrupt` files; user-visible list/inspect/purge on the same command surface as §4.3's `/memory`; rotation/archival events observable to the user), cut-over of `npm run restart` tooling to a `botlerctl` equivalent (`scripts/botlerctl.sh` v2: cargo build binary, same pidfile/log conventions), README/AGENTS.md rewrite.
+- **P6 — WebUI & observability port**: v1-shaped per-day JSONL task logs appended inside the single dispatcher worker; `webui/` axum SPA + read-only API + config backup/restore + derived schedule views; `monitor/` health/metrics + standalone 8899; `task_log/`, `monitor/`, `webui/` modules; HTTP and parity tests; AGENTS.md/README/design-doc updates. Exit: the full `--features webui,channels` build/test/clippy matrix is green and the SPA renders with no JS errors. Data behind the UI stays degraded while S-1/S-4/S-5 are open (§13.4).
 - v1 continues on `main` during P0–P4; v2 lands on this `v2` branch; cut over when parity checklist is green.
 
 ## 12. Failure posture
@@ -380,3 +397,51 @@ Status: the deterministic core (config, paths, tools, routing/prompt, sessions, 
 | 11 | Tier-3 cross-project + identity collision | `memory::tests::{tier3_links_projects_in_the_same_dm, identity_collision_does_not_share_tier3, group_cannot_read_owner_global_memory}`; `retain_tool_defaults_to_personal_and_writes_only_tier_one` covers write minimization |
 
 Post-review hardening: the session index now persists `SessionMeta`, so a **cold** resume (restart or LRU eviction) is freshness-checked exactly like a hot one; a missing or changed fingerprint archives the file and starts fresh (`cold_resume_with_a_{matching,changed}_fingerprint_*`). Scheduler tasks derive their memory identity from the entry recipient (`recipient.source` + `recipient.user_id`), so tier-3 memory written by a scheduled job lands in the same namespace as that owner's IM conversation (`runner::tests::scheduler_memory_uses_the_recipients_identity`).
+
+### 13.4 WebUI & observability port (P6)
+
+**Why:** the v1→v2 mapping in §3 and the §1 goal list omitted `src/webui/`, `src/logging/`
+and `src/monitor/`, so `AGENTS.md` and the README still listed WebUI as "not ported". A
+migration to the Rust branch would otherwise silently drop the task-log UI, config editor and
+health endpoints. P6 ports the surface; §1/§3 above were corrected to include it.
+
+**Layout:** `task_log/` (always compiled; v1 `TaskLog` schema with `#[serde(rename_all =
+"camelCase")]`, per-day `YYYY-MM-DD.jsonl` via `fsutil::append_jsonl_fsync`), `monitor/` and
+`webui/` (both `#[cfg(feature = "webui")]`). `webui = ["dep:axum"]` is independent of
+`channels`, so `default=[]` and `--features channels` compile no HTTP code. The v1 SPA is
+embedded verbatim with `include_str!`; no new crate or runtime file dependency.
+
+**Ordering:** all task-log writes happen inside the single dispatcher worker
+(`process_message` / `process_script`, plus a `WorkerRequest::Duplicate` funnel for dedup
+hits, which are detected in the concurrent `enqueue` path). WebUI handlers hold only
+`Arc<DispatchStats>` and a cloned `TaskLogStore` path — never `Arc<Dispatcher>` or
+`PathGuard` — so no handler can enqueue work or reach `DATA_ROOT`. Self-heal produces a
+second `phase:"self-heal"` record, matching v1. Script tasks keep their
+`schedule:<id>:<epoch>` id so the derived schedule history still works.
+
+**Endpoint triage:** all read endpoints (`/api/logs`, `/api/summary`, `/api/usage`,
+`/api/token-stats`, `/api/schedules/*`, `/api/config`, backups) and all write endpoints
+(`/api/cleanup`, system-prompt and schedules PUT, backup restore) are implemented, with
+`X-Botler-UI: 1` on writes, a 1 MB body cap, strict day-file cleanup, and canonical-parent +
+symlink validation on restore. WeChat pairing endpoints are **blocked by S-4** and return an
+explicit `unavailable` / `ok:false` payload (200, not 501), so the unmodified SPA degrades
+gracefully instead of throwing. `/healthz`, `/healthz/history`, `/metrics` are served both on
+the WebUI port and on the standalone loopback 8899 port, sharing one 5-second sampler.
+
+**Sparse-record honesty:** under `StubRuntime` there are no LLM calls, so `usage`, `calls`,
+`tools`, `conversation`, `modelCache`, `systemPrompt` and `routing` are zero/empty and each
+record carries `degraded: true` (an extra field v1 readers ignore). `provider`/`model`
+record the configured selection, not a completed call. V8 heap and event-loop-lag metrics
+are zero; RSS is real only on Linux; `activeAgents` is documented as an `activeTasks` proxy.
+
+**Build matrix:** `cargo +stable build` (default), `--features webui`, `--features channels`,
+`--features webui,channels`; the same matrix for `test -p botler` and
+`clippy --all-targets -- -D warnings`. `scripts/botlerctl.sh` builds with
+`BOTLER_FEATURES=webui,channels` by default so a local deployment has the HTTP surface;
+`WEBUI_ENABLED=1` turns the SPA on at runtime. `MONITOR_ENABLED` defaults on in `load()`.
+
+**Correct wording:** "WebUI ported; data views degraded; WeChat pairing blocked by S-4".
+Never "full parity with main". `AGENTS.md`'s red line was reworded accordingly: the pi
+runtime, WeChat transport and Docker image are still forbidden claims while S-1/S-4/S-5
+are open, but the WebUI itself is shipped — only its token/tool/conversation views, pairing
+and Node-only metrics must not be claimed as real.

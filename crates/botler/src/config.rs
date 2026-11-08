@@ -121,6 +121,8 @@ pub struct Config {
 
     pub telegram_token: Option<String>,
     pub telegram_allow_from: Option<String>,
+    pub tg_proxy: Option<String>,
+    pub wechat_owner_id: Option<String>,
     pub feishu_app_id: Option<String>,
     pub feishu_app_secret: Option<String>,
     pub feishu_verification_token: Option<String>,
@@ -139,6 +141,9 @@ pub struct Config {
     pub log_dir: PathBuf,
     pub monitor_enabled: bool,
     pub monitor_port: u16,
+    pub webui_enabled: bool,
+    pub webui_port: u16,
+    pub webui_host: String,
     pub max_tool_turns: usize,
 
     // v2 session / memory / concurrency settings.
@@ -166,6 +171,8 @@ impl Config {
             custom_providers: Vec::new(),
             telegram_token: None,
             telegram_allow_from: None,
+            tg_proxy: None,
+            wechat_owner_id: None,
             feishu_app_id: None,
             feishu_app_secret: None,
             feishu_verification_token: None,
@@ -185,6 +192,9 @@ impl Config {
             log_dir: user_dir.join("task-logs"),
             monitor_enabled: false,
             monitor_port: 8899,
+            webui_enabled: false,
+            webui_port: 8900,
+            webui_host: "127.0.0.1".into(),
             max_tool_turns: 20,
             sessions_dir: user_dir.join("sessions"),
             sessions_index_file: user_dir.join("sessions-index.json"),
@@ -222,6 +232,7 @@ impl Config {
         let sessions_dir = get_non_empty("BOTLER_SESSIONS_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| user_dir.join("sessions"));
+        let (webui_enabled, webui_port, webui_host) = webui_settings(&get);
 
         let config = Self {
             data_root,
@@ -230,6 +241,8 @@ impl Config {
             custom_providers,
             telegram_token: get_non_empty("TELEGRAM_BOT_TOKEN"),
             telegram_allow_from: get_non_empty("TELEGRAM_ALLOW_FROM"),
+            tg_proxy: get_non_empty("TG_PROXY"),
+            wechat_owner_id: get_non_empty("WECHAT_OWNER_ID"),
             feishu_app_id: get_non_empty("FEISHU_APP_ID"),
             feishu_app_secret: get_non_empty("FEISHU_APP_SECRET"),
             feishu_verification_token: get_non_empty("FEISHU_VERIFICATION_TOKEN"),
@@ -256,6 +269,9 @@ impl Config {
                 .unwrap_or_else(|| user_dir.join("task-logs")),
             monitor_enabled: get("MONITOR_ENABLED").as_deref() != Some("0"),
             monitor_port: parse_u16(&get, "MONITOR_PORT", 8899),
+            webui_enabled,
+            webui_port,
+            webui_host,
             max_tool_turns: parse_max_tool_turns(&get),
             sessions_dir,
             sessions_index_file: get_non_empty("BOTLER_SESSIONS_INDEX")
@@ -312,6 +328,18 @@ fn parse_u16(get: &impl Fn(&str) -> Option<String>, key: &str, default: u16) -> 
     get(key)
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(default)
+}
+
+/// WebUI listener settings, kept pure so tests inject an env-like getter.
+/// Defaults match v1 (`WEBUI_ENABLED=0`, port 8900, loopback only).
+fn webui_settings(get: &impl Fn(&str) -> Option<String>) -> (bool, u16, String) {
+    let enabled = get("WEBUI_ENABLED").as_deref() == Some("1");
+    let port = parse_u16(get, "WEBUI_PORT", 8900);
+    let host = get("WEBUI_HOST")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "127.0.0.1".into());
+    (enabled, port, host)
 }
 
 fn parse_max_tool_turns(get: &impl Fn(&str) -> Option<String>) -> usize {
@@ -503,6 +531,34 @@ mod tests {
         assert_eq!(vars.get("B").unwrap(), "two words");
         assert_eq!(vars.get("C").unwrap(), "single");
         assert!(!vars.contains_key("# comment"));
+    }
+
+    #[test]
+    fn webui_settings_defaults_and_overrides() {
+        let empty = |_: &str| -> Option<String> { None };
+        let (enabled, port, host) = webui_settings(&empty);
+        assert!(!enabled);
+        assert_eq!(port, 8900);
+        assert_eq!(host, "127.0.0.1");
+
+        let vars = HashMap::from([
+            ("WEBUI_ENABLED".to_string(), "1".to_string()),
+            ("WEBUI_PORT".to_string(), "9999".to_string()),
+            ("WEBUI_HOST".to_string(), "0.0.0.0".to_string()),
+        ]);
+        let get = |key: &str| vars.get(key).cloned();
+        let (enabled, port, host) = webui_settings(&get);
+        assert!(enabled);
+        assert_eq!(port, 9999);
+        assert_eq!(host, "0.0.0.0");
+    }
+
+    #[test]
+    fn with_paths_has_webui_defaults() {
+        let cfg = Config::with_paths("/tmp/data", "/tmp/cfg");
+        assert!(!cfg.webui_enabled);
+        assert_eq!(cfg.webui_port, 8900);
+        assert_eq!(cfg.webui_host, "127.0.0.1");
     }
 
     #[test]

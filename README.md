@@ -20,7 +20,9 @@ its acceptance contract live in
 | Telegram (long poll) and Feishu (webhook, encrypted events) | Complete behind the `channels` feature |
 | WeChat app layer (gate, context token, image batching, renewal reminder) | Complete; the `weixin-agent` transport is spike **S-4** |
 | pi agent embedding (`pi::sdk`) | Pending spikes **S-1/S-5**; the shipped binary uses a deterministic stub runtime, so replies do not call a model yet |
-| WebUI / Docker image / install script | Not ported yet (v1 feature) |
+| WebUI (task-log SPA, read-only API, config editor, schedule views, `/healthz` + `/metrics`, standalone 8899 monitor) | Ported behind the `webui` feature; data views are degraded under `StubRuntime` and WeChat pairing is blocked by S-4 (see [WebUI](#webui)) |
+| Task logs | v1-shaped per-day JSONL under `~/.botler-agent/task-logs`, appended inside the single dispatcher worker |
+| Docker image / install script | Not ported yet (v1 feature) |
 
 The deterministic core is deliberately independent of the pi SDK through the
 `AgentRuntime` / `AgentSession` seam in `crates/botler/src/runtime.rs`, so the
@@ -33,14 +35,18 @@ Requires Rust stable (workspace `rust-version = "1.90"`). The pinned
 embedding is enabled.
 
 ```bash
-cargo +stable build --release --features channels -p botler
+cargo +stable build --release --features webui,channels -p botler
 
 # CLI: run one message through the real dispatcher
 ./target/release/botler "had a steamed bun for breakfast"
 
-# Persistent mode: channels + scheduler + push (config from ~/.botler-agent/.env)
+# Persistent mode: channels + scheduler + push + WebUI (config from ~/.botler-agent/.env)
 ./target/release/botler
 ```
+
+`scripts/botlerctl.sh` builds with `BOTLER_FEATURES=webui,channels` by default;
+drop `webui` from that variable to build a smaller binary without the HTTP
+surface.
 
 Process control is provided by `scripts/botlerctl.sh`
 (`restart|start|build|stop|status|logs`): it builds the release binary, keeps
@@ -68,10 +74,38 @@ process env  >  ~/.botler-agent/.env  >  source .env (dev fallback)  >  defaults
 | `BOTLER_SESSION_HOT_LIMIT` | `32` | Max live session handles kept in memory |
 | `BOTLER_SESSION_RETENTION_DAYS` | `90` | TTL for live / archived / corrupt session files (`0` disables) |
 | `BOTLER_SESSION_RETENTION_MAX_BYTES` | `2147483648` | Total session-data cap (`0` disables) |
+| `BOTLER_LOG_DIR` | `~/.botler-agent/task-logs` | Per-day JSONL task logs |
+| `WEBUI_ENABLED` | `0` | Serve the task-log SPA (`1` enables) |
+| `WEBUI_PORT` | `8900` | WebUI port |
+| `WEBUI_HOST` | `127.0.0.1` | WebUI bind host (`0.0.0.0` only for containers) |
+| `MONITOR_ENABLED` | on (`0` disables) | Standalone 8899 health/metrics endpoint |
+| `MONITOR_PORT` | `8899` | Standalone monitor port |
 
 `providers.json` (custom OpenAI-completions / anthropic-messages gateways) and
 `system-prompt.md` keep the v1 formats. `PI_PROVIDER` / `PI_MODEL` select the
-model.
+model. `FEISHU_VERIFICATION_TOKEN` remains fail-closed when Feishu is enabled;
+leaving the whole Feishu block empty disables the channel, so a v1 `.env` can be
+reused as-is.
+
+## WebUI
+
+Build with `--features webui,channels` (or just `--features webui`) and set
+`WEBUI_ENABLED=1`. The SPA is served at `http://127.0.0.1:8900` by default;
+`/healthz`, `/healthz/history` and `/metrics` are also available on
+`127.0.0.1:8899` when `MONITOR_ENABLED` is not `0`. All state-changing API calls
+require the `X-Botler-UI: 1` header; no CORS headers are emitted. Config edits
+are written atomically with a `.backups/` snapshot.
+
+**Residual gap (read before expecting v1 parity):** the WebUI surface — routes,
+SPA, JSON shapes, config editing, schedule views, health endpoints — is ported,
+but the data behind it is not. The binary runs against `StubRuntime` while
+S-1/S-5 are open, so task logs contain no real token usage, tool calls,
+conversation timeline, system prompt, routing or model-cache data (records carry
+`degraded: true`); the token chart and log detail drawer are empty. V8 heap and
+event-loop-lag metrics are zero (no Node equivalent); RSS is real only on Linux.
+WeChat pairing endpoints return an explicit `S-4` unavailable payload because
+the `weixin-agent` transport is not linked. In short: **WebUI ported; data views
+degraded; WeChat pairing blocked by S-4.**
 
 ## Sessions
 
