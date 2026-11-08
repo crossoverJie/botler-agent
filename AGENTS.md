@@ -78,7 +78,7 @@ scheduler (scheduler/engine.ts) → dispatch(schedule.message, {id, source:"sche
 | `src/scheduler/{types,store,engine,cron}.ts` | Schedule config schema + validation/atomic store (`schedules.json`), in-process firing loop (watermark + `nextFireEpoch`), saved-listener so a schedule write wakes the loop immediately |
 | `src/push/{types,contacts,deliver}.ts` | Push types; per-channel known-address store (`contacts.json`); `deliver()` primary-channel send + `telegram → feishu → wechat` fallback |
 | `src/safety/validate.ts` | Post-write check that all data JSON is valid (catches edit breaking syntax), returns a self-contained `fix` instruction |
-| `src/safety/git.ts` | Iterate first-level subdirs of `DATA_ROOT`, commit each independent git repo only if changed (optional push) |
+| `src/safety/git.ts` | Iterate first-level subdirs of `DATA_ROOT`, commit each independent git repo only if changed, then (GIT_PUSH=1) push any repo with pending commits |
 | `src/channels/allowlist.ts` | Shared sender allowlist helper used by Telegram / Feishu (WeChat has its own owner + extra-sender gate) |
 | `src/channels/{telegram,feishu}.ts` | Channel adapters: grammy long polling / Feishu webhook |
 | `src/channels/wechat/*` | WeChat iLink channel: QR login (`login.ts`), long-poll monitor (`monitor.ts`), media send/upload, context_token persistence (`context.ts`), owner renewal reminder loop (`reminder.ts`), inbound image download + persist (`download.ts`) and per-sender image batching (`image-batch.ts`) |
@@ -115,7 +115,7 @@ Each `runTask` is a brand-new Agent with no internal tool/thinking memory (recen
 
 ### 4. Commit strategy (`safety/git.ts`)
 
-`commitIfChanged(msg)` iterates each first-level subdir of `DATA_ROOT` and only does `add + commit` for those that are **independent git repos** (have `.git`) and have non-empty `git status --porcelain`. Commit message format: `agent: <user message truncated to first 60 chars>`. When `GIT_PUSH=1`, additionally push (failure is only a warning, not a blocker).
+`commitIfChanged(msg)` iterates each first-level subdir of `DATA_ROOT` and only does `add + commit` for those that are **independent git repos** (have `.git`) and have non-empty `git status --porcelain`. Commit message format: `agent: <user message truncated to first 60 chars>`. When `GIT_PUSH=1`, every such repo is then checked with `git rev-list --count @{u}..HEAD` (local objects only) and pushed if it has pending commits — **decoupled from this round's commit result**, so an earlier failed push self-heals on the next write task. The first push for a repo uses `push -u origin HEAD` (establishes tracking; a bare `push origin HEAD` would leave `@{u}` unresolvable and push for nothing on every round); afterwards a bare `git push`. A repo whose `@{u}` cannot be resolved is only pushed with `-u` after confirming that no upstream is configured (`branch.<name>.merge` unset, an `origin` remote exists, the branch has a commit); a configured-but-gone tracking ref, a missing `origin`, a detached HEAD and an unborn branch are skipped with one warning per process. Failures (first stderr line) are only warnings, never blockers, and there is no in-round retry. Container deployment (ssh binary in the image, key/known_hosts/identity via mounts and env) is documented in `docs/docker-git-push.md`.
 
 ### 5. Config loading (`config.ts`)
 

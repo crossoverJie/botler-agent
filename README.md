@@ -100,6 +100,50 @@ docker run -d --name botler --restart unless-stopped \
 
 Image defaults (`WEBUI_HOST=0.0.0.0`, `WEBUI_ENABLED=1`, `SCHEDULER_ENABLED=1`, `MONITOR_ENABLED=1`) take precedence over the mounted `/config/.env` — override them at container creation (e.g. `-e WEBUI_ENABLED=0`). A `/healthz` healthcheck on port 8899 is built in. For WeChat QR login, the Feishu port, git commit identity, and upgrading steps, see [Docker deployment (NAS)](docs/docker.md).
 
+**Git push inside Docker (`GIT_PUSH=1`)**
+
+`GIT_PUSH=1` makes every write task push data subprojects that have unpushed commits. The image ships `git` + `openssh-client`; keys, `known_hosts` and the commit identity are **never baked in** — mount them and pass them as env:
+
+```bash
+# On the host, once: key + pinned host key + empty-permission-safe ssh config
+mkdir -p ./config/ssh && chmod 700 ./config/ssh
+ssh-keygen -t ed25519 -N '' -f ./config/ssh/id_ed25519
+ssh-keyscan -p 443 ssh.github.com 2>/dev/null > ./config/ssh/known_hosts   # add this key to a machine user
+printf 'Host github.com\n  HostName ssh.github.com\n  Port 443\n  User git\n  IdentityFile /root/.ssh/id_ed25519\n  IdentitiesOnly yes\n  BatchMode yes\n  StrictHostKeyChecking yes\n  UserKnownHostsFile /root/.ssh/known_hosts\n' > ./config/ssh/config
+chmod 600 ./config/ssh/id_ed25519 ./config/ssh/known_hosts ./config/ssh/config
+printf '[safe]\n\tdirectory = *\n' > ./config/gitconfig   # NAS bind mounts: avoids "dubious ownership"
+```
+
+```yaml
+services:
+  botler:
+    image: crossoverjie/botler-agent:v0.5.1     # `latest` is only produced by a `v*` tag (make release)
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      GIT_AUTHOR_NAME: botler-agent
+      GIT_AUTHOR_EMAIL: botler@localhost
+      GIT_COMMITTER_NAME: botler-agent
+      GIT_COMMITTER_EMAIL: botler@localhost
+      GIT_TERMINAL_PROMPT: "0"                  # fail fast instead of waiting for input
+      GIT_SSH_COMMAND: ssh -F /root/.ssh/config
+      GIT_CONFIG_GLOBAL: /config/gitconfig
+      GIT_PUSH: "1"                             # process env wins over /config/.env
+    volumes:
+      - ./config:/config
+      - ./data:/data
+      - ./config/ssh:/root/.ssh:ro
+      - ./config/gitconfig:/config/gitconfig:ro
+```
+
+```bash
+docker compose up -d
+docker compose exec botler sh -c 'command -v ssh && ssh -F /root/.ssh/config -T git@github.com'
+#   -> "Hi <user>! You've successfully authenticated ..."
+```
+
+The key belongs to a dedicated machine user that is a **collaborator (Write)** on each data repo — not one deploy key per repo. Push is decoupled from the current commit (a failed push self-heals on the next write task), and failures log git's first stderr line instead of failing the task. Full recipe, ownership variants (uid 1000) and a 14-step verification checklist: [Git push from the container](docs/docker-git-push.md).
+
 ## Quick Start
 
 ```bash
@@ -347,7 +391,7 @@ By default a local health/metrics server runs on `127.0.0.1:MONITOR_PORT` (defau
 | `WECHAT_ALLOW_FROM` | Optional comma-separated extra `ilink_user_id` allowlist (owner always allowed) |
 | `WECHAT_REMINDER_HOURS` | WeChat renewal reminder threshold: `0`=off, `1`-`24`=remind owner after N hours (default 23) |
 | `WECHAT_IMAGE_BATCH_SECONDS` | WeChat inbound-image batching window in seconds: `0`=disable batching (dispatch immediately), positive integer holds images briefly so a follow-up caption merges into one task (default 60) |
-| `GIT_PUSH` | `=1` additionally git push after commit (default off; push failure is only a warning) |
+| `GIT_PUSH` | `=1` additionally git push after commit (default off; push failure is only a warning). In a container the push path needs ssh + credentials: see [Git push from the container](docs/docker-git-push.md) |
 | `WEBUI_ENABLED` | `=1` to start the local task-log WebUI (binds `127.0.0.1`) |
 | `WEBUI_PORT` | WebUI listening port, default `8900` |
 | `BOTLER_LOG_DIR` | Task-log JSONL dir (default `~/.botler-agent/task-logs/`) |
