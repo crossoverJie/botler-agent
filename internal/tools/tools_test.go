@@ -170,3 +170,11 @@ func TestClearConversationRequiresIMTaskContext(t *testing.T) {
 	}
 	SetTaskContext(nil)
 }
+
+// small helper shared by the run tests.
+func writeFile(path, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(content), 0o644)
+}

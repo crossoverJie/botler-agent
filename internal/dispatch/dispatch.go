@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -112,7 +113,7 @@ func appendVisibleTurn(sessionKey, message string, result *runner.Result, status
 
 // Dispatch processes a single user message: dedup, serial execution, validation with one
 // self-heal retry, then commit. It never rejects.
-func Dispatch(ctx context.Context, message string, opts Options) Result {
+func Dispatch(ctx context.Context, message string, opts Options) (dispatchResult Result) {
 	dispatchStartedAt := time.Now().UnixMilli()
 	taskID := opts.ID
 	if taskID == "" {
@@ -143,6 +144,18 @@ func Dispatch(ctx context.Context, message string, opts Options) Result {
 		}
 		return Result{Text: text, Images: images, Status: status}
 	}
+	// v1's whole queued section sits inside try/catch: a panic in a tool, the log store or the
+	// conversation store must become a task error, never a dead process (CLI mode has no channel
+	// level guard). Registered after the cleanup defer so cleanup still runs.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[dispatch] panic recovered: %v\n%s\n", r, debug.Stack())
+			errText := "⚠️ Task execution error: " + fmt.Sprint(r)
+			logs.AppendTaskLog(minimalLog(taskID, source, dispatchStartedAt, logs.StatusError, message, errText))
+			finalStatus = logs.StatusError
+			dispatchResult = out(errText, []string{}, logs.StatusError)
+		}
+	}()
 	defer func() {
 		appendVisibleTurn(opts.SessionKey, message, result, finalStatus)
 		monitor.MarkFinished()
@@ -265,7 +278,9 @@ func scriptTaskLog(o scriptLogInput) logs.TaskLog {
 	if o.project != nil {
 		projects = []string{*o.project}
 	}
-	now := time.Now().UnixMilli()
+	// v1 calls Date.now() twice here, so durationMs can be 1ms larger than endedAt-startedAt (design
+	// §6 records that jitter); keep the same shape.
+	endedAt := time.Now().UnixMilli()
 	return logs.TaskLog{
 		ID:           version.NewID(),
 		TaskID:       o.taskID,
@@ -277,8 +292,8 @@ func scriptTaskLog(o scriptLogInput) logs.TaskLog {
 		Projects:     projects,
 		Status:       o.status,
 		StartedAt:    o.startedAt,
-		EndedAt:      now,
-		DurationMs:   now - o.startedAt,
+		EndedAt:      endedAt,
+		DurationMs:   time.Now().UnixMilli() - o.startedAt,
 		UserMessage:  "run " + o.script,
 		ReplyText:    o.replyText,
 		Images:       []string{},
@@ -293,7 +308,7 @@ func scriptTaskLog(o scriptLogInput) logs.TaskLog {
 
 // DispatchScriptedTask runs a scheduled script directly (bypassing the LLM) on the same
 // sequential chain as Dispatch, so it never races a chat task's writes.
-func DispatchScriptedTask(ctx context.Context, opts ScriptTaskOptions) Result {
+func DispatchScriptedTask(ctx context.Context, opts ScriptTaskOptions) (dispatchResult Result) {
 	startedAt := time.Now().UnixMilli()
 	source := opts.Source
 	if source == "" {
@@ -311,6 +326,13 @@ func DispatchScriptedTask(ctx context.Context, opts ScriptTaskOptions) Result {
 	out := func(t string, status logs.TaskStatus) Result {
 		return Result{Text: t, Images: []string{}, Status: status}
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[dispatch] panic recovered (script): %v\n%s\n", r, debug.Stack())
+			text = "⚠️ Script task error: " + fmt.Sprint(r)
+			finalStatus = logs.StatusError
+		}
+	}()
 	defer func() {
 		logs.AppendTaskLog(scriptTaskLog(scriptLogInput{
 			taskID:    opts.ID,
@@ -345,7 +367,8 @@ func DispatchScriptedTask(ctx context.Context, opts ScriptTaskOptions) Result {
 		return out(text, logs.StatusError)
 	}
 	// Any script that actually started may have written data, so always validate its project.
-	var scope []string
+	// An unknown project means "validate nothing" (v1 passes []), never "validate everything".
+	scope := []string{}
 	if project != nil {
 		scope = []string{*project}
 	}
@@ -370,7 +393,8 @@ func DispatchScriptedTask(ctx context.Context, opts ScriptTaskOptions) Result {
 	if commit {
 		safety.CommitIfChanged("agent: scheduled script "+opts.ID, scope)
 	}
-	return out(text, logs.StatusSuccess)
+	dispatchResult = out(text, logs.StatusSuccess)
+	return dispatchResult
 }
 
 // InboundImages is re-exported so channels can build dispatch options without importing agentrt.

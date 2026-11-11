@@ -15,27 +15,29 @@ import (
 
 var (
 	rtCached agentrt.Runtime
-	rtErr    error
 )
 
 // resolveRuntime resolves (and caches) the model client for PI_PROVIDER / PI_MODEL.
 // A misconfiguration returns a usable error instead of crashing the process.
 func resolveRuntime() (agentrt.Runtime, error) {
-	if rtCached == nil && rtErr == nil {
-		rtCached, rtErr = buildRuntime()
-	}
 	if rtCached != nil {
 		monitor.MarkModelCache(true)
 		return rtCached, nil
 	}
 	monitor.MarkModelCache(false)
-	return nil, rtErr
+	// v1 caches only a successful resolution: a misconfiguration is re-resolved (and re-counted as a
+	// miss) on the next task instead of being pinned for the life of the process.
+	rt, err := buildRuntime()
+	if err != nil {
+		return nil, err
+	}
+	rtCached = rt
+	return rt, nil
 }
 
 // ResetRuntime clears the cached client (tests).
 func ResetRuntime() {
 	rtCached = nil
-	rtErr = nil
 }
 
 func buildRuntime() (agentrt.Runtime, error) {
@@ -105,5 +107,4 @@ var errNoRuntime = errors.New("model runtime is not configured")
 // SetRuntimeForTest installs a fixed runtime (tests only).
 func SetRuntimeForTest(rt agentrt.Runtime) {
 	rtCached = rt
-	rtErr = nil
 }

@@ -6,8 +6,9 @@ import (
 	"os"
 )
 
-// fallbackOrder is the fixed degradation chain. Feishu is not implemented in this build, so it is
-// skipped silently (the design doc §2.6.1 keeps FEISHU_* parseable but never starts it).
+// fallbackOrder is the fixed degradation chain. No Feishu sender is registered in this build, so
+// channelConfigured reports false for it and it is skipped: the effective v3.0 chain is
+// telegram → wechat (design §2.6.1). Registering a sender is all that is needed to restore it.
 var fallbackOrder = []Source{SourceTelegram, SourceFeishu, SourceWeChat}
 
 func channelConfigured(src Source) bool {

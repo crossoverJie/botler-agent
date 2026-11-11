@@ -117,8 +117,19 @@ func BuildContents(messages []agentrt.Message, vision bool) []*genai.Content {
 		case agentrt.RoleAssistant:
 			parts := make([]*genai.Part, 0, len(m.Parts)+len(m.ToolCalls))
 			for _, p := range m.Parts {
-				if p.Type == agentrt.PartText && p.Text != "" {
-					parts = append(parts, genai.NewPartFromText(p.Text))
+				switch p.Type {
+				case agentrt.PartText:
+					if p.Text != "" {
+						parts = append(parts, genai.NewPartFromText(p.Text))
+					}
+				case agentrt.PartThinking:
+					// Replayed reasoning: the text and the provider signature travel together
+					// (Anthropic rejects an unsigned thinking block; OpenAI drops it).
+					parts = append(parts, &genai.Part{
+						Thought:          true,
+						Text:             p.Text,
+						ThoughtSignature: p.Signature,
+					})
 				}
 			}
 			for _, call := range m.ToolCalls {
@@ -200,6 +211,7 @@ func (r *Runtime) Complete(ctx context.Context, req agentrt.Request) (*agentrt.M
 	var (
 		text        strings.Builder
 		thinking    strings.Builder
+		thinkingSig []byte
 		calls       []agentrt.ToolCall
 		callIndex   = map[string]int{}
 		usage       *genai.GenerateContentResponseUsageMetadata
@@ -236,6 +248,7 @@ func (r *Runtime) Complete(ctx context.Context, req agentrt.Request) (*agentrt.M
 		if !resp.Partial {
 			text.Reset()
 			thinking.Reset()
+			thinkingSig = nil
 			calls = calls[:0]
 			callIndex = map[string]int{}
 		}
@@ -247,11 +260,14 @@ func (r *Runtime) Complete(ctx context.Context, req agentrt.Request) (*agentrt.M
 				calls = mergeCall(calls, callIndex, p.FunctionCall)
 				continue
 			}
-			if p.Text == "" {
-				continue
-			}
 			if p.Thought {
 				thinking.WriteString(p.Text)
+				if len(p.ThoughtSignature) > 0 {
+					thinkingSig = p.ThoughtSignature
+				}
+				continue
+			}
+			if p.Text == "" {
 				continue
 			}
 			text.WriteString(p.Text)
@@ -265,8 +281,12 @@ func (r *Runtime) Complete(ctx context.Context, req agentrt.Request) (*agentrt.M
 	}
 
 	out := &agentrt.Message{Role: agentrt.RoleAssistant}
-	if thinking.Len() > 0 {
-		out.Parts = append(out.Parts, agentrt.Part{Type: agentrt.PartThinking, Text: thinking.String()})
+	if thinking.Len() > 0 || len(thinkingSig) > 0 {
+		out.Parts = append(out.Parts, agentrt.Part{
+			Type:      agentrt.PartThinking,
+			Text:      thinking.String(),
+			Signature: thinkingSig,
+		})
 	}
 	if text.Len() > 0 {
 		out.Parts = append(out.Parts, agentrt.Part{Type: agentrt.PartText, Text: text.String()})
@@ -331,12 +351,13 @@ func convertUsage(u *genai.GenerateContentResponseUsageMetadata) *agentrt.Usage 
 		total = int(u.PromptTokenCount) + int(u.CandidatesTokenCount)
 	}
 	return &agentrt.Usage{
-		Input:      int(u.PromptTokenCount),
-		Output:     int(u.CandidatesTokenCount),
-		CacheRead:  int(u.CachedContentTokenCount),
-		CacheWrite: 0,
-		Reasoning:  int(u.ThoughtsTokenCount),
-		Total:      total,
-		CostUSD:    0,
+		Input:          int(u.PromptTokenCount),
+		Output:         int(u.CandidatesTokenCount),
+		CacheRead:      int(u.CachedContentTokenCount),
+		CacheWrite:     0,
+		Reasoning:      int(u.ThoughtsTokenCount),
+		ReasoningKnown: true,
+		Total:          total,
+		CostUSD:        0,
 	}
 }

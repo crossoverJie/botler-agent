@@ -88,7 +88,13 @@ func RunScript(script string, args []string) RunResult {
 	project, ok := paths.ProjectOf(abs)
 	cwd := ""
 	if ok {
-		cwd = filepath.Join(config.C().DataRoot, project)
+		// Use the canonical root: ProjectOf below compares against the canonicalized allowlist, so
+		// joining the raw DATA_ROOT would fail under a symlinked/relative root.
+		if root, rok := paths.ResolvedProjectRoot(project); rok {
+			cwd = root
+		} else {
+			cwd = filepath.Join(config.C().DataRoot, project)
+		}
 	}
 	st, err := os.Stat(abs)
 	if err != nil || !st.Mode().IsRegular() {
@@ -110,6 +116,15 @@ func RunScript(script string, args []string) RunResult {
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	runErr := cmd.Run()
+	// v1's execFileSync throws when a script exceeds the 1MB maxBuffer; the run is then a runtime
+	// failure, not a silent success on truncated output.
+	if stdout.truncated || stderr.truncated {
+		return RunResult{
+			Text:      "Script failed (stdio maxBuffer exceeded):\n" + strings.TrimSpace(stdout.String()+stderr.String()),
+			Cwd:       cwd,
+			ErrorKind: ErrRuntime,
+		}
+	}
 	if runErr == nil {
 		// v1 returns stdout untrimmed; only the emptiness check trims.
 		out := stdout.String()
@@ -176,7 +191,7 @@ func (clearConversationTool) Schema() json.RawMessage {
 func (clearConversationTool) Execute(_ context.Context, _ json.RawMessage) (agentrt.ToolResult, error) {
 	ctx := GetTaskContext()
 	if ctx == nil || ctx.ConversationSessionKey == "" {
-		return agentrt.ToolResult{}, errors.New("conversation context can only be cleared for IM user tasks")
+		return agentrt.ToolResult{}, errors.New("Conversation context can only be cleared for IM user tasks.")
 	}
 	conversation.ClearSession(ctx.ConversationSessionKey)
 	return agentrt.ToolResult{Text: "Conversation context cleared.", Details: map[string]any{}}, nil

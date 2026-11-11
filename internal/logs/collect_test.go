@@ -202,3 +202,44 @@ func TestCollectTaskLogJSONShape(t *testing.T) {
 		t.Fatalf("project must serialize as null when unrouted: %s", text)
 	}
 }
+
+// A failed model call carries no usage, so it must not produce a zeroed calls[] entry: v1's failed
+// assistant message has usage === undefined (the calls[] length is a parity-checked field).
+func TestCollectSkipsCallsForMessagesWithoutUsage(t *testing.T) {
+	log := CollectTaskLog(CollectInput{
+		ID: "1", TaskID: "1", Phase: PhaseExecute, Source: "cli",
+		Provider: "p", Model: "m",
+		UserMessage: "u", ReplyText: "⚠️ boom",
+		Messages: []agentrt.Message{
+			{Role: agentrt.RoleUser, Timestamp: 1, Parts: []agentrt.Part{{Type: agentrt.PartText, Text: "u"}}},
+			{Role: agentrt.RoleAssistant, Timestamp: 2, StopReason: agentrt.StopError,
+				ErrorMessage: "boom", Usage: nil},
+		},
+	})
+	if len(log.Calls) != 0 {
+		t.Fatalf("a usage-less assistant message must not add a call, got %+v", log.Calls)
+	}
+	// v1 only records an assistant turn that has text, so a failed (text-less) call leaves just the
+	// user entry behind.
+	if len(log.Conversation) != 1 || log.Conversation[0].Role != "user" {
+		t.Fatalf("unexpected conversation timeline: %+v", log.Conversation)
+	}
+}
+
+// A provider that reports reasoning tokens gets the field even when the count is 0.
+func TestCollectEmitsZeroReasoningWhenReported(t *testing.T) {
+	log := CollectTaskLog(CollectInput{
+		ID: "1", TaskID: "1", Phase: PhaseExecute, Source: "cli",
+		Provider: "p", Model: "m",
+		Messages: []agentrt.Message{
+			{Role: agentrt.RoleAssistant, Timestamp: 2, StopReason: agentrt.StopStop,
+				Usage: &agentrt.Usage{Input: 1, Output: 2, Total: 3, ReasoningKnown: true}},
+		},
+	})
+	if len(log.Calls) != 1 {
+		t.Fatalf("expected one call, got %d", len(log.Calls))
+	}
+	if log.Calls[0].Reasoning == nil || *log.Calls[0].Reasoning != 0 {
+		t.Fatalf("reasoning 0 must be emitted when reported: %+v", log.Calls[0].Reasoning)
+	}
+}

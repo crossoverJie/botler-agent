@@ -6,10 +6,12 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // ModelMeta describes one model of a custom provider (providers.json).
@@ -83,10 +85,15 @@ type Config struct {
 	ConversationDir          string
 }
 
-var current *Config
+var (
+	current   *Config
+	currentMu sync.Mutex
+)
 
 // C returns the process configuration (set by Load).
 func C() *Config {
+	currentMu.Lock()
+	defer currentMu.Unlock()
 	if current == nil {
 		current = Load()
 	}
@@ -94,7 +101,11 @@ func C() *Config {
 }
 
 // Set replaces the process configuration (tests only).
-func Set(c *Config) { current = c }
+func Set(c *Config) {
+	currentMu.Lock()
+	current = c
+	currentMu.Unlock()
+}
 
 // UserConfigDir is the externalized config directory: BOTLER_CONFIG_DIR, else ~/.botler-agent.
 // It can only come from a real process env var (not from .env itself) to avoid a chicken-and-egg
@@ -185,7 +196,8 @@ func Load() *Config {
 }
 
 func envOr(key, def string) string {
-	if v, ok := os.LookupEnv(key); ok && v != "" {
+	// v1 uses `process.env.X ?? default`: an explicitly empty value is a value, not "unset".
+	if v, ok := os.LookupEnv(key); ok {
 		return v
 	}
 	return def
@@ -211,38 +223,47 @@ func parseMonitorPort() int {
 	return n
 }
 
+// parseNumber mirrors Number(value): a float, plus ok=false for NaN / non-numeric input.
+func parseNumber(raw string) (float64, bool) {
+	f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || math.IsNaN(f) {
+		return 0, false
+	}
+	return f, true
+}
+
 // parseMaxToolTurns falls back to 20 for invalid values (non-integer / < 1).
 func parseMaxToolTurns() int {
-	n, err := strconv.Atoi(strings.TrimSpace(envOr("MAX_TOOL_TURNS", "20")))
-	if err != nil || n < 1 {
+	f, ok := parseNumber(envOr("MAX_TOOL_TURNS", "20"))
+	if !ok || f != math.Trunc(f) || f < 1 {
 		return 20
 	}
-	return n
+	return int(f)
 }
 
 // parseConversationContextTurns: 0 disables injection, invalid values fall back to 5.
 func parseConversationContextTurns() int {
-	n, err := strconv.Atoi(strings.TrimSpace(envOr("CONVERSATION_CONTEXT_TURNS", "5")))
-	if err != nil || n < 0 {
+	f, ok := parseNumber(envOr("CONVERSATION_CONTEXT_TURNS", "5"))
+	if !ok || f != math.Trunc(f) || f < 0 {
 		return 5
 	}
-	return n
+	return int(f)
 }
 
 func parseConversationTurnMaxChars() int {
-	n, err := strconv.Atoi(strings.TrimSpace(envOr("CONVERSATION_TURN_MAX_CHARS", "4000")))
-	if err != nil || n < 1 {
+	f, ok := parseNumber(envOr("CONVERSATION_TURN_MAX_CHARS", "4000"))
+	if !ok || f < 1 {
 		return 4000
 	}
-	return n
+	return int(math.Floor(f))
 }
 
 func parseConversationContextMaxChars() int {
-	n, err := strconv.Atoi(strings.TrimSpace(envOr("CONVERSATION_CONTEXT_MAX_CHARS", "12000")))
-	if err != nil || n < 1 {
+	f, ok := parseNumber(envOr("CONVERSATION_CONTEXT_MAX_CHARS", "12000"))
+	if !ok || f < 1 {
 		return 12000
 	}
-	return n
+	return int(math.Floor(f))
 }
 
 // parseWeChatReminderHours: "0" disables reminders; 1-24 active (>24 clamps to 24);
@@ -256,7 +277,7 @@ func parseWeChatReminderHours() int {
 		return 23
 	}
 	n, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-	if err != nil || n < 1 {
+	if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 1 {
 		return 23
 	}
 	if n > 24 {
@@ -272,11 +293,11 @@ func parseWeChatImageBatchSeconds() int {
 	if ok && raw == "0" {
 		return 0
 	}
-	n, err := strconv.Atoi(strings.TrimSpace(envOr("WECHAT_IMAGE_BATCH_SECONDS", "60")))
-	if err != nil || n < 0 {
+	f, ok := parseNumber(envOr("WECHAT_IMAGE_BATCH_SECONDS", "60"))
+	if !ok || f < 0 {
 		return 60
 	}
-	return n
+	return int(math.Floor(f))
 }
 
 // ParseProviderAPI normalizes a provider's `api` value; ok=false means unsupported (skip it).

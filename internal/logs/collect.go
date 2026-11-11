@@ -107,7 +107,7 @@ func CollectTaskLog(in CollectInput) TaskLog {
 					Total:      m.Usage.Total,
 					CostUSD:    m.Usage.CostUSD,
 				}
-				if m.Usage.Reasoning != 0 {
+				if m.Usage.ReasoningKnown || m.Usage.Reasoning != 0 {
 					r := m.Usage.Reasoning
 					call.Reasoning = &r
 				}

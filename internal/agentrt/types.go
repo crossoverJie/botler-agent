@@ -2,10 +2,11 @@
 // per-provider wire clients. Business code (runner / dispatch) only sees this interface, so the
 // loop can be swapped without touching routing, logging or the scheduler.
 //
-// Design decision (docs/design/go-rewrite-adk-go.md §3.3 / Q-1): the loop is self-implemented
-// (option C) so a tool result reaches the model as the same plain text v1 sent through pi-ai.
-// adk-go's model layer always JSON-encodes tool responses ({"result": "..."}), which cannot be
-// verified not to change model behaviour.
+// Design decision (docs/design/go-rewrite-adk-go.md §3.3 / Q-1, recorded in
+// docs/design/go-rewrite-status.md): the tool loop is self-implemented (option A) while the wire
+// protocol comes from adk-go — `openaimodel` with APIChatCompletions and `anthropicmodel`.
+// adk-go always JSON-encodes a tool response ({"result": "..."}), so the model does not see v1's
+// plain-text tool message; that is deviation D-1, not an implementation detail.
 package agentrt
 
 import (
@@ -35,10 +36,13 @@ const (
 
 // Part is one content block of a message.
 type Part struct {
-	Type     PartType
-	Text     string // text / thinking
-	MimeType string // image
-	Data     []byte // image bytes (inline)
+	Type PartType
+	Text string // text / thinking
+	// Signature is the provider's opaque signature of a thinking block (Anthropic returns one and
+	// requires it back when the conversation is replayed). Empty when the provider does not use them.
+	Signature []byte
+	MimeType  string // image
+	Data      []byte // image bytes (inline)
 }
 
 // ToolCall is one tool invocation requested by the model.
@@ -56,8 +60,11 @@ type Usage struct {
 	CacheRead  int
 	CacheWrite int
 	Reasoning  int
-	Total      int
-	CostUSD    float64
+	// ReasoningKnown reports whether the provider returned a reasoning-token count at all, so a
+	// genuine 0 can be distinguished from "not reported" (v1 omits the field in the latter case).
+	ReasoningKnown bool
+	Total          int
+	CostUSD        float64
 }
 
 // Stop reasons, matching pi-ai's vocabulary (logs record these strings verbatim).

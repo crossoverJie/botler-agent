@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -81,29 +82,33 @@ func readJSONBody(r *http.Request) (json.RawMessage, error) {
 // parseQuery mirrors v1's parseQuery: an empty parameter is "absent", not 0.
 func parseQuery(r *http.Request) logs.LogQuery {
 	sp := r.URL.Query()
-	num := func(key string) (int64, bool) {
+	// v1 parses with Number(): a fractional value survives for from/to (timestamps) and is
+	// truncated where it indexes a slice.
+	num := func(key string) (float64, bool) {
 		v := sp.Get(key)
 		if v == "" {
 			return 0, false
 		}
 		n, err := strconv.ParseFloat(v, 64)
-		if err != nil {
+		if err != nil || math.IsNaN(n) {
 			return 0, false
 		}
-		return int64(n), true
+		return n, true
 	}
 	q := logs.LogQuery{Project: sp.Get("project"), Source: sp.Get("source"), Q: sp.Get("q")}
 	if v, ok := num("from"); ok {
-		q.From = &v
+		ms := int64(v)
+		q.From = &ms
 	}
 	if v, ok := num("to"); ok {
-		q.To = &v
+		ms := int64(v)
+		q.To = &ms
 	}
 	if v, ok := num("limit"); ok {
-		q.Limit = int(v)
+		q.Limit = int(math.Trunc(v))
 	}
 	if v, ok := num("offset"); ok {
-		q.Offset = int(v)
+		q.Offset = int(math.Trunc(v))
 	}
 	return q
 }

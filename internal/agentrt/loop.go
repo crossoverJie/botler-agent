@@ -92,7 +92,9 @@ func (l *Loop) Run(ctx context.Context, in RunInput) (*RunResult, error) {
 				Timestamp:    time.Now().UnixMilli(),
 				StopReason:   StopError,
 				ErrorMessage: err.Error(),
-				Usage:        &Usage{},
+				// No usage: v1's failed assistant message has none, so the collector must not add a
+				// zeroed calls[] entry (the array length is a parity-checked field).
+				Usage: nil,
 			}
 		}
 		if reply.Timestamp == 0 {

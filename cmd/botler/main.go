@@ -28,20 +28,21 @@ import (
 
 func main() {
 	args := os.Args[1:]
+	// v1's rule: the first argument that is not a long flag is the positional. A short flag such as
+	// "-v" is a message, not a mode switch.
 	positional := ""
 	for _, a := range args {
-		if !strings.HasPrefix(a, "--") && !strings.HasPrefix(a, "-") {
+		if !strings.HasPrefix(a, "--") {
 			positional = a
 			break
 		}
 	}
 
-	// --version: a new entry point that must work without a data directory.
-	for _, a := range args {
-		if a == "--version" || a == "-v" || a == "version" {
-			fmt.Println(version.String())
-			return
-		}
+	// --version: a new entry point that must work without a data directory. It is only recognised as
+	// the first argument so a message that happens to contain the word "version" is still a message.
+	if len(args) > 0 && args[0] == "--version" {
+		fmt.Println(version.String())
+		return
 	}
 
 	// init: never touches DATA_ROOT (v1 parity).

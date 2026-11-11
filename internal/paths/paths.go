@@ -259,3 +259,19 @@ func ListProjects() []string {
 // ResetCache clears the lazily computed allowlist. It exists for tests that need to point
 // DATA_ROOT somewhere else in the same process; production code never calls it.
 func ResetCache() { resetForTest() }
+
+// ResolvedProjectRoot returns the canonical absolute root of a project, or ok=false when the name
+// is not in the allowlist. Callers that need to hand a path back to ProjectOf (e.g. a script's
+// cwd) must use this instead of joining DATA_ROOT themselves: the allowlist is canonicalized, so a
+// symlinked or relative DATA_ROOT would otherwise never match.
+func ResolvedProjectRoot(name string) (string, bool) {
+	if err := ensure(); err != nil {
+		return "", false
+	}
+	for _, root := range allowed {
+		if filepath.Base(root) == name {
+			return root, true
+		}
+	}
+	return "", false
+}

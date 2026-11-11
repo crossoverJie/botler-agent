@@ -139,9 +139,13 @@ func routeProject(ctx context.Context, rt agentrt.Runtime, userMessage string, p
 		}},
 	})
 	if err != nil {
-		return routeOutcome{}, err
+		// v1 lets the routing failure become an error assistant message; lastAssistantText then
+		// returns "" and parseRoute("") yields an empty route, i.e. the Chinese "couldn't decide"
+		// reply. It is deliberately not a task error.
+		logWarn("[runner] routing call failed: " + err.Error())
+		return routeOutcome{candidates: candidates, prompt: routePrompt}, nil
 	}
-	decision := ParseRoute(strings.TrimSpace(reply.Text()), candidates)
+	decision := ParseRoute(strings.TrimSpace(lastAssistantText([]agentrt.Message{*reply})), candidates)
 	return routeOutcome{
 		projects:          decision.Projects,
 		attachmentProject: decision.AttachmentProject,

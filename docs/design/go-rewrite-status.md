@@ -32,6 +32,7 @@ Branch `v2-golang` · module `github.com/crossoverJie/botler-agent` · Go 1.27 �
 | D-5 | An out-of-range `FINISH_REASON` (safety, malformed function call, …) is logged as `length` | adk-go has no pi-ai equivalent; `error` would hide the usage | task-log `stopReason` |
 | D-6 | `botler --version` exists | new entry point used by the container smoke test (design §9.2) | new flag only |
 | D-7 | Length limits (`TEXT_MAX`, `CONVERSATION_TURN_MAX_CHARS`, summary truncation) count **runes**, v1 counts UTF-16 code units | Go has no UTF-16 strings; identical for BMP text (incl. Chinese), differs only for astral characters (emoji) | truncation points in task logs / prompts when emoji are present |
+| D-8 | A Feishu-only configuration exits with "no channel configured" | the channel is not implemented (§2.6.1), so `started` stays false; v1 counted Feishu as a started channel | container/服务 startup messages only |
 
 ## 3. Verification status
 
@@ -53,6 +54,24 @@ Green: `go build ./...`, `go vet ./...`, `gofmt -l .` (empty), `go test ./...` (
 | **live Telegram** | real token: `@… online`, `/healthz` shows `channels.telegram.up=true`; no typed message round trip yet | manual |
 | **live WeChat binding** | QR pairing through the WebUI (`POST /api/wechat/pair`): `pending → confirmed`, `wechat/account.json` re-written, monitor re-resolved the account and brought the channel up without a restart | manual |
 | **live WeChat message** | inbound text → dispatch → reply: `[wechat] inbound … "看看我昨天的饮食"`, task log `source=wechat status=success model=ark/doubao-seed-2.1-lite tools=[read]`, `wechat/contexts.json` carries the user's context_token | manual |
+
+## 3.1 Review round (2026-11-11)
+
+An independent review of the branch found two blockers and a set of parity nits. All were fixed; the
+guards are covered by new tests:
+
+| Finding | Fix |
+|---|---|
+| A script run under a symlinked/relative `DATA_ROOT` lost its project attribution, so validation and commit widened to every project | `paths.ResolvedProjectRoot`; `RunScript` builds its cwd from the canonical root; a script with no resolvable project validates nothing (`[]`, matching v1) |
+| `--version` swallowed `botler version` / `-v` / any message containing it | only `--version` as the first argument; the positional rule is v1's "first argument not starting with `--`" |
+| `Dispatch` had no panic guard, so CLI mode could die with a stack trace and no task log | `recover()` in `Dispatch` and `DispatchScriptedTask` → `⚠️ Task execution error` + a log line |
+| The model-resolution cache counted the first call as a hit and pinned configuration errors | first call is a miss, later ones hits; errors are re-resolved |
+| A failing routing call surfaced as a task error; v1 answers with the Chinese "couldn't decide" fallback | the routing error is an unrouted result (uses `lastAssistantText`, which was dead code before) |
+| A script producing >1MB of output was a silent success; v1's `maxBuffer` makes it a runtime failure | `cappedBuffer` reports truncation → `ErrRuntime` |
+| `envOr` treated an explicit empty value as unset; `Number()`/`Math.floor` semantics differed for numeric keys | `LookupEnv`-based lookup; float parsing with the same clamping/flooring |
+| Replayed assistant thinking blocks were dropped, breaking multi-turn tool loops on reasoning models | thinking text + provider signature are carried on `agentrt.Part` and re-sent (OpenAI adapters drop the part) |
+| A failed model call added a zeroed `calls[]` entry (array length is parity-checked) | the synthesized error message has no `Usage` |
+| Metric `# HELP` wording, `scriptTaskLog` timestamp shape, `parseQuery` number parsing, clear-tool error text, `C()` initialisation race, option-C package comment | aligned with v1 / fixed |
 
 ## 4. Still missing
 
