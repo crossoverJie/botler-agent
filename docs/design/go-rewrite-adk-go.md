@@ -499,13 +499,15 @@ testdata/fixtures/*.json           # 复用 v2 分支的 greeting / image_batch 
 | `src/monitor/*` | `internal/monitor` |
 | `src/webui/server.ts`、`config-store.ts` | `internal/webui` |
 | `src/webui/index.html` | 原样复制 + `go:embed` |
-| `bin/botler.mjs`、`init.ts` | `cmd/botler/main.go` 的子命令 |
+| `bin/botler.mjs`、`init.ts` | `cmd/botler/main.go` 的子命令（`bin/botler.mjs` 已在 v2 落地后删除——不再分发 npm 包，只发 Go 二进制与 Docker 镜像） |
 
 ---
 
 ## 6. 数据兼容与回滚
 
-**目标：Go 二进制可以直接跑在现有 v1 安装上（数据与配置零迁移）；回滚 = 恢复 v1 的仓库树（`git checkout main`）后照旧 `node bin/botler.mjs`。**
+**目标：Go 二进制可以直接跑在现有 v1 安装上（数据与配置零迁移）；回滚 = 恢复 v1 的仓库树（`git checkout main`）后照旧 `npm start`。**
+
+> 注：npm 包与 `bin/botler.mjs` 启动器已于 v2 合并到 `main` 后删除（只分发 Go 二进制与 Docker 镜像）；回滚走仓库内的 `src/` + `npm start`（`tsx src/index.ts`）。上文关于启动器条件动态 import 的描述仅作历史记录。
 
 | 文件 | 处理 |
 |---|---|

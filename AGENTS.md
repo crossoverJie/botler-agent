@@ -18,7 +18,7 @@ Key design principles (understand before changing, do not break):
 > `package.json`) and the npm commands below are the v1 implementation, which stays on `main`; they
 > are kept here only as the reference used by the parity harness.
 
-## Commands (Go branch)
+## Commands (Go implementation)
 
 ```bash
 go build -o botler ./cmd/botler   # build the binary (CGO-free, static)
@@ -42,7 +42,11 @@ go run ./scripts/parity           # differential test against v1 (scripted OpenA
 # Self-restart triggered *from chat* is NOT supported by the agent's toolset (see Common change scenarios).
 ```
 
-## Commands (v1 reference, `main`)
+## Commands (v1 reference)
+
+> `src/` + `package.json` are the v1 TypeScript implementation, kept only as the reference used by
+> `go run ./scripts/parity` and the Go test suite. The npm `botler` bin entry is gone — the only
+> distributed artifacts are the Go binary and the Docker image.
 
 ```bash
 npm install            # install dependencies
@@ -60,7 +64,7 @@ npm test               # node:test suite (scheduler cron + store)
 
 | Go package | v1 counterpart | Responsibility |
 |---|---|---|
-| `cmd/botler` | `src/index.ts`, `bin/botler.mjs` | entry: subcommands, CLI mode, channel service, explicit `paths.Validate()` |
+| `cmd/botler` | `src/index.ts` | entry: subcommands, CLI mode, channel service, explicit `paths.Validate()` |
 | `internal/config` | `src/config.ts`, `src/providers.ts` | two-level `.env`, `providers.json`, every env key |
 | `internal/paths` | `src/tools/paths.ts` | **security boundary**: lazy allowlist, `safePath`, `Validate()` |
 | `internal/prompt`, `internal/greeting` | `src/prompts/system-prompt.ts`, `src/greeting.ts` | system prompt + routing prompt, greeting short-circuit |

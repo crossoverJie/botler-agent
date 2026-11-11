@@ -3,7 +3,6 @@ node_modules
 .github
 # v1 (TypeScript) sources: the Go image is built from cmd/ + internal/ only
 src
-bin
 package.json
 package-lock.json
 tsconfig.json

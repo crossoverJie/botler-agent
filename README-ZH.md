@@ -16,7 +16,7 @@
 
 刻意做**轻**，区别于重型 Agent 框架：
 
-- **轻量** — 只有六个工具，无重型运行时 / 守护进程，一个 `tsx` 进程即可，秒级安装。
+- **轻量** — 只有六个工具，无重型运行时 / 守护进程，单个静态 Go 二进制即可，秒级安装。
 - **省 token** — 每个任务都是全新短命 Agent，仅复用受限的最近可见对话窗口；路由只用「项目名 + 摘要」小提示词，只加载被选中子项目的约定。没有巨型 system prompt、不追长上下文，多数任务成本只有通用助手的零头。
 - **聚焦垂直简单任务** — 不是通用聊天机器人，擅长小、重复、边界清晰的活（饮食记录、生词查询、定时提醒），每个由自己的 `AGENTS.md` 描述。
 
@@ -25,7 +25,7 @@
 | | **botler-agent** | **通用 Agent**（OpenClaw / WorkBuddy） | **Coding Agent**（Claude Code / Codex） |
 |---|---|---|---|
 | **定位** | 轻量个人数据助手 | 通用任务自动化 | 代码库内的软件工程 |
-| **安装体积** | 单个 `tsx` 进程，秒级安装，无重型运行时 | 庞大的安装包，携带大量可能用不上的功能 | 较重，依赖完整的开发环境 |
+| **安装体积** | 单个静态 Go 二进制，秒级安装，无重型运行时 | 庞大的安装包，携带大量可能用不上的功能 | 较重，依赖完整的开发环境 |
 | **内置工具** | 仅 6 个受控工具（read / write / edit / run / schedule + IM-only `clear_conversation_context`） | 内置大量、往往复杂的工具 | 完整的 shell、文件系统与命令权限 |
 | **文件操作** | 路径白名单——仅限 `DATA_ROOT` 一级子目录 | 文件访问较开放 | 可读取/改写整个工作区 |
 | **对电脑的权限** | 极其克制——无任意 shell | 较开放 | 高度开放（执行命令、修改代码） |
@@ -39,51 +39,31 @@
 
 ## 安装
 
-> **Go 实现（`v2-golang` 分支）**：本分支用 Go 重写了 agent，模型层使用
-> [adk-go](https://github.com/google/adk-go)。配置与数据目录格式完全不变（`~/.botler-agent/`、
-> `DATA_ROOT`、`schedules.json`、任务日志……），现网安装可直接换二进制：
->
-> ```bash
-> go build -o botler ./cmd/botler
-> ./botler init              # 生成 ~/.botler-agent/ 模板（不覆盖已有文件）
-> ./botler "你的消息"         # 单条消息（CLI 模式）；不带参数启动渠道服务
-> go run ./scripts/botlerctl restart     # 后台 start/stop/status/logs [main|stable]
-> go run ./scripts/install               # clone + 编译 + init（可重复执行）
-> go run ./scripts/parity                # 与 v1 的差分测试（确定性模型 stub）
-> ```
->
-> 下面的 npm 说明适用于 `main` 上的 TypeScript 实现。
+只分发两种产物：**Go 二进制**（源码构建）与 **Docker 镜像**。配置与数据目录格式与 v1 完全一致
+（`~/.botler-agent/`、`DATA_ROOT`、`schedules.json`、任务日志……），现网安装可直接换二进制。
 
-**方式 A — 从 GitHub clone（推荐）**
+**方式 A — 源码构建（推荐）**
 
 ```bash
 git clone https://github.com/crossoverJie/botler-agent.git
-cd botler-agent
-npm install
-npm run init
+cd botler-agent && go run ./scripts/install
 ```
 
-**方式 B — curl 一行脚本**
+clone 到 `~/.local/share/botler-agent`（可用 `BOTLER_INSTALL_DIR` 覆盖），自动编译并执行 `botler init`；可重复执行——重跑时会更新代码并重新编译。
+
+也可以就地编译、直接驱动二进制：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/crossoverJie/botler-agent/main/install.sh | bash
+go build -o botler ./cmd/botler
+./botler init              # 生成 ~/.botler-agent/ 模板（不覆盖已有文件）
+./botler "你的消息"         # 单条消息（CLI 模式）；不带参数启动渠道服务
+go run ./scripts/botlerctl restart     # 后台 start/stop/status/logs [main|stable]
+go run ./scripts/parity                # 与 v1 的差分测试（确定性模型 stub）
 ```
 
-clone 到 `~/.local/share/botler-agent`（可用 `BOTLER_INSTALL_DIR` 覆盖），自动执行 `npm install` + `npm run init`，且可重复执行——重跑时会 `git pull` 升级。
+**方式 B — Docker（NAS / 容器部署）**
 
-**方式 C — npm 全局 CLI**
-
-```bash
-npm i -g botler-agent
-botler init     # 初始化 ~/.botler-agent/（.env + providers.json + system-prompt.md 模板）
-botler -- "你的第一条消息"   # 或直接 `botler` 按 .env 启动常驻渠道
-```
-
-三种方式安装后配置相同：编辑 `~/.botler-agent/.env`（DATA_ROOT / 模型选择 / 渠道凭据），可选在 `~/.botler-agent/providers.json` 配置自定义网关，并按需定制 `~/.botler-agent/system-prompt.md`。
-
-**方式 D — Docker（NAS / 容器部署）**
-
-已发布多架构镜像（`linux/amd64` + `linux/arm64`）到 Docker Hub（`crossoverjie/botler-agent`，标签 `latest` / `edge` / `vX.Y.Z`）。容器直接通过 `tsx` 运行常驻渠道（容器内无需构建），并通过两个挂载卷持久化一切：
+已发布多架构镜像（`linux/amd64` + `linux/arm64`）到 Docker Hub（`crossoverjie/botler-agent`，标签 `latest` / `edge` / `vX.Y.Z`）。容器直接运行静态 Go 二进制（容器内无需构建），并通过两个挂载卷持久化一切：
 
 | 关注点 | 容器内路径 | 推荐挂载 |
 | --- | --- | --- |
@@ -158,23 +138,21 @@ key 属于一个专用机器用户，并把该用户加为每个数据仓库的 
 ## 快速开始
 
 ```bash
-npm install
-
 # 1. 初始化用户级配置目录（~/.botler-agent/）
-npm run init
+botler init
 
 # 2. 编辑 ~/.botler-agent/.env，填入 DATA_ROOT / 模型选择（PI_PROVIDER / PI_MODEL）/ 渠道凭据
 # 3. 编辑 ~/.botler-agent/providers.json，配置你的模型供应商（baseUrl / apiKey / models）
 # 4.（可选）定制 ~/.botler-agent/system-prompt.md（或让 AI 按项目背景生成）
 
 # 5a. CLI 模式（本地调试，直接传一条消息）
-npm start -- "早上吃了个馒头"
+botler "早上吃了个馒头"
 
 # 5b. 常驻渠道模式（按 .env 启动 Telegram / 飞书 / 微信）
-npm start
+botler
 
 # 6.（可选）微信 iLink 渠道——先扫码登录：
-npm start -- wechat-login
+botler wechat-login
 
 # 7.（可选）通过 .env 开关启用调度器 / WebUI / 监控（SCHEDULER_ENABLED / WEBUI_ENABLED / MONITOR_ENABLED）
 ```
@@ -197,7 +175,7 @@ git submodule update --init --recursive
 
 ```bash
 export DATA_ROOT=/path/to/botler-agent-app   # 或只复制你需要的子项目文件夹到这里
-npm start
+botler
 ```
 
 各子项目的 schema 与定制说明见 [`botler-agent-app/README.md`](botler-agent-app/README.md)。
@@ -280,7 +258,7 @@ Scheduler ──► dispatch(schedule.message) ──►（同上流水线）
 
 ### 自定义模型供应商（`providers.json`）
 
-自定义 OpenAI-completions / Anthropic-messages 兼容网关（自建 / 内部端点，如自建 OpenAI-completions 网关、火山方舟 ark 编码端点）定义在 `~/.botler-agent/providers.json`（`npm run init` 会生成模板）。它是供应商元数据的主配置源；文件缺失时，旧版 `CUSTOM_BASE_URL` / `CUSTOM_API_KEY` 环境变量仍可作为兜底。
+自定义 OpenAI-completions / Anthropic-messages 兼容网关（自建 / 内部端点，如自建 OpenAI-completions 网关、火山方舟 ark 编码端点）定义在 `~/.botler-agent/providers.json`（`botler init` 会生成模板）。它是供应商元数据的主配置源；文件缺失时，旧版 `CUSTOM_BASE_URL` / `CUSTOM_API_KEY` 环境变量仍可作为兜底。
 
 `api` 字段按供应商选择通信协议：`"openai-completions"`（默认）或 `"anthropic-messages"`。
 
@@ -318,7 +296,7 @@ Scheduler ──► dispatch(schedule.message) ──►（同上流水线）
 
 系统提示词外置后，你（或 AI 助手）可以按自己项目的背景定制：
 
-1. `npm run init` 生成 `~/.botler-agent/system-prompt.md`（默认通用模板）。
+1. `botler init` 生成 `~/.botler-agent/system-prompt.md`（默认通用模板）。
 2. 把模板替换成你自己数据子项目的约定（文件结构、操作规则等），保留 `__DATA_ROOT__` / `__PROJECTS__` / `__PROJECT_CONTEXT__` / `__TODAY__` 占位符。
 3. 也可直接让 AI 助手生成，例如：
 
@@ -332,7 +310,7 @@ Scheduler ──► dispatch(schedule.message) ──►（同上流水线）
 
 - **Telegram**（`grammy`，长轮询）：最简单，首选。需要 `TELEGRAM_BOT_TOKEN`；大陆网络下需配置 `TG_PROXY` 才能连接 API。可设置 `TELEGRAM_ALLOW_FROM`（逗号分隔的 Telegram 用户 id 或用户名）限制发送者；留空则全部放行。
 - **飞书**（事件订阅 webhook，含解密）：需要 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`；可选 `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY`，监听 `FEISHU_PORT`（默认 3000）。可设置 `FEISHU_ALLOW_FROM`（逗号分隔的发送者 `open_id`/`user_id`/`union_id` 或 chat id）限制发送者；留空则全部放行。
-- **微信（iLink / ClawBot 官方 Bot API）**：私聊渠道。先用 `npm start -- wechat-login` 登录（终端打印二维码，用微信扫码——凭据存入 `~/.botler-agent/wechat/account.json`），再设 `WECHAT_ENABLED=1` 启用。账号主号（扫码者）始终允许；`WECHAT_ALLOW_FROM` 可额外放行 `ilink_user_id`。续期提醒（`WECHAT_REMINDER_HOURS`）会在主号 24h `context_token` 窗口临近过期前提醒其刷新。
+- **微信（iLink / ClawBot 官方 Bot API）**：私聊渠道。先用 `botler wechat-login` 登录（终端打印二维码，用微信扫码——凭据存入 `~/.botler-agent/wechat/account.json`），再设 `WECHAT_ENABLED=1` 启用。账号主号（扫码者）始终允许；`WECHAT_ALLOW_FROM` 可额外放行 `ilink_user_id`。续期提醒（`WECHAT_REMINDER_HOURS`）会在主号 24h `context_token` 窗口临近过期前提醒其刷新。
   - **入站图片即视觉输入**：微信可接收你发来的图片，解码后作为视觉输入喂给模型，并把原图持久化到 `DATA_ROOT/<project>/photos/`。由于微信「选图即发、文字后到」，入站图片会在一个短暂窗口内暂存（`WECHAT_IMAGE_BATCH_SECONDS`，默认 60s；设 `0` 关闭），让随后补发的文字作为同一条任务的描述合并进入；窗口内的多张图片也会合并。若当前模型无法读图，代理会用中文回复，请你补一句文字说明。
   - **问候短路**：仅含问候（如 你好 / hi）的消息会跳过路由 LLM 调用，直接给出一份零开销的中文欢迎语，列出当前可用子项目。
   - **上下文重置**：当用户明确要求新任务或忽略/重置上文时，路由模型或执行 Agent 会清空共享的最近对话窗口。纯重置命令本身不写入历史。
@@ -501,11 +479,14 @@ src/
 
 ## 脚本
 
+实际分发的 CLI 是 Go 二进制（`botler init` / `botler "消息"` / `botler`，见[安装](#安装)）。
+下面的 npm 脚本只驱动 `src/` 下的 v1 TypeScript 参考实现——它仅用于 parity 差分测试与 Go 测试套件。
+
 | 命令 | 说明 |
 |------|------|
-| `npm start` | 运行（CLI 或常驻渠道，取决于参数与 .env） |
+| `npm start` | 运行 v1 TypeScript 实现（CLI 或常驻渠道） |
 | `npm run dev` | 同 `npm start` |
-| `npm run init` | 初始化 `~/.botler-agent/` |
+| `npm run init` | 初始化 `~/.botler-agent/`（等价于 `botler init`） |
 | `npm run typecheck` | `tsc --noEmit` 类型检查 |
 | `npm run cli` | 同 `npm start` |
 | `npm test` | `node:test` 测试套件（调度 cron + 存储） |
