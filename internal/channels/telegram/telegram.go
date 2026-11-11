@@ -9,12 +9,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/crossoverJie/botler-agent/internal/channels/allowlist"
@@ -114,7 +116,7 @@ func (c *Channel) SendMessage(ctx context.Context, chatID, text string) error {
 func (c *Channel) Loop(ctx context.Context) {
 	logf("[telegram] Starting long polling…")
 	if name, err := c.getMe(ctx); err != nil {
-		errf("[telegram] getMe failed: %v", err)
+		errf("[telegram] getMe failed: %s", c.redact(err.Error()))
 	} else {
 		logf("[telegram] @%s online", name)
 		monitor.SetChannelUp("telegram")
@@ -135,10 +137,10 @@ func (c *Channel) Loop(ctx context.Context) {
 				// A rejected token can never recover: mark the channel down and stop polling
 				// (the process itself keeps running, as in v1).
 				monitor.SetChannelDown("telegram", err)
-				errf("[telegram] fatal: %v", err)
+				errf("[telegram] fatal: %s", c.redact(err.Error()))
 				return
 			}
-			errf("[telegram] getUpdates failed: %v; retrying in %s", err, backoff)
+			errf("[telegram] getUpdates failed: %s; retrying in %s", c.redact(err.Error()), backoff)
 			select {
 			case <-ctx.Done():
 				return
@@ -320,7 +322,9 @@ func (c *Channel) post(ctx context.Context, method string, payload any, out any)
 func (c *Channel) do(req *http.Request, method string, out any) error {
 	res, err := c.client.Do(req)
 	if err != nil {
-		return err
+		// net/http embeds the full request URL in transport errors, and that URL contains the bot
+		// token. Redact before the error can reach a log line.
+		return errors.New(c.redact(err.Error()))
 	}
 	defer res.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(res.Body, maxBodyBytes))
@@ -344,6 +348,15 @@ func (c *Channel) do(req *http.Request, method string, out any) error {
 		}
 	}
 	return nil
+}
+
+// redact removes the bot token from text that may be logged. The Bot API puts the token in the
+// URL path, so every transport error and every %v of a request carries it.
+func (c *Channel) redact(s string) string {
+	if c.token == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, c.token, "***")
 }
 
 func updateType(u update) string {
