@@ -554,3 +554,34 @@ func TestWireRuntimeServesRealScheduler(t *testing.T) {
 		t.Fatalf("PUT schedules with header = %d (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// The pairing session polls in the background, so it must receive a context that survives the HTTP
+// request. Regression guard: with r.Context() the poll loop died instantly and the UI waited forever.
+func TestPairingContextOutlivesRequest(t *testing.T) {
+	var captured context.Context
+	SetWeChatBackend(WeChatBackend{
+		Status: func() any { return map[string]any{"configured": false} },
+		StartPairing: func(ctx context.Context) PairStartResult {
+			captured = ctx
+			return PairStartResult{State: "pending", QRImage: "data:image/png;base64,AAAA"}
+		},
+		PairStatus:    func() any { return map[string]any{"state": "pending"} },
+		CancelPairing: func() {},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/wechat/pair", nil)
+	req.Header.Set("X-Botler-UI", "1")
+	Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if captured == nil {
+		t.Fatal("StartPairing was not called")
+	}
+	select {
+	case <-captured.Done():
+		t.Fatal("the pairing context was cancelled with the request")
+	default:
+	}
+}

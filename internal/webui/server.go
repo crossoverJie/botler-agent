@@ -409,7 +409,10 @@ func Handler() http.Handler {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "state": "error", "error": "wechat backend not wired"})
 			return
 		}
-		res := backend.StartPairing(r.Context())
+		// The pairing session polls the QR status in the background, so it must outlive this HTTP
+		// request: r.Context() is cancelled as soon as the response is written, which used to stop
+		// the poll loop immediately (the UI then sat on "Waiting for scan" forever).
+		res := backend.StartPairing(context.WithoutCancel(r.Context()))
 		if res.State == "error" {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "state": "error", "error": res.Error})
 			return

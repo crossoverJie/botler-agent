@@ -54,7 +54,7 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "restart":
-		mode := "main"
+		mode := ""
 		if len(os.Args) > 2 {
 			mode = os.Args[2]
 		}
@@ -77,7 +77,7 @@ func main() {
 func usage() {
 	fmt.Fprint(os.Stderr, `usage: botlerctl {restart [main|stable]|start|stop|status|logs}
 
-  restart [main|stable]  update code (main branch or latest release tag), then restart
+  restart [branch|stable]  update code, then restart (default: the branch that is checked out)
   start                  start in the background without updating
   stop                   stop the running process
   status                 show whether it is running
@@ -209,6 +209,9 @@ func (c *ctl) start() {
 }
 
 func (c *ctl) build() error {
+	if _, err := os.Stat(filepath.Join(c.repoDir, "cmd", "botler")); err != nil {
+		return fmt.Errorf("this checkout has no cmd/botler (the TypeScript implementation lives on main); pass a Go branch, e.g. botlerctl restart v2-golang")
+	}
 	fmt.Println("building botler...")
 	version := strings.TrimSpace(runOutput("git", c.repoDir, "describe", "--tags", "--always", "--dirty"))
 	if version == "" {
@@ -223,22 +226,62 @@ func (c *ctl) build() error {
 	return cmd.Run()
 }
 
-func (c *ctl) updateMain() error {
-	fmt.Println("updating main...")
-	if out, err := run("git", c.repoDir, "fetch", remote, mainBranch); err != nil {
+// updateBranch fetches and hard-updates the named branch ("" = the currently checked-out branch).
+// A dirty working tree is refused: `git checkout -f` would silently discard uncommitted work.
+func (c *ctl) updateBranch(branch string) error {
+	if branch == "" {
+		current, err := c.currentBranch()
+		if err != nil {
+			return err
+		}
+		branch = current
+	}
+	if dirty, err := c.isDirty(); err != nil {
+		return err
+	} else if dirty && os.Getenv("BOTLER_FORCE") != "1" {
+		return fmt.Errorf("working tree has uncommitted changes; commit/stash them or set BOTLER_FORCE=1 to discard")
+	}
+	fmt.Printf("updating %s...\n", branch)
+	if out, err := run("git", c.repoDir, "fetch", remote, branch); err != nil {
 		return fmt.Errorf("git fetch: %v: %s", err, out)
 	}
-	if out, err := run("git", c.repoDir, "checkout", "-f", remote+"/"+mainBranch); err != nil {
+	if out, err := run("git", c.repoDir, "checkout", "-f", "FETCH_HEAD"); err != nil {
 		return fmt.Errorf("git checkout: %v: %s", err, out)
 	}
+	// Branch-local anchoring: keep the checkout attached to a local branch of the same name so a
+	// later `git status`/pull behaves predictably.
+	if out, err := run("git", c.repoDir, "checkout", "-B", branch, "FETCH_HEAD"); err != nil {
+		return fmt.Errorf("git checkout -B %s: %v: %s", branch, err, out)
+	}
 	return c.build()
+}
+
+// currentBranch returns the checked-out branch name (detached HEAD falls back to "main").
+func (c *ctl) currentBranch() (string, error) {
+	out, err := run("git", c.repoDir, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return mainBranch, nil
+	}
+	name := strings.TrimSpace(out)
+	if name == "" {
+		return mainBranch, nil
+	}
+	return name, nil
+}
+
+func (c *ctl) isDirty() (bool, error) {
+	out, err := run("git", c.repoDir, "status", "--porcelain")
+	if err != nil {
+		return false, fmt.Errorf("git status: %v: %s", err, out)
+	}
+	return strings.TrimSpace(out) != "", nil
 }
 
 func (c *ctl) updateStable() error {
 	tag := latestReleaseTag()
 	if tag == "" {
-		fmt.Fprintln(os.Stderr, "warn: no stable release found, falling back to main")
-		return c.updateMain()
+		fmt.Fprintln(os.Stderr, "warn: no stable release found, falling back to the current branch")
+		return c.updateBranch("")
 	}
 	fmt.Printf("stable: checking out %s\n", tag)
 	if out, err := run("git", c.repoDir, "fetch", "--tags", remote); err != nil {
@@ -295,10 +338,12 @@ func (c *ctl) restart(mode string) {
 	if mode == "stable" {
 		err = c.updateStable()
 	} else {
-		err = c.updateMain()
+		err = c.updateBranch(mode)
 	}
 	if err != nil {
-		fail(err)
+		fmt.Fprintf(os.Stderr, "botlerctl: %v\n", err)
+		// The checkout may have moved or failed; do not start a stale binary silently.
+		os.Exit(1)
 	}
 	c.start()
 }
