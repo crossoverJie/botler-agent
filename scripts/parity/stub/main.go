@@ -179,6 +179,12 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(completion(st))
 	})
+	http.HandleFunc("/reset", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		counter = 0
+		mu.Unlock()
+		_, _ = w.Write([]byte("ok"))
+	})
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
