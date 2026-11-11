@@ -18,7 +18,7 @@ A general-purpose, lightweight personal agent framework: it receives messages fr
 
 A deliberately **lightweight** alternative to heavyweight agent frameworks:
 
-- **Lightweight** — only six tools, no heavy runtime or daemon; a single `tsx` process, installed in seconds.
+- **Lightweight** — only six tools, no heavy runtime or daemon; a single static Go binary, installed in seconds.
 - **Token-thrifty** — every task is a fresh, short-lived Agent; only a bounded recent-visible-conversation window is reused across IM turns. Routing uses a tiny project-name + summary prompt, and only the selected subproject's conventions are loaded. No giant system prompts, no chasing long contexts — most tasks cost a fraction of a general-assistant call.
 - **Focused on simple vertical tasks** — not a general-purpose chatbot. It shines at small, repetitive, well-scoped jobs (meal logging, vocabulary lookups, reminders), each described by its own `AGENTS.md`.
 
@@ -27,7 +27,7 @@ A deliberately **lightweight** alternative to heavyweight agent frameworks:
 | | **botler-agent** | **General-purpose agents** (OpenClaw / WorkBuddy) | **Coding agents** (Claude Code / Codex) | **Cloud chatbots** (Doubao / Yuanbao / ChatGPT) |
 |---|---|---|---|---|
 | **Positioning** | Lightweight personal data assistant | Broad task automation | Software engineering in a codebase | Conversational Q&A service |
-| **Install footprint** | A single `tsx` process, installed in seconds — no heavy runtime | Large bundles carrying many features you may never use | Heavy; expects a full dev environment | Web / app — nothing to install |
+| **Install footprint** | A single static Go binary, installed in seconds — no heavy runtime | Large bundles carrying many features you may never use | Heavy; expects a full dev environment | Web / app — nothing to install |
 | **Built-in tools** | Only 6 controlled tools (`read / write / edit / run / schedule` + IM-only `clear_conversation_context`) | Many built-in, often complex tools | Full shell, filesystem, and command access | Chat only — no file tools |
 | **File operations** | Path allowlist — only first-level subdirs of `DATA_ROOT` | Broad file access | Reads/writes across the whole workspace | None — cloud only |
 | **Permissions on your machine** | Extremely restrained — no arbitrary shell | More open | Highly open (run commands, modify code) | N/A (remote cloud service) |
@@ -43,54 +43,33 @@ A deliberately **lightweight** alternative to heavyweight agent frameworks:
 
 ## Installation
 
-> **Go implementation (`v2-golang` branch).** This branch reimplements the agent in Go, using
-> [adk-go](https://github.com/google/adk-go) for the model layer. The config/data layout is
-> unchanged (`~/.botler-agent/`, `DATA_ROOT`, `schedules.json`, task logs ...), so an existing
-> install keeps working:
->
-> ```bash
-> go build -o botler ./cmd/botler
-> ./botler init              # scaffold ~/.botler-agent/ (templates, never overwrites)
-> ./botler "your message"    # single message (CLI mode); no args starts the channels
-> go run ./scripts/botlerctl restart     # background start/stop/status/logs [main|stable]
-> go run ./scripts/install               # clone + build + init (idempotent)
-> go run ./scripts/parity                # differential test against v1 with a scripted model stub
-> ```
->
-> The npm instructions below apply to the TypeScript implementation on `main`.
+Two artifacts are distributed: the **Go binary** (built from source) and the **Docker image**.
+The config/data layout is unchanged from v1 (`~/.botler-agent/`, `DATA_ROOT`, `schedules.json`, task
+logs ...), so an existing install keeps working as-is.
 
-**Option A — clone from GitHub (recommended)**
+**Option A — build from source (recommended)**
 
 ```bash
 git clone https://github.com/crossoverJie/botler-agent.git
-cd botler-agent
-npm install
-npm run init
-```
-
-**Option B — one-command source install (Go branch)**
-
-```bash
-git clone -b v2-golang https://github.com/crossoverJie/botler-agent.git
 cd botler-agent && go run ./scripts/install
 ```
 
 Clones to `~/.local/share/botler-agent` (override with `BOTLER_INSTALL_DIR`), builds the binary with
 `go build`, and runs `botler init`; it is idempotent — re-running updates the checkout and rebuilds.
 
-**Option C — npm global CLI**
+Or build in place and drive the binary directly:
 
 ```bash
-npm i -g botler-agent
-botler init     # scaffold ~/.botler-agent/ (.env + providers.json + system-prompt.md templates)
-botler -- "your first message"   # or just `botler` to start channels per .env
+go build -o botler ./cmd/botler
+./botler init              # scaffold ~/.botler-agent/ (templates, never overwrites)
+./botler "your message"    # single message (CLI mode); no args starts the channels
+go run ./scripts/botlerctl restart   # background start/stop/status/logs [main|stable]
+go run ./scripts/parity              # differential test against v1 with a scripted model stub
 ```
 
-All three methods then need the same setup: edit `~/.botler-agent/.env` (DATA_ROOT / model selection / channel credentials), optionally configure custom gateways in `~/.botler-agent/providers.json`, and customize `~/.botler-agent/system-prompt.md` if desired.
+**Option B — Docker (NAS / container deployment)**
 
-**Option D — Docker (NAS / container deployment)**
-
-A multi-arch (`linux/amd64` + `linux/arm64`) image is published to Docker Hub (`crossoverjie/botler-agent`, tags `latest` / `edge` / `vX.Y.Z`). The container runs the persistent channel directly via `tsx` (no build step inside the container) and persists everything through two mounted volumes:
+A multi-arch (`linux/amd64` + `linux/arm64`) image is published to Docker Hub (`crossoverjie/botler-agent`, tags `latest` / `edge` / `vX.Y.Z`). The container runs the static Go binary (no build step inside the container) and persists everything through two mounted volumes:
 
 | Host concern | In-container path | Recommended mount |
 | --- | --- | --- |
@@ -165,23 +144,21 @@ The key belongs to a dedicated machine user that is a **collaborator (Write)** o
 ## Quick Start
 
 ```bash
-npm install
-
 # 1. Initialize the user-level config directory (~/.botler-agent/)
-npm run init
+botler init
 
 # 2. Edit ~/.botler-agent/.env, fill in DATA_ROOT / model selection (PI_PROVIDER / PI_MODEL) / channel credentials
 # 3. Edit ~/.botler-agent/providers.json with your model providers (baseUrl / apiKey / models)
 # 4. (Optional) Customize ~/.botler-agent/system-prompt.md (or have AI generate it from project context)
 
 # 5a. CLI mode (local debugging: pass a single message)
-npm start -- "had a steamed bun for breakfast"
+botler "had a steamed bun for breakfast"
 
 # 5b. Persistent channel mode (start Telegram / Feishu / WeChat per .env)
-npm start
+botler
 
 # 6. (Optional) WeChat iLink channel — log in first via QR:
-npm start -- wechat-login
+botler wechat-login
 
 # 7. (Optional) Enable the scheduler / WebUI / monitor via the .env switches (SCHEDULER_ENABLED / WEBUI_ENABLED / MONITOR_ENABLED)
 ```
@@ -204,7 +181,7 @@ Use it as your data root (botler-agent loads each subproject's `AGENTS.md` at ru
 
 ```bash
 export DATA_ROOT=/path/to/botler-agent-app   # or copy selected subproject folders here
-npm start
+botler
 ```
 
 See [`botler-agent-app/README.md`](botler-agent-app/README.md) for the per-subproject schema and customization notes.
@@ -262,7 +239,7 @@ process env vars  >  ~/.botler-agent/.env  >  source .env (dev fallback)  >  bui
 
 ### Custom model providers (`providers.json`)
 
-Custom OpenAI-completions / Anthropic-messages compatible gateways (self-hosted / internal endpoints, e.g. a self-hosted OpenAI-completions gateway or Volcengine Ark coding endpoint) are defined in `~/.botler-agent/providers.json` (generated by `npm run init`). It is the primary source of truth for provider metadata; when the file is missing, the legacy `CUSTOM_BASE_URL` / `CUSTOM_API_KEY` env vars still work as a fallback.
+Custom OpenAI-completions / Anthropic-messages compatible gateways (self-hosted / internal endpoints, e.g. a self-hosted OpenAI-completions gateway or Volcengine Ark coding endpoint) are defined in `~/.botler-agent/providers.json` (generated by `botler init`). It is the primary source of truth for provider metadata; when the file is missing, the legacy `CUSTOM_BASE_URL` / `CUSTOM_API_KEY` env vars still work as a fallback.
 
 `api` selects the wire protocol per provider: `"openai-completions"` (default) or `"anthropic-messages"`.
 
@@ -300,7 +277,7 @@ Custom OpenAI-completions / Anthropic-messages compatible gateways (self-hosted 
 
 Once the system prompt is externalized, you (or the AI assistant) can customize it for your project background:
 
-1. `npm run init` generates `~/.botler-agent/system-prompt.md` (a general default template).
+1. `botler init` generates `~/.botler-agent/system-prompt.md` (a general default template).
 2. Replace the template with the conventions of your own data subprojects (file structure, operating rules, etc.), keeping the `__DATA_ROOT__` / `__PROJECTS__` / `__PROJECT_CONTEXT__` / `__TODAY__` placeholders.
 3. You can also have the AI assistant generate it directly, e.g.:
 
@@ -314,7 +291,7 @@ Once the system prompt is externalized, you (or the AI assistant) can customize 
 
 - **Telegram** (`grammy`, long polling): simplest, preferred. Requires `TELEGRAM_BOT_TOKEN`; on the mainland China network a `TG_PROXY` is required to connect to the API. Set `TELEGRAM_ALLOW_FROM` (comma-separated Telegram user ids or usernames) to restrict senders; leave empty to allow all.
 - **Feishu** (event-subscription webhook with decryption): requires `FEISHU_APP_ID` / `FEISHU_APP_SECRET`; optional `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY`, listens on `FEISHU_PORT` (default 3000). Set `FEISHU_ALLOW_FROM` (comma-separated sender `open_id`/`user_id`/`union_id` or chat ids) to restrict senders; leave empty to allow all.
-- **WeChat (iLink / ClawBot official Bot API)**: DM channel. Enable with `WECHAT_ENABLED=1` after logging in via `npm start -- wechat-login` (prints a QR code in the terminal; scan it with WeChat — credentials saved to `~/.botler-agent/wechat/account.json`). The account owner (the QR scanner) is always allowed; `WECHAT_ALLOW_FROM` can allowlist extra `ilink_user_id`s. A renewal reminder (`WECHAT_REMINDER_HOURS`) nudges the owner to refresh the 24h `context_token` window.
+- **WeChat (iLink / ClawBot official Bot API)**: DM channel. Enable with `WECHAT_ENABLED=1` after logging in via `botler wechat-login` (prints a QR code in the terminal; scan it with WeChat — credentials saved to `~/.botler-agent/wechat/account.json`). The account owner (the QR scanner) is always allowed; `WECHAT_ALLOW_FROM` can allowlist extra `ilink_user_id`s. A renewal reminder (`WECHAT_REMINDER_HOURS`) nudges the owner to refresh the 24h `context_token` window.
   - **Inbound images as vision input**: WeChat can receive images you send. They are decoded and fed to the model as vision input, and the originals are persisted under `DATA_ROOT/<project>/photos/`. Because WeChat delivers a selected photo immediately while you may still be typing the caption ("选图即发，文字后到"), inbound image messages are held for a short window (`WECHAT_IMAGE_BATCH_SECONDS`, default 60s; `0` disables) so a following text joins the batch as one task; multiple photos in the window also merge. If the configured model cannot read images, the agent replies in Chinese asking you to add a short text hint.
   - **Greeting short-circuit**: a bare greeting (e.g. 你好 / hi) skips the routing LLM call entirely and gets a deterministic Chinese welcome that lists the available subprojects — zero model cost.
   - **Context reset**: when the user explicitly asks for a new task or to ignore/reset previous context, the routing or execution model clears the shared recent-conversation window. A pure reset command is not stored.
@@ -449,11 +426,15 @@ The framework hardcodes no data schema. Each data subproject's root `AGENTS.md` 
 
 ## Scripts
 
+The shipped CLI is the Go binary (`botler init` / `botler "message"` / `botler`, see
+[Installation](#installation)). The npm scripts below only drive the v1 TypeScript reference
+implementation under `src/`, which is kept for the parity harness and the Go test suite.
+
 | Command | Description |
 |---------|-------------|
-| `npm start` | Run (CLI or persistent channel, depending on args and .env) |
+| `npm start` | Run the v1 TypeScript implementation (CLI or persistent channel) |
 | `npm run dev` | Same as `npm start` |
-| `npm run init` | Initialize `~/.botler-agent/` |
+| `npm run init` | Initialize `~/.botler-agent/` (v1 equivalent of `botler init`) |
 | `npm run typecheck` | `tsc --noEmit` type check |
 | `npm run cli` | Same as `npm start` |
 | `npm test` | `node:test` suite (scheduler cron + store) |
