@@ -14,7 +14,35 @@ Key design principles (understand before changing, do not break):
 4. **Config externalized**: the system prompt, the real `.env`, and `providers.json` (custom model providers) live in `~/.botler-agent/` (overridable via `BOTLER_CONFIG_DIR`), reused across clones / machines. The source-dir `.env` is only a dev fallback.
 5. **Path allowlist is a security boundary**: the agent's tools may only read/write first-level subdirs of `DATA_ROOT`. Do not relax `safePath`, do not add `bash`-class tools to the agent unless explicitly requested and the consequences are understood.
 
-## Commands
+> **This branch (`v2-golang`) is the Go implementation.** The TypeScript sources (`src/`,
+> `package.json`) and the npm commands below are the v1 implementation, which stays on `main`; they
+> are kept here only as the reference used by the parity harness.
+
+## Commands (Go branch)
+
+```bash
+go build -o botler ./cmd/botler   # build the binary (CGO-free, static)
+./botler init                     # scaffold ~/.botler-agent/ (templates, never overwrites)
+./botler "message"                # CLI mode: one message through the full pipeline (local debugging)
+./botler                          # no args: start the persistent channels per .env
+./botler wechat-login|wechat-logout   # WeChat iLink session management
+./botler --version                # build version (works without DATA_ROOT)
+
+gofmt -l .        # formatting (must be empty)
+go vet ./...      # static checks
+go test ./...     # unit + integration tests (must pass before committing)
+go test -race ./...  # CI variant
+
+# Process control / packaging helpers (Go programs under scripts/, not shell scripts):
+go run ./scripts/botlerctl {restart [main|stable]|start|stop|status|logs}
+go run ./scripts/install          # clone + build + init (idempotent)
+go run ./scripts/parity           # differential test against v1 (scripted OpenAI-compatible stub)
+# botlerctl implementation: detached child + .botler.pid (gitignored), log to botler.log.
+# IMPORTANT: it only touches the repo dir — never DATA_ROOT or ~/.botler-agent/.
+# Self-restart triggered *from chat* is NOT supported by the agent's toolset (see Common change scenarios).
+```
+
+## Commands (v1 reference, `main`)
 
 ```bash
 npm install            # install dependencies
@@ -22,20 +50,34 @@ npm run init           # initialize ~/.botler-agent/ (.env template + providers.
 npm start              # run: no args starts the persistent channel; a message arg enters CLI mode
 npm start -- "message" # CLI mode: process a single message directly (local debugging)
 npm run restart        # stop + pull latest code (git main) + npm install + restart in background
-npm run restart -- stable  # same, but check out the latest GitHub release tag (falls back to main if none yet)
-npm run typecheck      # tsc --noEmit type check (must pass before committing)
+npm run typecheck      # tsc --noEmit type check
 npm test               # node:test suite (scheduler cron + store)
-
-# Process control is also available directly via scripts/botlerctl.sh:
-#   bash scripts/botlerctl.sh {restart|start|stop|status|logs} [main|stable]
-# Implementation: nohup + .botler.pid (gitignored), log to botler.log.
-# IMPORTANT: this script only touches the repo dir — never DATA_ROOT or ~/.botler-agent/.
-# Self-restart triggered *from chat* is NOT supported by the agent's toolset (see Common change scenarios).
 ```
 
 > Environment variables are in `.env.example`; the real config goes in `~/.botler-agent/.env`. `.env` is gitignored — do not commit real credentials.
 
-## Architecture and data flow
+## Module map (Go branch)
+
+| Go package | v1 counterpart | Responsibility |
+|---|---|---|
+| `cmd/botler` | `src/index.ts`, `bin/botler.mjs` | entry: subcommands, CLI mode, channel service, explicit `paths.Validate()` |
+| `internal/config` | `src/config.ts`, `src/providers.ts` | two-level `.env`, `providers.json`, every env key |
+| `internal/paths` | `src/tools/paths.ts` | **security boundary**: lazy allowlist, `safePath`, `Validate()` |
+| `internal/prompt`, `internal/greeting` | `src/prompts/system-prompt.ts`, `src/greeting.ts` | system prompt + routing prompt, greeting short-circuit |
+| `internal/agentrt` (+`/adk`, `/fake`) | `pi-agent-core`/`pi-ai` | Runtime seam, tool loop, adk-go model adapter, deterministic fake |
+| `internal/tools` | `src/tools/*` | read/write/edit/run/schedule/clear_conversation_context + task context |
+| `internal/runner` | `src/runner.ts`, `src/runner/decisions.ts` | two-phase routing, reply extraction, image refs |
+| `internal/dispatch` | `src/dispatcher.ts` | dedup, serial queue, validation, self-heal, commit, logging |
+| `internal/safety` | `src/safety/*` | post-write JSON validation, git commit/push |
+| `internal/scheduler` | `src/scheduler/*` | schedule store, cron/interval/at/once, holidays, engine |
+| `internal/logs` | `src/logging/*` | JSONL task logs, query/summary/token-stats/cleanup |
+| `internal/conversation` | `src/conversation/store.ts` | shared IM recent-turn window |
+| `internal/push` | `src/push/*` | contacts + deliver with channel fallback |
+| `internal/channels/*` | `src/channels/*` | Telegram (stdlib), WeChat iLink (openilink-sdk-go) |
+| `internal/monitor`, `internal/webui` | `src/monitor/*`, `src/webui/*` | health/metrics, WebUI API + embedded `index.html` |
+| `internal/images`, `internal/initcmd`, `internal/version` | `src/channels/wechat/download.ts`, `src/init.ts` | inbound image persistence, config scaffolding, build version |
+
+## Architecture and data flow (v1 reference)
 
 ```
 channel (telegram.ts / feishu.ts)

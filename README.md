@@ -43,6 +43,22 @@ A deliberately **lightweight** alternative to heavyweight agent frameworks:
 
 ## Installation
 
+> **Go implementation (`v2-golang` branch).** This branch reimplements the agent in Go, using
+> [adk-go](https://github.com/google/adk-go) for the model layer. The config/data layout is
+> unchanged (`~/.botler-agent/`, `DATA_ROOT`, `schedules.json`, task logs ...), so an existing
+> install keeps working:
+>
+> ```bash
+> go build -o botler ./cmd/botler
+> ./botler init              # scaffold ~/.botler-agent/ (templates, never overwrites)
+> ./botler "your message"    # single message (CLI mode); no args starts the channels
+> go run ./scripts/botlerctl restart     # background start/stop/status/logs [main|stable]
+> go run ./scripts/install               # clone + build + init (idempotent)
+> go run ./scripts/parity                # differential test against v1 with a scripted model stub
+> ```
+>
+> The npm instructions below apply to the TypeScript implementation on `main`.
+
 **Option A — clone from GitHub (recommended)**
 
 ```bash
@@ -52,13 +68,15 @@ npm install
 npm run init
 ```
 
-**Option B — curl one-liner**
+**Option B — one-command source install (Go branch)**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/crossoverJie/botler-agent/main/install.sh | bash
+git clone -b v2-golang https://github.com/crossoverJie/botler-agent.git
+cd botler-agent && go run ./scripts/install
 ```
 
-Clones to `~/.local/share/botler-agent` (override with `BOTLER_INSTALL_DIR`), runs `npm install` + `npm run init`, and is idempotent — re-running does a `git pull`.
+Clones to `~/.local/share/botler-agent` (override with `BOTLER_INSTALL_DIR`), builds the binary with
+`go build`, and runs `botler init`; it is idempotent — re-running updates the checkout and rebuilds.
 
 **Option C — npm global CLI**
 

@@ -1,0 +1,85 @@
+name: ci-go
+
+# Go pipeline for the v2-golang branch. The TypeScript pipeline (ci.yml) stays on main.
+on:
+  push:
+    branches: [v2-golang, main]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "Dockerfile"
+      - ".github/workflows/ci-go.yml"
+  pull_request:
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "Dockerfile"
+      - ".github/workflows/ci-go.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache-dependency-path: go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: vet
+        run: go vet ./...
+      - name: test (race)
+        run: go test -race ./...
+      - name: build (static)
+        run: CGO_ENABLED=0 go build -trimpath ./cmd/botler
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `git describe` needs the tags, so a shallow checkout is not enough.
+          fetch-depth: 0
+      - name: build image
+        run: |
+          VERSION="$(git describe --tags --always --dirty)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          # Pass the version explicitly: the Dockerfile's "dev" default only covers bare builds
+          # (the build context has no .git, so it cannot derive one).
+          docker build \
+            --build-arg VERSION="$VERSION" \
+            --build-arg COMMIT="$COMMIT" \
+            -t botler-agent:smoke .
+      # Both entries must work WITHOUT a populated DATA_ROOT: `init` and `--version` return before
+      # paths.Validate() by design (§2.1.1). If they start failing here, the startup-order contract
+      # was broken somewhere.
+      - name: version + init
+        run: |
+          # The stamped version must reach the binary, not silently stay "dev".
+          docker run --rm botler-agent:smoke --version | tee /tmp/version.txt
+          grep -qF "$VERSION" /tmp/version.txt
+          docker run --rm botler-agent:smoke init
+      # A real process must come up and answer the health check. The monitor binds 127.0.0.1, so it
+      # has to be probed from inside the container; a dummy channel token keeps the process alive.
+      - name: live health check
+        run: |
+          mkdir -p /tmp/smoke/data/proj /tmp/smoke/cfg
+          docker run -d --name smoke \
+            -v /tmp/smoke/cfg:/config -v /tmp/smoke/data:/data \
+            -e DATA_ROOT=/data \
+            -e TELEGRAM_BOT_TOKEN=000000:dummy \
+            -e WEBUI_ENABLED=0 -e SCHEDULER_ENABLED=0 -e MONITOR_ENABLED=1 \
+            botler-agent:smoke
+          for i in $(seq 1 30); do
+            if docker exec smoke wget -qO- http://127.0.0.1:8899/healthz >/dev/null 2>&1; then exit 0; fi
+            sleep 1
+          done
+          docker logs smoke
+          exit 1

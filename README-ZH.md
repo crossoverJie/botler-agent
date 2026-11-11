@@ -39,6 +39,21 @@
 
 ## 安装
 
+> **Go 实现（`v2-golang` 分支）**：本分支用 Go 重写了 agent，模型层使用
+> [adk-go](https://github.com/google/adk-go)。配置与数据目录格式完全不变（`~/.botler-agent/`、
+> `DATA_ROOT`、`schedules.json`、任务日志……），现网安装可直接换二进制：
+>
+> ```bash
+> go build -o botler ./cmd/botler
+> ./botler init              # 生成 ~/.botler-agent/ 模板（不覆盖已有文件）
+> ./botler "你的消息"         # 单条消息（CLI 模式）；不带参数启动渠道服务
+> go run ./scripts/botlerctl restart     # 后台 start/stop/status/logs [main|stable]
+> go run ./scripts/install               # clone + 编译 + init（可重复执行）
+> go run ./scripts/parity                # 与 v1 的差分测试（确定性模型 stub）
+> ```
+>
+> 下面的 npm 说明适用于 `main` 上的 TypeScript 实现。
+
 **方式 A — 从 GitHub clone（推荐）**
 
 ```bash

@@ -1,48 +1,44 @@
-# botler-agent container.
-# Runs the persistent channel via tsx (no build step); tsx is a runtime dependency.
+# Botler Agent (Go) — multi-arch, static binary image.
 #
-# Extra system packages (kept minimal):
-#   git              auto-commit of each DATA_ROOT subproject (safety/git.ts)
-#   openssh-client   GIT_PUSH over an SSH remote (`git push` shells out to ssh)
-#   tzdata           TZ-aware scheduler + __TODAY__ date
-#   python3          the `run` tool executes in-project python3 scripts (.py)
-#   ca-certificates  outbound TLS to model providers / channels
-#
-# Credentials, git identity and known_hosts are NEVER baked into the image: mount them
-# (ssh config / key) and pass them as env (GIT_AUTHOR_*, GIT_COMMITTER_*, GIT_SSH_COMMAND).
+# Compilation runs on the host architecture ($BUILDPLATFORM) and targets $TARGETARCH, so
+# multi-arch builds do not pay the QEMU tax for the Go toolchain.
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
+ARG TARGETOS
+ARG TARGETARCH
+# Stamped into the binary ("botler --version") and the image labels. Build through `make image`
+# (or the CI workflow) so both come from `git describe`; a bare `docker build` yields "dev" on
+# purpose, because .dockerignore excludes .git and nothing in the image can derive the tag.
+ARG VERSION=dev
+ARG COMMIT=
+WORKDIR /src
+# Optional module proxy override for build hosts that cannot reach proxy.golang.org:
+#   docker build --build-arg GOPROXY=https://mirrors.aliyun.com/goproxy/ ...
+ARG GOPROXY=
+COPY go.mod go.sum ./
+RUN if [ -n "$GOPROXY" ]; then go env -w GOPROXY="$GOPROXY"; fi && go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath \
+    -ldflags "-s -w -X github.com/crossoverJie/botler-agent/internal/version.Version=$VERSION -X github.com/crossoverJie/botler-agent/internal/version.Commit=$COMMIT" \
+    -o /out/botler ./cmd/botler
 
-FROM node:20-alpine
-
-RUN apk add --no-cache git openssh-client tzdata python3 ca-certificates
-
-WORKDIR /app
-
-COPY package.json package-lock.json ./
-# --ignore-scripts matches the repo CI (ci.yml) and skips native postinstall
-# binaries (e.g. esbuild) that crash under multi-arch QEMU emulation.
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
-
-COPY bin ./bin
-COPY src ./src
-COPY tsconfig.json .env.example ./
-
-# Image-level defaults so a bare `docker run` (or the NAS Docker UI) works out of the
-# box. BOTLER_CONFIG_DIR / DATA_ROOT are container-location concerns; WEBUI_HOST is
-# 0.0.0.0 so the UI is reachable from the host; the three switches are ON by default.
-# These ENV values take precedence over the mounted /config/.env — override them at
-# container creation (e.g. `-e WEBUI_ENABLED=0`), not inside /config/.env.
-ENV BOTLER_CONFIG_DIR=/config \
-    DATA_ROOT=/data \
-    WEBUI_HOST=0.0.0.0 \
-    WEBUI_ENABLED=1 \
-    SCHEDULER_ENABLED=1 \
-    MONITOR_ENABLED=1
-
+FROM alpine:3.22
+# git + openssh-client: data subprojects are git repos (GIT_PUSH=1).
+# python3 / nodejs: the `run` tool only executes existing in-project .py / .js screens.
+# tzdata: IANA zones for the scheduler; ca-certificates: HTTPS model/WeChat/holiday APIs.
+RUN apk add --no-cache git openssh-client tzdata python3 nodejs ca-certificates
+ARG VERSION=dev
+ARG COMMIT=
+COPY --from=build /out/botler /usr/local/bin/botler
+LABEL org.opencontainers.image.title="botler-agent" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.source="https://github.com/crossoverJie/botler-agent"
+# Same defaults as v1 (ports must not change).
+ENV BOTLER_CONFIG_DIR=/config DATA_ROOT=/data WEBUI_HOST=0.0.0.0 \
+    WEBUI_ENABLED=1 WEBUI_PORT=8900 \
+    SCHEDULER_ENABLED=1 MONITOR_ENABLED=1 MONITOR_PORT=8899
 VOLUME ["/config", "/data"]
-
-# Liveness: the monitor's /healthz (bound 127.0.0.1 inside the container). Requires
-# MONITOR_ENABLED to stay on (default). 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD wget -qO- http://127.0.0.1:8899/healthz >/dev/null 2>&1 || exit 1
-
-ENTRYPOINT ["node", "bin/botler.mjs"]
+ENTRYPOINT ["botler"]
