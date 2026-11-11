@@ -1,0 +1,4 @@
+github.com/openilink/openilink-sdk-go v0.6.0 h1:3hfNdNpDiUZLoK91Hmrpmon0tsMwhWzEOiHcgBUr6XQ=
+github.com/openilink/openilink-sdk-go v0.6.0/go.mod h1:Z+B/V/3gQgqY2OIg9fYO5k0UoqdOzix8AnK6OjyM4Yg=
+rsc.io/qr v0.2.0 h1:6vBLea5/NRMVTz8V66gipeLycZMl/+UlFmk8DvqQ6WY=
+rsc.io/qr v0.2.0/go.mod h1:IF+uZjkb9fqyeF/4tlBoynqmQxUoPfWEKh921coOuXs=
