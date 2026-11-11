@@ -3,6 +3,11 @@ name: Release
 # Git-tag based release. Triggered by pushing a `v*` tag (produced by
 # `make release VERSION=...`) or manually via workflow_dispatch for recovery.
 #
+# The released artifacts are the Go binary (built from source by users, so the tag must be
+# buildable) and the Docker image (docker-release.yml builds it from the same tag). The gate below
+# therefore validates the Go tree; the TypeScript sources under src/ are v1 reference only and are
+# not part of a release any more.
+#
 # Borrowed from pi/.github/workflows/build-binaries.yml:
 #   - draft-then-publish: a GitHub Release is created as a DRAFT first, and only
 #     flipped to published after validation passes, so a half-finished release is
@@ -41,20 +46,23 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          node-version: 22
-          cache: npm
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: vet
+        run: go vet ./...
 
       - name: Test
-        run: npm test
+        run: go test ./...
+
+      - name: Build (static)
+        run: CGO_ENABLED=0 go build -trimpath ./cmd/botler
 
   stage-release:
     runs-on: ubuntu-latest

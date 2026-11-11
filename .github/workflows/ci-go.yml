@@ -1,9 +1,10 @@
 name: ci-go
 
-# Go pipeline for the v2-golang branch. The TypeScript pipeline (ci.yml) stays on main.
+# Go pipeline for `main`. The TypeScript pipeline (ci.yml) still runs, but only to keep the v1
+# reference tree under src/ compiling and tested — it gates nothing in a release.
 on:
   push:
-    branches: [v2-golang, main]
+    branches: [main]
     paths:
       - "**.go"
       - "go.mod"
