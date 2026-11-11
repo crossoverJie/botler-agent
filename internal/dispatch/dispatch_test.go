@@ -14,8 +14,10 @@ import (
 	"github.com/crossoverJie/botler-agent/internal/config"
 	"github.com/crossoverJie/botler-agent/internal/conversation"
 	"github.com/crossoverJie/botler-agent/internal/logs"
+	"github.com/crossoverJie/botler-agent/internal/monitor"
 	"github.com/crossoverJie/botler-agent/internal/paths"
 	"github.com/crossoverJie/botler-agent/internal/runner"
+	"github.com/crossoverJie/botler-agent/internal/tools"
 )
 
 func setup(t *testing.T, maxTurns int) string {
@@ -289,6 +291,38 @@ func TestDispatchRecoversFromPanic(t *testing.T) {
 	}
 	if page.Logs[len(page.Logs)-1].Status != logs.StatusError {
 		t.Fatalf("unexpected log status %q", page.Logs[len(page.Logs)-1].Status)
+	}
+	// The recover runs before the accounting defer, so the monitor must also see the error.
+	stats := monitor.StatsSnapshot()
+	if stats.StatusCounts[string(logs.StatusError)] == 0 {
+		t.Fatalf("statusCounts must record the error: %+v", stats.StatusCounts)
+	}
+	if stats.TotalFailed == 0 {
+		t.Fatal("a recovered panic must count as a failure")
+	}
+}
+
+// A panic inside a scheduled script must be logged as an error and returned as one, not as the
+// zero-value Result a scheduler would read as "nothing happened".
+func TestScriptedTaskRecoversFromPanic(t *testing.T) {
+	setup(t, 20)
+	original := runScriptFn
+	runScriptFn = func(string, []string) tools.RunResult { panic("script runner exploded") }
+	t.Cleanup(func() { runScriptFn = original })
+
+	res := DispatchScriptedTask(context.Background(), ScriptTaskOptions{ID: "schedule:x:1", Script: "cook/x.py"})
+	if res.Status != logs.StatusError {
+		t.Fatalf("unexpected status %q", res.Status)
+	}
+	if !strings.Contains(res.Text, "⚠️ Script task error: script runner exploded") {
+		t.Fatalf("unexpected text %q", res.Text)
+	}
+	page := logs.QueryLogs(logs.LogQuery{})
+	if page.Total != 1 {
+		t.Fatalf("expected one task log, got %d", page.Total)
+	}
+	if page.Logs[0].Status != logs.StatusError {
+		t.Fatalf("the panic run must be logged as error, got %q", page.Logs[0].Status)
 	}
 }
 

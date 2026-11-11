@@ -144,18 +144,6 @@ func Dispatch(ctx context.Context, message string, opts Options) (dispatchResult
 		}
 		return Result{Text: text, Images: images, Status: status}
 	}
-	// v1's whole queued section sits inside try/catch: a panic in a tool, the log store or the
-	// conversation store must become a task error, never a dead process (CLI mode has no channel
-	// level guard). Registered after the cleanup defer so cleanup still runs.
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "[dispatch] panic recovered: %v\n%s\n", r, debug.Stack())
-			errText := "⚠️ Task execution error: " + fmt.Sprint(r)
-			logs.AppendTaskLog(minimalLog(taskID, source, dispatchStartedAt, logs.StatusError, message, errText))
-			finalStatus = logs.StatusError
-			dispatchResult = out(errText, []string{}, logs.StatusError)
-		}
-	}()
 	defer func() {
 		appendVisibleTurn(opts.SessionKey, message, result, finalStatus)
 		monitor.MarkFinished()
@@ -165,6 +153,19 @@ func Dispatch(ctx context.Context, message string, opts Options) (dispatchResult
 			monitor.MarkFailed()
 		}
 		release()
+	}()
+	// v1's whole queued section sits inside try/catch: a panic in a tool, the log store or the
+	// conversation store must become a task error, never a dead process (CLI mode has no channel
+	// level guard). Registered AFTER the accounting defer so LIFO runs this one first: the status
+	// and result it sets are what the accounting and the reply see.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[dispatch] panic recovered: %v\n%s\n", r, debug.Stack())
+			errText := "⚠️ Task execution error: " + fmt.Sprint(r)
+			finalStatus = logs.StatusError
+			dispatchResult = out(errText, []string{}, logs.StatusError)
+			logs.AppendTaskLog(minimalLog(taskID, source, dispatchStartedAt, logs.StatusError, message, errText))
+		}
 	}()
 
 	res, err := runner.RunTask(ctx, message, &runner.LogContext{
@@ -259,6 +260,9 @@ func Dispatch(ctx context.Context, message string, opts Options) (dispatchResult
 	return out(res.Text, res.Images, logs.StatusSuccess)
 }
 
+// runScriptFn runs a scheduled script; indirected so tests can inject a panic.
+var runScriptFn = tools.RunScript
+
 // scriptLogInput describes one direct script run for its history log.
 type scriptLogInput struct {
 	taskID    string
@@ -327,13 +331,6 @@ func DispatchScriptedTask(ctx context.Context, opts ScriptTaskOptions) (dispatch
 		return Result{Text: t, Images: []string{}, Status: status}
 	}
 	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "[dispatch] panic recovered (script): %v\n%s\n", r, debug.Stack())
-			text = "⚠️ Script task error: " + fmt.Sprint(r)
-			finalStatus = logs.StatusError
-		}
-	}()
-	defer func() {
 		logs.AppendTaskLog(scriptTaskLog(scriptLogInput{
 			taskID:    opts.ID,
 			source:    source,
@@ -352,8 +349,18 @@ func DispatchScriptedTask(ctx context.Context, opts ScriptTaskOptions) (dispatch
 		}
 		release()
 	}()
+	// Registered after the log/accounting defer so it runs first: the log line must record the
+	// error status, not the success the panicking run never reached.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[dispatch] panic recovered (script): %v\n%s\n", r, debug.Stack())
+			text = "⚠️ Script task error: " + fmt.Sprint(r)
+			finalStatus = logs.StatusError
+			dispatchResult = out(text, logs.StatusError)
+		}
+	}()
 
-	res := tools.RunScript(opts.Script, opts.ScriptArgs)
+	res := runScriptFn(opts.Script, opts.ScriptArgs)
 	text = res.Text
 	if res.Cwd != "" {
 		if name, ok := paths.ProjectOf(res.Cwd); ok {
