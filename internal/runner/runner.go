@@ -323,11 +323,15 @@ func RunTask(ctx context.Context, userMessage string, lc *LogContext) (*Result, 
 				routingUsage: routingUsage, routing: true, candidates: candidates,
 				decision: nil, routePrompt: routingPrompt,
 			}),
+			// v1 records unrouted replies: the unknown-project status is in the recordable set.
+			RecordConversationTurn: true,
 		}, nil
 	}
 
 	// Inbound images must persist to a single data subproject.
-	var realSelected []string
+	// A non-nil empty slice matters: it disables the task-local subset entirely (a schedule-only
+	// route must not gain access to every project), while nil would mean "no subset".
+	realSelected := make([]string, 0, len(selected))
 	for _, n := range selected {
 		if n != prompt.SchedulerVirtualProject {
 			realSelected = append(realSelected, n)
@@ -346,6 +350,7 @@ func RunTask(ctx context.Context, userMessage string, lc *LogContext) (*Result, 
 					routingUsage: routingUsage, routing: true, candidates: candidates,
 					decision: nil, routePrompt: routingPrompt,
 				}),
+				RecordConversationTurn: true,
 			}, nil
 		}
 	}

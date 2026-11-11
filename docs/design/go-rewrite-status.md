@@ -31,6 +31,7 @@ Branch `v2-golang` · module `github.com/crossoverJie/botler-agent` · Go 1.27 �
 | D-4 | Conversation JSON is fsynced and its directory fsynced before/after rename | design D-8; strictly safer, format unchanged | nothing |
 | D-5 | An out-of-range `FINISH_REASON` (safety, malformed function call, …) is logged as `length` | adk-go has no pi-ai equivalent; `error` would hide the usage | task-log `stopReason` |
 | D-6 | `botler --version` exists | new entry point used by the container smoke test (design §9.2) | new flag only |
+| D-7 | Length limits (`TEXT_MAX`, `CONVERSATION_TURN_MAX_CHARS`, summary truncation) count **runes**, v1 counts UTF-16 code units | Go has no UTF-16 strings; identical for BMP text (incl. Chinese), differs only for astral characters (emoji) | truncation points in task logs / prompts when emoji are present |
 
 ## 3. Verification status
 

@@ -577,6 +577,11 @@ func NextFireEpoch(s Schedule, fromMs int64) (next int64, err error) {
 	if tz == "" {
 		tz = DefaultTZ
 	}
+	// Validate up front: the wall-clock helpers below degrade to UTC, which would turn a typo into
+	// a plausible-looking wrong time instead of the v1 error.
+	if _, terr := LoadTimezone(tz); terr != nil {
+		return NoFire, terr
+	}
 	// One-shot: handled BEFORE CompileSchedule (which has no `once` case). silentHours is
 	// intentionally not applied: a one-shot reminder is an explicit, exact instant.
 	if s.Once != "" {

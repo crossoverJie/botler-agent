@@ -238,6 +238,17 @@ func HandleHealth(mux *http.ServeMux) {
 	})
 }
 
+func writeJSONStatus(w http.ResponseWriter, status int, v any) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		http.Error(w, `{"ok":false,"error":"encode failed"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	body, err := json.Marshal(v)
 	if err != nil {
@@ -257,6 +268,15 @@ func StartHealthServer() {
 	port := config.C().MonitorPort
 	mux := http.NewServeMux()
 	HandleHealth(mux)
+	// v1 serves the snapshot on "/" too and answers anything else with a JSON 404. This catch-all
+	// lives on the standalone port only: the WebUI's "/" is the task-log page.
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			writeJSONStatus(w, http.StatusNotFound, map[string]any{"ok": false, "error": "not found"})
+			return
+		}
+		writeJSON(w, BuildSnapshot())
+	})
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	go func() {
 		fmt.Printf("[monitor] health server on http://%s\n", addr)

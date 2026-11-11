@@ -108,7 +108,11 @@ func projectSummary(name string) string {
 	if !ok {
 		return "（无约定文档）"
 	}
-	s := strings.TrimSpace(firstTitleRe.ReplaceAllString(content, ""))
+	// v1's /^\s*#.*$/m has no "g" flag: only the first heading line is removed.
+	if loc := firstTitleRe.FindStringIndex(content); loc != nil {
+		content = content[:loc[0]] + content[loc[1]:]
+	}
+	s := strings.TrimSpace(content)
 	if len([]rune(s)) > summaryChars {
 		s = string([]rune(s)[:summaryChars]) + "…"
 	}

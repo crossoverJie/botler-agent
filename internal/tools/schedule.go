@@ -49,7 +49,7 @@ type scheduleArgs struct {
 	At             string   `json:"at"`
 	Once           string   `json:"once"`
 	Timezone       string   `json:"timezone"`
-	Project        string   `json:"project"`
+	Project        *string  `json:"project"`
 	HolidayMode    string   `json:"holidayMode"`
 }
 
@@ -236,8 +236,10 @@ func (scheduleTool) Execute(_ context.Context, raw json.RawMessage) (agentrt.Too
 		if retryMax > 0 {
 			entry.Retry = &scheduler.Retry{Max: retryMax, BackoffMs: int64(retryBackoff)}
 		}
-		if p := strings.TrimSpace(args.Project); p != "" {
-			entry.Project = p
+		if args.Project != nil {
+			if p := strings.TrimSpace(*args.Project); p != "" {
+				entry.Project = p
+			}
 		}
 		if args.HolidayMode == scheduler.HolidayModeWorkday {
 			entry.HolidayMode = scheduler.HolidayModeWorkday
@@ -371,8 +373,9 @@ func scheduleUpdate(entries []scheduler.Schedule, idx int, args scheduleArgs) (a
 		}
 		current.Timezone = args.Timezone
 	}
-	if args.Project != "" {
-		current.Project = strings.TrimSpace(args.Project)
+	// v1 clears the project when the client sends an explicit empty string.
+	if args.Project != nil {
+		current.Project = strings.TrimSpace(*args.Project)
 	}
 	if args.HolidayMode != "" {
 		if args.HolidayMode == scheduler.HolidayModeWorkday {

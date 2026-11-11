@@ -112,6 +112,10 @@ func Allowed() ([]string, error) {
 }
 
 // Options are the per-call knobs of SafePath.
+//
+// Projects follows v1's truthiness rule: nil means "no task-local subset" (framework calls),
+// while a non-nil slice — including an empty one — restricts the call to exactly those projects,
+// so an empty slice rejects every path.
 type Options struct {
 	// FollowSymlinks realpaths the deepest existing ancestor to prevent symlink escapes. Default on.
 	FollowSymlinks *bool
@@ -196,7 +200,9 @@ func SafePath(p string, opts Options) (string, error) {
 	}
 	realAnc, err := filepath.EvalSymlinks(anc)
 	if err != nil {
-		realAnc = anc
+		// v1 lets realpathSync throw here, i.e. the path is denied. Falling through would turn a
+		// denial into an IO error later (and skip the escape check).
+		return "", fmt.Errorf("path out of bounds (cannot resolve %s): %s", anc, p)
 	}
 	real := filepath.Join(append([]string{realAnc}, tail...)...)
 	ok = false

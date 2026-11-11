@@ -192,3 +192,28 @@ func TestDispatchScriptedTaskPreconditionError(t *testing.T) {
 		t.Fatal("a precondition failure must not be marked mutated")
 	}
 }
+
+// v1 records an unrouted (unknown-project) reply in the IM window: the status is in the recordable
+// set and the runner does not opt out. Regression guard for the bool-zero-value bug.
+func TestDispatchUnknownProjectTurnIsRecorded(t *testing.T) {
+	root := setup(t, 20)
+	// A second project makes routing run, so the stub's UNKNOWN answer is what decides.
+	if err := os.MkdirAll(filepath.Join(root, "vocab"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "vocab", "AGENTS.md"), []byte("# vocab\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner.SetRuntimeForTest(&fake.Runtime{Steps: []fake.Step{{Text: "UNKNOWN"}}})
+	res := Dispatch(context.Background(), "随便说点什么", Options{Source: "telegram", SessionKey: conversation.IMSessionKey})
+	if res.Status != logs.StatusUnknownProject {
+		t.Fatalf("unexpected status %q", res.Status)
+	}
+	turns := conversation.LoadRecentTurns(conversation.IMSessionKey, 5)
+	if len(turns) != 1 {
+		t.Fatalf("the unrouted reply must consume a conversation slot, got %+v", turns)
+	}
+	if turns[0].Assistant != res.Text {
+		t.Fatalf("unexpected recorded turn: %+v", turns[0])
+	}
+}

@@ -299,8 +299,8 @@ func OrphanHistoryIndex(entries []Schedule, runLogs []logs.TaskLog) []HistoryEnt
 			}
 		}
 		msg := a.log.UserMessage
-		if len(msg) > historyMessageChars {
-			msg = msg[:historyMessageChars]
+		if r := []rune(msg); len(r) > historyMessageChars {
+			msg = string(r[:historyMessageChars])
 		}
 		out = append(out, HistoryEntry{
 			ScheduleID:  id,

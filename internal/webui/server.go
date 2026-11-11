@@ -213,7 +213,9 @@ func Handler() http.Handler {
 			return
 		}
 		q := parseQuery(r)
-		writeJSON(w, http.StatusOK, b.Runs(r.PathValue("id"), q.Limit, q.Offset))
+		writeJSON(w, http.StatusOK, b.Runs(r.PathValue("id"), RunQuery{
+			From: q.From, To: q.To, Q: q.Q, Limit: q.Limit, Offset: q.Offset,
+		}))
 	})
 	mux.HandleFunc("GET /api/schedules/{id}/stats", func(w http.ResponseWriter, r *http.Request) {
 		b, ok := schedulesBackend()

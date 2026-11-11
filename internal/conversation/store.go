@@ -22,7 +22,7 @@ const IMSessionKey = "im"
 type Turn struct {
 	TS        int64    `json:"ts"`
 	Project   *string  `json:"project"`
-	Projects  []string `json:"projects,omitempty"`
+	Projects  []string `json:"projects"`
 	User      string   `json:"user"`
 	Assistant string   `json:"assistant"`
 }

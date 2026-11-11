@@ -28,8 +28,10 @@ func WireRuntime() {
 			},
 			Overview:     func() any { return mustOverview() },
 			HistoryIndex: func() any { return mustHistoryIndex() },
-			Runs: func(id string, limit, offset int) any {
-				page, err := scheduler.ScheduleRuns(id, limit, offset)
+			Runs: func(id string, q RunQuery) any {
+				page, err := scheduler.ScheduleRunsQuery(id, scheduler.RunQuery{
+					From: q.From, To: q.To, Q: q.Q, Limit: q.Limit, Offset: q.Offset,
+				})
 				if err != nil {
 					return map[string]any{"logs": []any{}, "total": 0}
 				}
@@ -86,6 +88,14 @@ func saveSchedulesAny(items []any) error {
 		var entry scheduler.Schedule
 		if err := json.Unmarshal(raw, &entry); err != nil {
 			return fmt.Errorf("schedule[%d]: %w", i, err)
+		}
+		// v1 defaults `enabled` to true unless the client explicitly sends false.
+		var probe struct {
+			Enabled *bool `json:"enabled"`
+		}
+		_ = json.Unmarshal(raw, &probe)
+		if probe.Enabled == nil {
+			entry.Enabled = true
 		}
 		list = append(list, entry)
 	}

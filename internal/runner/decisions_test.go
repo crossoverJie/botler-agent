@@ -41,6 +41,13 @@ func TestParseRouteSchedulerIsExclusive(t *testing.T) {
 	}
 }
 
+func TestParseRouteEmptyAttachmentIsInvalid(t *testing.T) {
+	// v1 treats "" as a string value that is not one of the candidates, so the whole route is dropped.
+	if r := ParseRoute(`{"projects":["cook"],"attachmentProject":""}`, candidates); len(r.Projects) != 0 {
+		t.Fatalf("an empty attachmentProject must reset the route: %+v", r)
+	}
+}
+
 func TestParseRouteAttachmentMustBeSelected(t *testing.T) {
 	if r := ParseRoute(`{"projects":["cook"],"attachmentProject":"vocab"}`, candidates); len(r.Projects) != 0 {
 		t.Fatalf("attachment outside the selection must reset the route: %+v", r)

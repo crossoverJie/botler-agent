@@ -16,8 +16,7 @@ import (
 	ilink "github.com/openilink/openilink-sdk-go"
 
 	"github.com/crossoverJie/botler-agent/internal/agentrt"
-	"github.com/crossoverJie/botler-agent/internal/paths"
-	"github.com/crossoverJie/botler-agent/internal/prompt"
+	"github.com/crossoverJie/botler-agent/internal/images"
 )
 
 // cdnBaseURL is the WeChat media CDN root (shared by the inbound download path and, in the SDK,
@@ -74,25 +73,9 @@ func downloadOnce(ctx context.Context, rawURL string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// SniffMime identifies the image format from magic bytes; unrecognized data falls back to JPEG.
-func SniffMime(data []byte) (mimeType, ext string) {
-	if len(data) >= 8 && string(data[0:8]) == "\x89PNG\r\n\x1a\n" {
-		return "image/png", "png"
-	}
-	if len(data) >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff {
-		return "image/jpeg", "jpg"
-	}
-	if len(data) >= 4 && string(data[0:4]) == "GIF8" {
-		return "image/gif", "gif"
-	}
-	if len(data) >= 12 && string(data[0:4]) == "RIFF" && string(data[8:12]) == "WEBP" {
-		return "image/webp", "webp"
-	}
-	return "image/jpeg", "jpg"
-}
+// SniffMime identifies the image format from magic bytes (one implementation: internal/images).
+func SniffMime(data []byte) (mimeType, ext string) { return images.SniffMime(data) }
 
-// DownloadInboundImage downloads + decrypts one inbound IMAGE item. It throws when the item is
-// not an image or cannot be decoded, so the caller can warn and continue with the rest.
 func DownloadInboundImage(ctx context.Context, item ilink.MessageItem) (agentrt.InboundImage, error) {
 	if item.Type != ilink.ItemImage {
 		return agentrt.InboundImage{}, fmt.Errorf("not an image item")
@@ -129,42 +112,6 @@ func DownloadInboundImage(ctx context.Context, item ilink.MessageItem) (agentrt.
 	return agentrt.InboundImage{Data: plain, MimeType: mimeType}, nil
 }
 
-const photosSubdir = "photos"
-
-// inboundExts is the inbound-only extension whitelist (no bmp, unlike the outbound reply path).
-var inboundExts = map[string]bool{"jpg": true, "png": true, "gif": true, "webp": true}
-
-// PersistInboundImage writes a decoded image under DATA_ROOT/<project>/photos/<date>-<rand>.<ext>
-// through paths.SafePath (first-level subdir allowlist) plus an image-extension whitelist, so the
-// file can never escape DATA_ROOT or be written with a non-image extension. The date uses the
-// agent's local-timezone today(), matching the filenames the agent writes into its records.
-// Returns the RELATIVE path for the agent to cite.
-func PersistInboundImage(img agentrt.InboundImage, project string) (string, error) {
-	_, ext := SniffMime(img.Data)
-	if !inboundExts[ext] {
-		ext = "jpg"
-	}
-	randBytes := make([]byte, 4)
-	if _, err := rand.Read(randBytes); err != nil {
-		return "", err
-	}
-	name := fmt.Sprintf("%s-%s.%s", prompt.Today(), hex.EncodeToString(randBytes), ext)
-	rel := filepath.ToSlash(filepath.Join(project, photosSubdir, name))
-	abs, err := paths.SafePath(rel, paths.Options{Projects: []string{project}})
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(abs, img.Data, 0o644); err != nil {
-		return "", err
-	}
-	return rel, nil
-}
-
-// downloadRemoteImageToTemp downloads an https image referenced by a reply so it can go through
-// the same upload pipeline as a local file.
 func downloadRemoteImageToTemp(ctx context.Context, rawURL string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {

@@ -86,7 +86,12 @@ func validateRoute(raw any, candidates []string) Route {
 	}
 	attachment := ""
 	if rawAtt, ok := obj["attachmentProject"]; ok && rawAtt != nil {
-		if s, ok := rawAtt.(string); ok && s != "null" && s != "" {
+		// An explicitly empty string is a *value* v1 rejects (it is a string that is not one of the
+		// candidates), so it must not be treated as "absent".
+		if s, ok := rawAtt.(string); ok && s == "" {
+			return EmptyRoute()
+		}
+		if s, ok := rawAtt.(string); ok && s != "null" {
 			if s == schedulerVirtualProject || !contains(projects, s) {
 				return EmptyRoute()
 			}

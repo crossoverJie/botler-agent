@@ -159,7 +159,6 @@ func Dispatch(ctx context.Context, message string, opts Options) Result {
 		Source:        source,
 		Phase:         logs.PhaseExecute,
 		ProjectHint:   opts.ProjectHint,
-		ProjectsHint:  opts.ProjectsHint,
 		Recipient:     opts.Recipient,
 		InboundImages: opts.InboundImages,
 		SessionKey:    opts.SessionKey,
@@ -202,7 +201,15 @@ func Dispatch(ctx context.Context, message string, opts Options) Result {
 			ProjectsHint: log.Projects,
 		})
 		if healErr != nil {
+			// v1 runs the retry inside the same try/catch, so a thrown retry surfaces as a task
+			// error rather than a validation failure.
 			fmt.Fprintf(os.Stderr, "[dispatch] self-heal error: %v\n", healErr)
+			errText := "⚠️ Task execution error: " + healErr.Error()
+			log.Status = logs.StatusError
+			log.ReplyText = errText
+			logs.AppendTaskLog(*log)
+			finalStatus = logs.StatusError
+			return out(errText, []string{}, logs.StatusError)
 		}
 		validation = safety.ValidateState(log.Projects)
 		if !validation.OK {

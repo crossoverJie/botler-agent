@@ -151,3 +151,16 @@ func TestListProjectsSorted(t *testing.T) {
 		t.Fatalf("unexpected list: %v", got)
 	}
 }
+
+// An empty (non-nil) subset means "nothing is allowed": v1 passes an empty array for a
+// schedule-only route, and every path must be rejected rather than falling back to the full
+// allowlist.
+func TestSafePathEmptySubsetRejectsEverything(t *testing.T) {
+	withRoot(t, "notes", "vocab")
+	if _, err := SafePath("notes/a.json", Options{Projects: []string{}}); err == nil {
+		t.Fatal("expected an empty subset to reject every path")
+	}
+	if _, err := SafePath("notes/a.json", Options{Projects: nil}); err != nil {
+		t.Fatalf("a nil subset means no restriction: %v", err)
+	}
+}

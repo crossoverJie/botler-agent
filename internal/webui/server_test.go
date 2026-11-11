@@ -471,7 +471,7 @@ func fakeBackend() SchedulesBackend {
 		},
 		Overview:     func() any { return []any{} },
 		HistoryIndex: func() any { return []any{} },
-		Runs: func(id string, limit, offset int) any {
+		Runs: func(id string, q RunQuery) any {
 			return map[string]any{"logs": []any{}, "total": 0}
 		},
 		Stats: func(id string) any {

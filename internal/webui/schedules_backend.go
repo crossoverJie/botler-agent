@@ -27,8 +27,18 @@ type SchedulesBackend struct {
 	Overview func() any
 	// HistoryIndex returns []ScheduleHistoryEntry (schedules still present in the logs only).
 	HistoryIndex func() any
-	// Runs returns one LogPage of a schedule's runs.
-	Runs func(id string, limit, offset int) any
+	// Runs returns one LogPage of a schedule's runs. The whole query is forwarded (v1 passes
+	// parseQuery(url) through), so from/to/q filtering keeps working for API clients.
+	Runs func(id string, q RunQuery) any
 	// Stats returns the ScheduleRunStats of one schedule.
 	Stats func(id string) any
+}
+
+// RunQuery mirrors the scheduler's run-history filter without importing the scheduler package.
+type RunQuery struct {
+	From   *int64
+	To     *int64
+	Q      string
+	Limit  int
+	Offset int
 }

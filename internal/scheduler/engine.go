@@ -102,14 +102,17 @@ func nowMs() int64 { return time.Now().UnixMilli() }
 // Engine is the in-process scheduler. It only triggers work: all execution, dedup, queueing,
 // validation, commit and logging is the dispatch pipeline, reused verbatim.
 type Engine struct {
-	mu               sync.Mutex
-	lastMtime        int64
-	wake             chan struct{}
-	stop             chan struct{}
-	stopOnce         sync.Once
-	lastFire         map[string]int64
-	lastFireAt       int64
-	lastFireID       string
+	mu         sync.Mutex
+	lastMtime  int64
+	wake       chan struct{}
+	stop       chan struct{}
+	stopOnce   sync.Once
+	lastFire   map[string]int64
+	lastFireAt int64
+	lastFireID string
+	// nextFireAt mirrors the loop's current "soonest" so a fire from a retry goroutine does not
+	// blank the gauge while the loop is asleep until tomorrow.
+	nextFireAt       int64
 	schedulesTotal   int
 	schedulesEnabled int
 }
@@ -256,9 +259,9 @@ func (e *Engine) markFired(id string, ts int64) {
 	e.mu.Lock()
 	e.lastFireAt = ts
 	e.lastFireID = id
-	total, enabled := e.schedulesTotal, e.schedulesEnabled
+	total, enabled, next := e.schedulesTotal, e.schedulesEnabled, e.nextFireAt
 	e.mu.Unlock()
-	monitor.SetSchedulerSnapshot(total, enabled, 0, ts, id)
+	monitor.SetSchedulerSnapshot(total, enabled, next, ts, id)
 }
 
 // sleep waits for ms, returning early when the loop is woken (config write) or stopped.
@@ -338,6 +341,9 @@ func (e *Engine) loop(ctx context.Context) {
 		if soonest != NoFire {
 			nextFireAt = soonest
 		}
+		e.mu.Lock()
+		e.nextFireAt = nextFireAt
+		e.mu.Unlock()
 		monitor.SetSchedulerSnapshot(total, enabled, nextFireAt, lastAt, lastID)
 
 		e.sleep(ctx, PollDelay(soonest, time.Now().UnixMilli()))
@@ -356,6 +362,13 @@ func retrySignature(s Schedule) string {
 
 // fire runs one entry. Retries are handed to a timer so they never block the single-threaded round.
 func (e *Engine) fire(ctx context.Context, s Schedule, attempt int) {
+	// v1 wraps every entry in try/catch ("A single bad entry must never take down the whole
+	// loop"); the retry goroutine needs the same guard.
+	defer func() {
+		if r := recover(); r != nil {
+			warnf("[scheduler] entry %q panicked: %v", s.ID, r)
+		}
+	}()
 	id := fmt.Sprintf("schedule:%s:%d", s.ID, time.Now().UnixMilli())
 	var res FireResult
 	var ok bool

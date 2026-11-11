@@ -196,7 +196,8 @@ func (c *Channel) handleUpdate(ctx context.Context, u update) {
 	// Remember this address so push delivery can fall back to Telegram.
 	push.RecordContact(push.SourceTelegram, chatID)
 
-	reply := c.dispatchFn(ctx, text, dispatch.Options{
+	// A panic in the dispatch chain must not kill the long-poll loop (same guard as the WeChat monitor).
+	reply := dispatchSafely(ctx, c.dispatchFn, text, dispatch.Options{
 		ID:         fmt.Sprintf("%s:%d", chatID, messageID),
 		Source:     "telegram",
 		Recipient:  &push.Recipient{Source: push.SourceTelegram, UserID: chatID},
@@ -208,7 +209,7 @@ func (c *Channel) handleUpdate(ctx context.Context, u update) {
 	}
 	logf("[tg] Reply length=%d, sending…", len([]rune(body)))
 	if err := c.SendMessage(ctx, chatID, body); err != nil {
-		errf("[telegram] Error processing message: %v", err)
+		errf("[telegram] Error processing message: %s", c.redact(err.Error()))
 		_ = c.SendMessage(ctx, chatID, processErrorReply)
 		return
 	}
@@ -348,6 +349,17 @@ func (c *Channel) do(req *http.Request, method string, out any) error {
 		}
 	}
 	return nil
+}
+
+// dispatchSafely calls dispatch with a panic guard, so one bad task cannot stop polling.
+func dispatchSafely(ctx context.Context, fn func(context.Context, string, dispatch.Options) dispatch.Result, text string, opts dispatch.Options) (out dispatch.Result) {
+	defer func() {
+		if r := recover(); r != nil {
+			errf("[telegram] dispatch panicked: %v", r)
+			out = dispatch.Result{Text: processErrorReply}
+		}
+	}()
+	return fn(ctx, text, opts)
 }
 
 // redact removes the bot token from text that may be logged. The Bot API puts the token in the

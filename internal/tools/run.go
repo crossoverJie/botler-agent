@@ -111,8 +111,9 @@ func RunScript(script string, args []string) RunResult {
 	cmd.Stderr = stderr
 	runErr := cmd.Run()
 	if runErr == nil {
-		out := strings.TrimSpace(stdout.String())
-		if out == "" {
+		// v1 returns stdout untrimmed; only the emptiness check trims.
+		out := stdout.String()
+		if strings.TrimSpace(out) == "" {
 			out = "(script ran successfully, no output)"
 		}
 		return RunResult{OK: true, Text: out, Cwd: cwd}
