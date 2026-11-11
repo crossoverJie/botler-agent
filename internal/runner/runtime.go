@@ -1,21 +1,19 @@
 package runner
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/crossoverJie/botler-agent/internal/agentrt"
-	"github.com/crossoverJie/botler-agent/internal/agentrt/anthropic"
-	"github.com/crossoverJie/botler-agent/internal/agentrt/openai"
+	"github.com/crossoverJie/botler-agent/internal/agentrt/adk"
 	"github.com/crossoverJie/botler-agent/internal/config"
 	"github.com/crossoverJie/botler-agent/internal/monitor"
 )
 
 var (
-	rtOnce   sync.Once
 	rtCached agentrt.Runtime
 	rtErr    error
 )
@@ -36,7 +34,6 @@ func resolveRuntime() (agentrt.Runtime, error) {
 
 // ResetRuntime clears the cached client (tests).
 func ResetRuntime() {
-	rtOnce = sync.Once{}
 	rtCached = nil
 	rtErr = nil
 }
@@ -63,25 +60,26 @@ func buildRuntime() (agentrt.Runtime, error) {
 			envKey := strings.ToUpper(strings.ReplaceAll(prov.ID, "-", "_")) + "_API_KEY"
 			apiKey = os.Getenv(envKey)
 		}
+		// The model layer is adk-go's; the tool loop stays in agentrt.Loop (design doc §3.3, Q-1).
 		switch prov.API {
 		case config.APIAnthropicMessages:
-			return &anthropic.Client{BaseURL: prov.BaseURL, APIKey: apiKey, Model: meta.ID,
-				Vision: meta.VisionEnabled(), MaxTokens: meta.MaxTokens}, nil
+			return adk.NewAnthropic(context.Background(), adk.AnthropicConfig{
+				BaseURL: prov.BaseURL, APIKey: apiKey, Model: meta.ID, MaxTokens: meta.MaxTokens,
+			})
 		case config.APIOpenAICompletions:
-			return &openai.Client{BaseURL: prov.BaseURL, APIKey: apiKey, Model: meta.ID,
-				Vision: meta.VisionEnabled(), MaxTokens: meta.MaxTokens}, nil
+			return adk.NewOpenAI(context.Background(), adk.OpenAIConfig{
+				BaseURL: prov.BaseURL, APIKey: apiKey, Model: meta.ID, MaxTokens: meta.MaxTokens,
+			})
 		default:
 			return nil, fmt.Errorf("Unsupported provider api %q for provider %q", prov.API, prov.ID)
 		}
 	}
 	if c.Provider == "anthropic" {
-		return &anthropic.Client{
-			BaseURL:   "https://api.anthropic.com",
+		return adk.NewAnthropic(context.Background(), adk.AnthropicConfig{
 			APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
 			Model:     c.Model,
-			Vision:    true,
 			MaxTokens: 8192,
-		}, nil
+		})
 	}
 	var available []string
 	for _, p := range c.CustomProviders {
