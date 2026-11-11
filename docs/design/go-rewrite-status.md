@@ -88,8 +88,10 @@ guards are covered by new tests:
 4. **More parity scenarios.** Only `basic` (read → write → reply) exists. Greeting, routing failure,
    validation self-heal, tool-turn hard stop, `conversation/im.json` accumulation, and a scheduled
    script entry are still uncovered.
-5. **Docker image.** The Dockerfile and CI job exist, but no multi-arch build has been run
-   (`docker buildx` + the container smoke on both platforms).
+5. **Docker multi-arch.** A single-arch (linux/arm64) image was built locally and its `--version`,
+   `init` and labels verified; `docker buildx` for `linux/amd64` + `linux/arm64` has not been run.
+   A bare `docker build` still reports `dev`: the build context has no `.git`, so the version comes
+   from `--build-arg VERSION=$(git describe …)` (wired in `make image` and the CI smoke job).
 6. **CI.** `ci-go.yml` has never run on GitHub (the branch is not pushed).
 7. **Thin test coverage** in `config`, `prompt`, `monitor`, `push`, `images`, `initcmd`,
    `agentrt` (loop) and `runner` (19%): the wiring is exercised end-to-end, the units are not.

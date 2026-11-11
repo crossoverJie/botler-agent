@@ -10,7 +10,10 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "")
 LDFLAGS := -s -w -X github.com/crossoverJie/botler-agent/internal/version.Version=$(VERSION) \
            -X github.com/crossoverJie/botler-agent/internal/version.Commit=$(COMMIT)
 
-.PHONY: all build test lint fmt vet clean current check-clean release tag cover
+IMAGE ?= botler-agent
+TAG   ?= dev
+
+.PHONY: all build test lint fmt vet clean current check-clean release tag cover image
 
 all: build
 
@@ -32,6 +35,14 @@ vet:
 # lint mirrors CI without requiring golangci-lint to be installed locally.
 lint: fmt vet
 	@test -z "$$(gofmt -l .)" || { echo "error: gofmt found unformatted files"; exit 1; }
+
+# The image stamps VERSION/COMMIT into the binary, so build it from git describe rather than
+# relying on the Dockerfile's "dev" fallback.
+image:
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		-t $(IMAGE):$(TAG) .
 
 clean:
 	rm -f $(BINARY)

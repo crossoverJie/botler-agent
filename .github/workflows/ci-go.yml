@@ -43,14 +43,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # `git describe` needs the tags, so a shallow checkout is not enough.
+          fetch-depth: 0
       - name: build image
-        run: docker build -t botler-agent:smoke .
+        run: |
+          VERSION="$(git describe --tags --always --dirty)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          # Pass the version explicitly: the Dockerfile's "dev" default only covers bare builds
+          # (the build context has no .git, so it cannot derive one).
+          docker build \
+            --build-arg VERSION="$VERSION" \
+            --build-arg COMMIT="$COMMIT" \
+            -t botler-agent:smoke .
       # Both entries must work WITHOUT a populated DATA_ROOT: `init` and `--version` return before
       # paths.Validate() by design (§2.1.1). If they start failing here, the startup-order contract
       # was broken somewhere.
       - name: version + init
         run: |
-          docker run --rm botler-agent:smoke --version
+          # The stamped version must reach the binary, not silently stay "dev".
+          docker run --rm botler-agent:smoke --version | tee /tmp/version.txt
+          grep -qF "$VERSION" /tmp/version.txt
           docker run --rm botler-agent:smoke init
       # A real process must come up and answer the health check. The monitor binds 127.0.0.1, so it
       # has to be probed from inside the container; a dummy channel token keeps the process alive.
