@@ -64,11 +64,13 @@ func buildRuntime() (agentrt.Runtime, error) {
 		switch prov.API {
 		case config.APIAnthropicMessages:
 			return adk.NewAnthropic(context.Background(), adk.AnthropicConfig{
-				BaseURL: prov.BaseURL, APIKey: apiKey, Model: meta.ID, MaxTokens: meta.MaxTokens,
+				BaseURL: prov.BaseURL, APIKey: apiKey, Model: meta.ID,
+				MaxTokens: meta.MaxTokens, Vision: meta.VisionEnabled(),
 			})
 		case config.APIOpenAICompletions:
 			return adk.NewOpenAI(context.Background(), adk.OpenAIConfig{
-				BaseURL: prov.BaseURL, APIKey: apiKey, Model: meta.ID, MaxTokens: meta.MaxTokens,
+				BaseURL: prov.BaseURL, APIKey: apiKey, Model: meta.ID,
+				MaxTokens: meta.MaxTokens, Vision: meta.VisionEnabled(),
 			})
 		default:
 			return nil, fmt.Errorf("Unsupported provider api %q for provider %q", prov.API, prov.ID)
@@ -79,6 +81,7 @@ func buildRuntime() (agentrt.Runtime, error) {
 			APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
 			Model:     c.Model,
 			MaxTokens: 8192,
+			Vision:    true,
 		})
 	}
 	var available []string

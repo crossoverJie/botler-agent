@@ -26,7 +26,13 @@ type Runtime struct {
 	llm       model.LLM
 	modelName string
 	maxTokens int
+	// vision declares whether the model accepts image input. When false, images are replaced by
+	// the same placeholder pi-ai used, instead of being sent (v1 parity).
+	vision bool
 }
+
+// nonVisionImagePlaceholder mirrors pi-ai's NON_VISION_USER_IMAGE_PLACEHOLDER.
+const nonVisionImagePlaceholder = "(image omitted: model does not support images)"
 
 // OpenAIConfig configures an OpenAI-compatible gateway.
 type OpenAIConfig struct {
@@ -34,6 +40,8 @@ type OpenAIConfig struct {
 	APIKey    string
 	Model     string
 	MaxTokens int
+	// Vision reports whether the model accepts image input (default true).
+	Vision bool
 }
 
 // NewOpenAI builds a runtime against an OpenAI-compatible /chat/completions endpoint.
@@ -48,7 +56,7 @@ func NewOpenAI(ctx context.Context, cfg OpenAIConfig) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{llm: llm, modelName: cfg.Model, maxTokens: cfg.MaxTokens}, nil
+	return &Runtime{llm: llm, modelName: cfg.Model, maxTokens: cfg.MaxTokens, vision: cfg.Vision}, nil
 }
 
 // AnthropicConfig configures an Anthropic Messages endpoint (a custom base URL is supported).
@@ -57,6 +65,8 @@ type AnthropicConfig struct {
 	APIKey    string
 	Model     string
 	MaxTokens int
+	// Vision reports whether the model accepts image input (default true).
+	Vision bool
 }
 
 // NewAnthropic builds a runtime against an Anthropic Messages endpoint.
@@ -69,25 +79,38 @@ func NewAnthropic(ctx context.Context, cfg AnthropicConfig) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{llm: llm, modelName: cfg.Model, maxTokens: cfg.MaxTokens}, nil
+	return &Runtime{llm: llm, modelName: cfg.Model, maxTokens: cfg.MaxTokens, vision: cfg.Vision}, nil
 }
 
 // ModelName reports the model id this runtime talks to.
 func (r *Runtime) ModelName() string { return r.modelName }
 
-// BuildContents converts agentrt messages into genai contents.
-func BuildContents(messages []agentrt.Message) []*genai.Content {
+// BuildContents converts agentrt messages into genai contents, replacing images with a text
+// placeholder for models that do not accept image input.
+func BuildContents(messages []agentrt.Message, vision bool) []*genai.Content {
 	out := make([]*genai.Content, 0, len(messages))
 	for _, m := range messages {
 		switch m.Role {
 		case agentrt.RoleUser:
 			parts := make([]*genai.Part, 0, len(m.Parts))
+			lastWasPlaceholder := false
 			for _, p := range m.Parts {
 				switch p.Type {
 				case agentrt.PartText:
 					parts = append(parts, genai.NewPartFromText(p.Text))
+					lastWasPlaceholder = p.Text == nonVisionImagePlaceholder
 				case agentrt.PartImage:
-					parts = append(parts, genai.NewPartFromBytes(p.Data, p.MimeType))
+					if vision {
+						parts = append(parts, genai.NewPartFromBytes(p.Data, p.MimeType))
+						lastWasPlaceholder = false
+						continue
+					}
+					// v1 collapses runs of placeholders into one, so a multi-image message mentions
+					// the omission once.
+					if !lastWasPlaceholder {
+						parts = append(parts, genai.NewPartFromText(nonVisionImagePlaceholder))
+					}
+					lastWasPlaceholder = true
 				}
 			}
 			out = append(out, &genai.Content{Role: string(genai.RoleUser), Parts: parts})
@@ -172,7 +195,7 @@ func (r *Runtime) Complete(ctx context.Context, req agentrt.Request) (*agentrt.M
 	if maxTokens > 0 {
 		cfg.MaxOutputTokens = int32(maxTokens)
 	}
-	llmReq := &model.LLMRequest{Model: r.modelName, Contents: BuildContents(req.Messages), Config: cfg}
+	llmReq := &model.LLMRequest{Model: r.modelName, Contents: BuildContents(req.Messages, r.vision), Config: cfg}
 
 	var (
 		text        strings.Builder
