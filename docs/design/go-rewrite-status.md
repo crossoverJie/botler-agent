@@ -50,18 +50,22 @@ Green: `go build ./...`, `go vet ./...`, `gofmt -l .` (empty), `go test ./...` (
 | **v1 parity** | `go run ./scripts/parity` — scripted stub drives v1 and v3; task log, cost fields, conversation history and data tree match (one explained difference: D-2) | 1 scenario |
 | **live model, openai-completions** | `custom` gateway + `deepseek-v4-pro`: routing-only call, then a read-only task with 2 tool calls, 3 LLM calls, cache-read tokens reported | manual |
 | **live model, anthropic-messages** | `ark` gateway (`…/api/plan`) + `ark-code-latest`: read a data file and answer from it | manual |
-| **live Telegram** | real token: `@… online`, `/healthz` shows `channels.telegram.up=true` | manual |
+| **live Telegram** | real token: `@… online`, `/healthz` shows `channels.telegram.up=true`; no typed message round trip yet | manual |
+| **live WeChat binding** | QR pairing through the WebUI (`POST /api/wechat/pair`): `pending → confirmed`, `wechat/account.json` re-written, monitor re-resolved the account and brought the channel up without a restart | manual |
+| **live WeChat message** | inbound text → dispatch → reply: `[wechat] inbound … "看看我昨天的饮食"`, task log `source=wechat status=success model=ark/doubao-seed-2.1-lite tools=[read]`, `wechat/contexts.json` carries the user's context_token | manual |
 
 ## 4. Still missing
 
-1. **WeChat end-to-end.** Code is complete (SDK + business layer), but no QR login / receive / send /
-   reminder cycle has been run against the real iLink service. The stored session in the reference
-   install currently answers `session expired (errcode -14)`, so a re-pair is needed first.
+1. **WeChat image path.** Text send/receive is verified live; inbound images (persist under
+   `photos/`, vision input), the 60s batching window, outbound images and the 24h renewal reminder
+   are not.
 2. **A real Telegram message round trip.** Startup, channel-up and the model pipeline are verified
    separately; nobody has yet typed into the bot and watched the reply come back through
    `dispatch` → `sendMessage`.
-3. **WebUI in a browser.** The JSON API is covered by `httptest`; the page has not been opened, and
-   the pairing/backup/restore flows have not been clicked through.
+3. **WebUI in a browser.** Pairing was driven through the API (the page was not clicked through);
+   the log/schedule/backup/restore views have not been opened in a browser.
+6. **Scheduled push from chat.** Creating a `once` reminder through WeChat and receiving the push
+   (recipient injection + `deliver()`) has not been exercised end to end.
 4. **More parity scenarios.** Only `basic` (read → write → reply) exists. Greeting, routing failure,
    validation self-heal, tool-turn hard stop, `conversation/im.json` accumulation, and a scheduled
    script entry are still uncovered.
