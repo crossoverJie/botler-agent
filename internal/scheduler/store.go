@@ -4,13 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/crossoverJie/botler-agent/internal/config"
 	"github.com/crossoverJie/botler-agent/internal/push"
@@ -32,10 +29,6 @@ const (
 var (
 	scriptPathRe = regexp.MustCompile(`^[A-Za-z0-9_./-]+\.(py|js|mjs)$`)
 	hmRe         = regexp.MustCompile(`^(\d{1,2}):(\d{2})$`)
-	backupNameRe = regexp.MustCompile(`^(\.env|system-prompt\.md|schedules\.json)\.\d{8}T\d{6}$`)
-	// maxConfigBackups is how many backups per config file are kept (shared convention with .env /
-	// system-prompt.md), independent of the holidays.json.<epochMs> backups.
-	maxConfigBackups = 10
 )
 
 // rawSchedule is the tolerant parse shape: presence of message/script/commit must be
@@ -397,76 +390,13 @@ func fireSaved() {
 	}
 }
 
-func backupTimestamp() string {
-	return time.Now().Format("20060102T150405")
-}
-
-func configBackupDir() string {
-	return filepath.Join(config.UserConfigDir(), ".backups")
-}
-
-// pruneConfigBackups keeps only the newest maxConfigBackups backups of one config file. Holiday
-// backups (holidays.json.<epochMs>) are matched by a different pattern and are never pruned here.
-func pruneConfigBackups(name string) {
-	dir := configBackupDir()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	var matched []string
-	prefix := name + "."
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
-			continue
-		}
-		if !backupNameRe.MatchString(e.Name()) {
-			continue
-		}
-		matched = append(matched, e.Name())
-	}
-	sort.Strings(matched) // ascending → oldest first
-	for len(matched) > maxConfigBackups {
-		old := matched[0]
-		matched = matched[1:]
-		_ = os.Remove(filepath.Join(dir, old))
-	}
-}
-
-// backupConfigFile snapshots the current file into <config>/.backups/<name>.<YYYYMMDDTHHMMSS>.
-func backupConfigFile(name, path string) {
-	if _, err := os.Stat(path); err != nil {
-		return
-	}
-	dir := configBackupDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	if err := os.WriteFile(filepath.Join(dir, name+"."+backupTimestamp()), body, 0o600); err != nil {
-		warnf("backup of %s failed: %v", name, err)
-		return
-	}
-	pruneConfigBackups(name)
-}
-
-// writeConfigFile writes content atomically: backup → tmp → rename.
+// writeConfigFile writes content atomically: backup → tmp → rename. The backup is best-effort
+// (a failed snapshot must not block the save).
 func writeConfigFile(name, path, content string) error {
-	backupConfigFile(name, path)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	if _, err := config.BackupConfigFile(name, path); err != nil {
+		warnf("backup of %s failed: %v", name, err)
 	}
-	tmp := fmt.Sprintf("%s.tmp.%d.%d", path, os.Getpid(), time.Now().UnixMilli())
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return config.WriteFileAtomic(path, []byte(content), 0o644)
 }
 
 // SaveSchedules validates + normalizes then atomically writes schedules.json, and wakes the

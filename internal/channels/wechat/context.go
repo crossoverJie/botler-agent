@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 )
 
@@ -97,19 +96,6 @@ func ClearContexts() {
 	contextsMu.Lock()
 	defer contextsMu.Unlock()
 	removeFile(contextsPath())
-}
-
-// ContextUserIDs lists the known user ids (diagnostics / WebUI).
-func ContextUserIDs() []string {
-	contextsMu.Lock()
-	defer contextsMu.Unlock()
-	m := loadContexts()
-	out := make([]string, 0, len(m))
-	for id := range m {
-		out = append(out, id)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // nowMs is the timestamp used for every persisted lastMsgAt / lastRemindedAt value.

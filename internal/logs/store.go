@@ -3,6 +3,7 @@ package logs
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -700,10 +701,6 @@ func CleanupLogs(opts CleanupOptions) CleanupResult {
 	return CleanupResult{Deleted: deleted, FreedBytes: freed, RemainingBytes: remaining}
 }
 
-var warnf = func(format string, args ...any) {}
-
-// SetWarnf replaces the warning sink (tests).
-func SetWarnf(f func(format string, args ...any)) { warnf = f }
-
-// FormatDayFile renders the day-file name of a timestamp (exported for tests / tooling).
-func FormatDayFile(ts int64) string { return fileForDay(ts) }
+// warnf reports logging-side failures on stderr. Logging must never break the main flow, so a
+// failure here is a warning only.
+func warnf(format string, args ...any) { fmt.Fprintf(os.Stderr, "[logging] "+format+"\n", args...) }

@@ -82,9 +82,6 @@ func NewAnthropic(ctx context.Context, cfg AnthropicConfig) (*Runtime, error) {
 	return &Runtime{llm: llm, modelName: cfg.Model, maxTokens: cfg.MaxTokens, vision: cfg.Vision}, nil
 }
 
-// ModelName reports the model id this runtime talks to.
-func (r *Runtime) ModelName() string { return r.modelName }
-
 // BuildContents converts agentrt messages into genai contents, replacing images with a text
 // placeholder for models that do not accept image input.
 func BuildContents(messages []agentrt.Message, vision bool) []*genai.Content {

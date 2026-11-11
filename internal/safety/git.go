@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/crossoverJie/botler-agent/internal/config"
 )
@@ -72,10 +71,8 @@ func reportPush(name string, out gitResult) {
 	logErr("[git] push failed for " + name + ": " + out.stderr)
 }
 
-var (
-	logInfo = func(s string) { printlnStd("out", s) }
-	logErr  = func(s string) { printlnStd("err", s) }
-)
+func logInfo(s string) { printlnStd("out", s) }
+func logErr(s string)  { printlnStd("err", s) }
 
 func printlnStd(kind, s string) {
 	if kind == "err" {
@@ -169,23 +166,5 @@ func CommitIfChanged(msg string, projects []string) {
 		if config.C().GitPush {
 			pushIfPending(dir, d.Name())
 		}
-	}
-}
-
-// TruncateRunes truncates s to at most n runes (used for commit messages / previews).
-func TruncateRunes(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	return string([]rune(s)[:n])
-}
-
-// SetLogHandlers replaces the git logging functions (tests).
-func SetLogHandlers(info, errf func(string)) {
-	if info != nil {
-		logInfo = info
-	}
-	if errf != nil {
-		logErr = errf
 	}
 }

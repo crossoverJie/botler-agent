@@ -80,6 +80,3 @@ func (s Schedule) Trigger() string {
 	}
 	return s.Once
 }
-
-// IsScript reports whether the entry's action is a direct script run.
-func (s Schedule) IsScript() bool { return s.Script != "" }

@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/crossoverJie/botler-agent/internal/agentrt"
-	"github.com/crossoverJie/botler-agent/internal/monitor"
 )
 
 // TextMax is the truncation limit applied to tool result text, thinking and conversation text.
@@ -238,14 +237,4 @@ func CollectTaskLog(in CollectInput) TaskLog {
 		}
 	}
 	return log
-}
-
-// SnapshotModelCache renders the process-level model-resolution cache counters as a TaskLog field.
-func SnapshotModelCache() ModelCacheStats {
-	queries, hits := monitor.ModelCacheSnapshot()
-	hitRate := 0.0
-	if queries > 0 {
-		hitRate = float64(hits) / float64(queries)
-	}
-	return ModelCacheStats{Queries: int(queries), Hits: int(hits), HitRate: hitRate}
 }

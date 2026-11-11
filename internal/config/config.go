@@ -409,9 +409,6 @@ func (c *Config) FindProvider(id string) (CustomProvider, bool) {
 	return CustomProvider{}, false
 }
 
-var warnf = func(format string, args ...any) {
+func warnf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "[config] "+format+"\n", args...)
 }
-
-// SetWarnf replaces the warning sink (tests).
-func SetWarnf(f func(format string, args ...any)) { warnf = f }

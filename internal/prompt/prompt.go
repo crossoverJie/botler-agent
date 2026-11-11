@@ -119,19 +119,6 @@ func projectSummary(name string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-// ListProjectUsage renders the user-facing project list with one-line descriptions.
-func ListProjectUsage() string {
-	names := ListProjectDirs()
-	if len(names) == 0 {
-		return "（DATA_ROOT 下暂无子项目）"
-	}
-	lines := make([]string, 0, len(names))
-	for _, n := range names {
-		lines = append(lines, "· "+n+"："+projectSummary(n))
-	}
-	return strings.Join(lines, "\n")
-}
-
 var routingHintRe = regexp.MustCompile(`路由提示(?:（botler-agent）)?[:：][\s\S]*?[「『]([^」』]*)[」』]`)
 
 // ProjectCapabilities maps each subproject to its self-described capability line

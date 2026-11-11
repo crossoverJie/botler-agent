@@ -154,12 +154,12 @@ func TestBackupNameRegex(t *testing.T) {
 		"other.md.20260101T120000",
 	}
 	for _, name := range valid {
-		if !backupRe.MatchString(name) {
+		if !config.ConfigBackupNameRe.MatchString(name) {
 			t.Errorf("expected %q to be a valid backup name", name)
 		}
 	}
 	for _, name := range invalid {
-		if backupRe.MatchString(name) {
+		if config.ConfigBackupNameRe.MatchString(name) {
 			t.Errorf("expected %q to be rejected", name)
 		}
 	}
@@ -184,7 +184,7 @@ func TestPruneBackupsKeepsTenAndSparesHolidays(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pruneBackups("system-prompt.md")
+	config.PruneConfigBackups("system-prompt.md")
 
 	entries, err := os.ReadDir(backups)
 	if err != nil {
@@ -193,15 +193,15 @@ func TestPruneBackupsKeepsTenAndSparesHolidays(t *testing.T) {
 	var configBackups int
 	var holidaySeen bool
 	for _, e := range entries {
-		if backupRe.MatchString(e.Name()) && strings.HasPrefix(e.Name(), "system-prompt.md.") {
+		if config.ConfigBackupNameRe.MatchString(e.Name()) && strings.HasPrefix(e.Name(), "system-prompt.md.") {
 			configBackups++
 		}
 		if e.Name() == holiday {
 			holidaySeen = true
 		}
 	}
-	if configBackups != maxBackups {
-		t.Fatalf("kept %d config backups, want %d", configBackups, maxBackups)
+	if configBackups != config.MaxConfigBackups {
+		t.Fatalf("kept %d config backups, want %d", configBackups, config.MaxConfigBackups)
 	}
 	if !holidaySeen {
 		t.Fatal("prune removed the scheduler-owned holiday backup")
@@ -216,8 +216,8 @@ func TestPruneBackupsKeepsTenAndSparesHolidays(t *testing.T) {
 
 	// ListBackups must never surface holiday backups, and must sort newest first.
 	list := ListBackups()
-	if len(list) != maxBackups {
-		t.Fatalf("ListBackups returned %d entries, want %d", len(list), maxBackups)
+	if len(list) != config.MaxConfigBackups {
+		t.Fatalf("ListBackups returned %d entries, want %d", len(list), config.MaxConfigBackups)
 	}
 	for _, b := range list {
 		if strings.HasPrefix(b.File, "holidays.json") {

@@ -154,12 +154,7 @@ func SaveHolidays(data HolidayData) error {
 		return err
 	}
 	payload = append(payload, '\n')
-	tmp := fmt.Sprintf("%s.tmp.%d.%d", target, os.Getpid(), time.Now().UnixMilli())
-	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, target); err != nil {
-		_ = os.Remove(tmp)
+	if err := config.WriteFileAtomic(target, payload, 0o644); err != nil {
 		return err
 	}
 	fireHolidaysSaved()

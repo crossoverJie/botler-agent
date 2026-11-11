@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"errors"
 	"os"
 	"regexp"
 	"strings"
@@ -527,6 +526,3 @@ func itoa(n int) string {
 }
 
 var logWarn = func(s string) { os.Stderr.WriteString(s + "\n") }
-
-// ErrNoProjects is returned when DATA_ROOT has no subprojects (kept for callers that branch).
-var ErrNoProjects = errors.New("no data subprojects under DATA_ROOT")

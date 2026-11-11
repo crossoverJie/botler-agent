@@ -69,12 +69,11 @@ type Usage struct {
 
 // Stop reasons, matching pi-ai's vocabulary (logs record these strings verbatim).
 const (
-	StopStop     = "stop"
-	StopLength   = "length"
-	StopToolUse  = "toolUse"
-	StopError    = "error"
-	StopAborted  = "aborted"
-	StopDeferred = "deferred"
+	StopStop    = "stop"
+	StopLength  = "length"
+	StopToolUse = "toolUse"
+	StopError   = "error"
+	StopAborted = "aborted"
 )
 
 // Message is one conversation entry. Tool results are RoleTool messages carrying ToolCallID /

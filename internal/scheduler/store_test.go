@@ -253,7 +253,7 @@ func TestSaveSchedulesWritesNormalizedAndBacksUp(t *testing.T) {
 	if len(backups) != 1 {
 		t.Fatalf("expected exactly 1 backup, got %v", backups)
 	}
-	if !backupNameRe.MatchString(backups[0]) {
+	if !config.ConfigBackupNameRe.MatchString(backups[0]) {
 		t.Fatalf("backup name %q does not match the config-backup convention", backups[0])
 	}
 }
@@ -306,7 +306,7 @@ func TestSaveHolidaysUsesIndependentBackupNaming(t *testing.T) {
 		t.Fatalf("SaveHolidays: %v", err)
 	}
 	// The config-backup prune must never delete holiday backups, and vice versa.
-	pruneConfigBackups("schedules.json")
+	config.PruneConfigBackups("schedules.json")
 	entries, err := os.ReadDir(filepath.Join(configDir(t), ".backups"))
 	if err != nil {
 		t.Fatalf("read backup dir: %v", err)
@@ -315,7 +315,7 @@ func TestSaveHolidaysUsesIndependentBackupNaming(t *testing.T) {
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), "holidays.json.") {
 			holidayBackups++
-			if backupNameRe.MatchString(e.Name()) {
+			if config.ConfigBackupNameRe.MatchString(e.Name()) {
 				t.Fatalf("holiday backup %q must not match the config-backup pattern", e.Name())
 			}
 		}
