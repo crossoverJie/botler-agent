@@ -183,10 +183,9 @@ func (c *ctl) start() {
 		return
 	}
 	binary := c.binary
-	if _, err := os.Stat(binary); err != nil {
-		if err := c.build(); err != nil {
-			fail(err)
-		}
+	// Always rebuild: a stale binary silently serving an old build is far worse than a 2s compile.
+	if err := c.build(); err != nil {
+		fail(err)
 	}
 	logf, err := os.OpenFile(c.logfile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -243,7 +242,11 @@ func (c *ctl) updateBranch(branch string) error {
 	}
 	fmt.Printf("updating %s...\n", branch)
 	if out, err := run("git", c.repoDir, "fetch", remote, branch); err != nil {
-		return fmt.Errorf("git fetch: %v: %s", err, out)
+		// A local branch that was never pushed has no remote ref yet (e.g. a feature branch under
+		// development): build what is checked out instead of leaving the service stopped.
+		fmt.Fprintf(os.Stderr, "warn: cannot fetch %s/%s (%s); building the local checkout\n",
+			remote, branch, strings.TrimSpace(out))
+		return c.build()
 	}
 	if out, err := run("git", c.repoDir, "checkout", "-f", "FETCH_HEAD"); err != nil {
 		return fmt.Errorf("git checkout: %v: %s", err, out)
@@ -333,6 +336,12 @@ func latestReleaseTag() string {
 }
 
 func (c *ctl) restart(mode string) {
+	// Check the preconditions BEFORE stopping: a refused update must not leave the service down.
+	if dirty, err := c.isDirty(); err != nil {
+		fail(err)
+	} else if dirty && os.Getenv("BOTLER_FORCE") != "1" {
+		fail(fmt.Errorf("working tree has uncommitted changes; commit/stash them or set BOTLER_FORCE=1 to discard"))
+	}
 	c.stop()
 	var err error
 	if mode == "stable" {
