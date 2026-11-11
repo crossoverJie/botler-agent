@@ -76,6 +76,9 @@ func main() {
 	}
 
 	cfg := config.C()
+	if positional == "" {
+		fmt.Printf("[main] model: %s/%s (config: %s)\n", cfg.Provider, cfg.Model, config.UserConfigDir())
+	}
 
 	// CLI one-shot mode: run a single message and exit (local debugging / end-to-end testing).
 	if positional != "" {

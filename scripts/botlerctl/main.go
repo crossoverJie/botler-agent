@@ -194,6 +194,7 @@ func (c *ctl) start() {
 	defer logf.Close()
 	cmd := exec.Command(binary)
 	cmd.Dir = c.repoDir
+	cmd.Env = cleanEnv()
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	// Detach from this process group so the daemon survives the controlling terminal.
@@ -205,6 +206,30 @@ func (c *ctl) start() {
 		fail(err)
 	}
 	fmt.Printf("started (pid %d), log: %s\n", cmd.Process.Pid, c.logfile)
+}
+
+// cleanEnv drops PI_PROVIDER / PI_MODEL inherited from the shell: process env beats .env by
+// design, and a stray export silently makes the daemon use a model that ~/.botler-agent/.env does
+// not mention. Set BOTLER_KEEP_ENV=1 to keep the inherited values.
+func cleanEnv() []string {
+	env := os.Environ()
+	if os.Getenv("BOTLER_KEEP_ENV") == "1" {
+		return env
+	}
+	kept := make([]string, 0, len(env))
+	var dropped []string
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PI_PROVIDER=") || strings.HasPrefix(kv, "PI_MODEL=") {
+			dropped = append(dropped, strings.SplitN(kv, "=", 2)[0])
+			continue
+		}
+		kept = append(kept, kv)
+	}
+	if len(dropped) > 0 {
+		fmt.Fprintf(os.Stderr, "warn: ignoring inherited %s (set BOTLER_KEEP_ENV=1 to keep it); the daemon uses ~/.botler-agent/.env\n",
+			strings.Join(dropped, ", "))
+	}
+	return kept
 }
 
 func (c *ctl) build() error {
