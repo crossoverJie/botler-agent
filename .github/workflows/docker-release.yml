@@ -1,8 +1,10 @@
 name: Docker Release
 
 # Tag-triggered release: push a `v*` tag (produced by `make release VERSION=...`) to build the
-# multi-arch image and push it to Docker Hub. Produces `latest` + `v0.2.0` + `0.2.0` + `0.2`.
-# The dev channel (push to main -> `latest` + short sha) is handled by docker-publish.yml.
+# multi-arch image and push it to Docker Hub. Produces `latest` + `v1.0.0` + `1.0.0` + `1.0`.
+# The dev channel (push to main -> `edge` + short sha) is handled by docker-publish.yml.
+# The tag (and short commit) are passed to the Dockerfile as build args, so `--version` inside the
+# image reports the release instead of the Dockerfile's `dev` fallback.
 # Requires two secrets (Repo settings -> Secrets and variables -> Actions):
 #   DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
 # Optionally override the image via repo variable DOCKERHUB_IMAGE (default crossoverjie/botler-agent).
@@ -11,12 +13,17 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to (re)build the image for (e.g. v1.0.0). Use only for recovery.'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: docker-release-${{ github.ref }}
+  group: docker-release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -25,17 +32,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Resolve version
+        id: ver
+        run: echo "commit=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
         with:
           images: ${{ vars.DOCKERHUB_IMAGE || 'crossoverjie/botler-agent' }}
+          # Explicit `value` (instead of type=ref,event=tag) so a workflow_dispatch recovery build
+          # produces the same tags as the original tag push.
           tags: |
             type=raw,value=latest
-            type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ github.event.inputs.tag || github.ref_name }}
+            type=semver,pattern={{version}},value=${{ github.event.inputs.tag || github.ref_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.inputs.tag || github.ref_name }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
@@ -57,5 +72,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.event.inputs.tag || github.ref_name }}
+            COMMIT=${{ steps.ver.outputs.commit }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
