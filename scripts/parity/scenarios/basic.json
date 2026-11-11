@@ -1,0 +1,26 @@
+[
+  {
+    "text": "",
+    "toolCalls": [
+      {
+        "name": "read",
+        "arguments": {"path": "cook/data.json"}
+      }
+    ]
+  },
+  {
+    "text": "",
+    "toolCalls": [
+      {
+        "name": "write",
+        "arguments": {
+          "path": "cook/data.json",
+          "content": {"items": [{"id": "2026-08-23-01", "amount": 30, "note": "午饭"}]}
+        }
+      }
+    ]
+  },
+  {
+    "text": "记好了 ✅ 今天午饭 30 元，已写入 cook/data.json。"
+  }
+]

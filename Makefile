@@ -1,46 +1,54 @@
-# botler-agent release helper
+# botler-agent (Go) build/release helper.
 #
-# The deployment model is git-tag based: `npm run restart -- stable` checks out
-# the latest GitHub Release tag and runs `npm install`. So a "release" is just a
-# semver bump + an annotated tag push; the Release workflow (validate -> draft ->
-# publish) takes over from there.
-#
-# Usage:
-#   make release VERSION=0.2.0   bump package.json, commit, tag v0.2.0, push
-#   make tag VERSION=0.2.0       alias for release
-#   make current                print the current version
+# The version has a single source of truth: the git tag. `make release VERSION=x.y.z` tags and
+# pushes; the GitHub Release workflow builds the cross-platform binaries from that tag.
 
-VERSION ?=
-TAG_PREFIX := v
+BINARY  := botler
+PKG     := ./cmd/botler
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "")
+LDFLAGS := -s -w -X github.com/crossoverJie/botler-agent/internal/version.Version=$(VERSION) \
+           -X github.com/crossoverJie/botler-agent/internal/version.Commit=$(COMMIT)
 
-.PHONY: release tag current check-clean
+.PHONY: all build test lint fmt vet clean current check-clean release tag cover
+
+all: build
+
+build:
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) $(PKG)
+
+test:
+	go test ./...
+
+cover:
+	go test -cover ./...
+
+fmt:
+	gofmt -l -w .
+
+vet:
+	go vet ./...
+
+# lint mirrors CI without requiring golangci-lint to be installed locally.
+lint: fmt vet
+	@test -z "$$(gofmt -l .)" || { echo "error: gofmt found unformatted files"; exit 1; }
+
+clean:
+	rm -f $(BINARY)
+	rm -rf dist/
 
 current:
-	@node -p "require('./package.json').version"
+	@echo $(VERSION)
 
-# Refuse to release with a dirty working tree so the tag always points at a clean state.
 check-clean:
 	@git diff --quiet || { echo "error: working tree has uncommitted changes"; exit 1; }
 	@git diff --cached --quiet || { echo "error: index has staged changes"; exit 1; }
 
 release: check-clean
-	@test -n "$(VERSION)" || { echo "error: pass VERSION=x.y.z (e.g. make release VERSION=0.2.0)"; exit 1; }
+	@test -n "$(VERSION)" || { echo "error: pass VERSION=x.y.z (e.g. make release VERSION=0.6.0)"; exit 1; }
 	@echo "$(VERSION)" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$$' \
-		|| { echo "error: VERSION must be semver (e.g. 0.2.0)"; exit 1; }
-# Bump + commit only when the version actually changes, so the first release
-# (version already at the target) just tags the current HEAD instead of failing
-# on an empty commit.
-	@CUR=$$(node -p "require('./package.json').version"); \
-	if [ "$$CUR" != "$(VERSION)" ]; then \
-		sed -i.bak -E 's/^([[:space:]]*"version"[[:space:]]*:[[:space:]]*")[^"]*(".*)$$/\1$(VERSION)\2/' package.json \
-			&& rm -f package.json.bak; \
-		git add package.json; \
-		git commit -m "release: v$(VERSION)"; \
-	else \
-		echo "version unchanged ($(VERSION)): skipping version-bump commit"; \
-	fi
-	@git tag -a "$(TAG_PREFIX)$(VERSION)" -m "v$(VERSION)"
-	@git push origin HEAD --tags
-	@echo "pushed v$(VERSION); the Release workflow will validate and publish the GitHub Release."
+		|| { echo "error: VERSION must be semver (e.g. 0.6.0)"; exit 1; }
+	git tag -a "v$(VERSION)" -m "release v$(VERSION)"
+	git push origin "v$(VERSION)"
 
 tag: release

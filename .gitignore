@@ -10,3 +10,6 @@ coverage/
 *.local
 .npm-debug.log*
 .DS_Store
+
+# Go build output
+/botler

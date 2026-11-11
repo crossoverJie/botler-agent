@@ -1,0 +1,108 @@
+package runner
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+
+	"github.com/crossoverJie/botler-agent/internal/agentrt"
+	"github.com/crossoverJie/botler-agent/internal/agentrt/anthropic"
+	"github.com/crossoverJie/botler-agent/internal/agentrt/openai"
+	"github.com/crossoverJie/botler-agent/internal/config"
+	"github.com/crossoverJie/botler-agent/internal/monitor"
+)
+
+var (
+	rtOnce   sync.Once
+	rtCached agentrt.Runtime
+	rtErr    error
+)
+
+// resolveRuntime resolves (and caches) the model client for PI_PROVIDER / PI_MODEL.
+// A misconfiguration returns a usable error instead of crashing the process.
+func resolveRuntime() (agentrt.Runtime, error) {
+	if rtCached == nil && rtErr == nil {
+		rtCached, rtErr = buildRuntime()
+	}
+	if rtCached != nil {
+		monitor.MarkModelCache(true)
+		return rtCached, nil
+	}
+	monitor.MarkModelCache(false)
+	return nil, rtErr
+}
+
+// ResetRuntime clears the cached client (tests).
+func ResetRuntime() {
+	rtOnce = sync.Once{}
+	rtCached = nil
+	rtErr = nil
+}
+
+func buildRuntime() (agentrt.Runtime, error) {
+	c := config.C()
+	if prov, ok := c.FindProvider(c.Provider); ok {
+		var meta config.ModelMeta
+		found := false
+		var available []string
+		for _, m := range prov.Models {
+			available = append(available, prov.ID+"/"+m.ID)
+			if m.ID == c.Model {
+				meta = m
+				found = true
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("Model not found: %s/%s.\nAvailable models: %s\nCheck PI_PROVIDER / PI_MODEL in .env.",
+				c.Provider, c.Model, strings.Join(available, ", "))
+		}
+		apiKey := prov.APIKey
+		if apiKey == "" {
+			envKey := strings.ToUpper(strings.ReplaceAll(prov.ID, "-", "_")) + "_API_KEY"
+			apiKey = os.Getenv(envKey)
+		}
+		switch prov.API {
+		case config.APIAnthropicMessages:
+			return &anthropic.Client{BaseURL: prov.BaseURL, APIKey: apiKey, Model: meta.ID,
+				Vision: meta.VisionEnabled(), MaxTokens: meta.MaxTokens}, nil
+		case config.APIOpenAICompletions:
+			return &openai.Client{BaseURL: prov.BaseURL, APIKey: apiKey, Model: meta.ID,
+				Vision: meta.VisionEnabled(), MaxTokens: meta.MaxTokens}, nil
+		default:
+			return nil, fmt.Errorf("Unsupported provider api %q for provider %q", prov.API, prov.ID)
+		}
+	}
+	if c.Provider == "anthropic" {
+		return &anthropic.Client{
+			BaseURL:   "https://api.anthropic.com",
+			APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
+			Model:     c.Model,
+			Vision:    true,
+			MaxTokens: 8192,
+		}, nil
+	}
+	var available []string
+	for _, p := range c.CustomProviders {
+		for _, m := range p.Models {
+			available = append(available, p.ID+"/"+m.ID)
+		}
+	}
+	return nil, fmt.Errorf("Model not found: %s/%s.\nAvailable models: %s\nCheck PI_PROVIDER / PI_MODEL in .env.",
+		c.Provider, c.Model, strings.Join(available, ", "))
+}
+
+// ModelName returns the configured provider/model pair for logging.
+func ModelName() (string, string) {
+	c := config.C()
+	return c.Provider, c.Model
+}
+
+var errNoRuntime = errors.New("model runtime is not configured")
+
+// SetRuntimeForTest installs a fixed runtime (tests only).
+func SetRuntimeForTest(rt agentrt.Runtime) {
+	rtCached = rt
+	rtErr = nil
+}
