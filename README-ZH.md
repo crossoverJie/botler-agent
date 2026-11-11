@@ -89,7 +89,7 @@ docker run -d --name botler --restart unless-stopped \
 # 浏览器打开 WebUI：http://<host-ip>:8900
 ```
 
-镜像默认值（`WEBUI_HOST=0.0.0.0`、`WEBUI_ENABLED=1`、`SCHEDULER_ENABLED=1`、`MONITOR_ENABLED=1`）优先级高于挂载的 `/config/.env`——如需修改请在创建容器时覆盖（如 `-e WEBUI_ENABLED=0`）。容器内已内置 8899 端口的 `/healthz` 健康检查。关于微信扫码登录、飞书端口、git 提交身份与升级步骤，见 [Docker 部署（NAS）](docs/docker.md)。
+镜像默认值（`WEBUI_HOST=0.0.0.0`、`WEBUI_ENABLED=1`、`SCHEDULER_ENABLED=1`、`MONITOR_ENABLED=1`）优先级高于挂载的 `/config/.env`——如需修改请在创建容器时覆盖（如 `-e WEBUI_ENABLED=0`）。容器内已内置 8899 端口的 `/healthz` 健康检查。`GIT_PUSH=1` 所需的 compose 编排、git 提交身份、ssh 凭据与 NAS 权限，见 [容器内 git push](docs/docker-git-push.md)。
 
 **容器内 git push（`GIT_PUSH=1`）**
 
@@ -108,7 +108,7 @@ printf '[safe]\n\tdirectory = *\n' > ./config/gitconfig   # NAS 挂载场景，�
 ```yaml
 services:
   botler:
-    image: crossoverjie/botler-agent:v0.5.1     # `latest` 只由 `v*` tag 产出（make release）
+    image: crossoverjie/botler-agent:v1.0.0     # `latest` 只由 `v*` tag 产出（make release）
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
@@ -499,6 +499,6 @@ src/
 
 ## 相关文档
 
-- Docker 部署（NAS / 容器）：[docs/docker.md](docs/docker.md)
+- Docker 部署（NAS / 容器），含 `GIT_PUSH=1`：[docs/docker-git-push.md](docs/docker-git-push.md)
 - 给 AI 编码助手的仓库说明：[`AGENTS.md`](AGENTS.md)
 - 环境变量模板：[`.env.example`](.env.example)

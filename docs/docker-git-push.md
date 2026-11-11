@@ -28,7 +28,7 @@ is pushed:
 
 ```bash
 # repo side
-make release VERSION=0.5.1
+make release VERSION=1.0.0
 
 # NAS side
 docker compose pull
@@ -36,7 +36,7 @@ docker compose up -d --force-recreate
 docker compose exec botler sh -c 'command -v ssh && ssh -V'   # must print an OpenSSH version
 ```
 
-Pin the version tag (`crossoverjie/botler-agent:v0.5.1`) rather than `latest`: rolling back is then a
+Pin the version tag (`crossoverjie/botler-agent:v1.0.0`) rather than `latest`: rolling back is then a
 one-line change. `docker compose images` only shows image IDs, so confirm the digest:
 
 ```bash
@@ -108,7 +108,7 @@ chmod 600 ./config/ssh/id_ed25519 ./config/ssh/known_hosts ./config/ssh/config
 ```yaml
 services:
   botler:
-    image: crossoverjie/botler-agent:v0.5.1
+    image: crossoverjie/botler-agent:v1.0.0
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai

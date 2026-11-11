@@ -14,9 +14,9 @@ Key design principles (understand before changing, do not break):
 4. **Config externalized**: the system prompt, the real `.env`, and `providers.json` (custom model providers) live in `~/.botler-agent/` (overridable via `BOTLER_CONFIG_DIR`), reused across clones / machines. The source-dir `.env` is only a dev fallback.
 5. **Path allowlist is a security boundary**: the agent's tools may only read/write first-level subdirs of `DATA_ROOT`. Do not relax `safePath`, do not add `bash`-class tools to the agent unless explicitly requested and the consequences are understood.
 
-> **This branch (`v2-golang`) is the Go implementation.** The TypeScript sources (`src/`,
-> `package.json`) and the npm commands below are the v1 implementation, which stays on `main`; they
-> are kept here only as the reference used by the parity harness.
+> **`main` is the Go implementation** (since v1.0.0). The TypeScript sources (`src/`, `package.json`)
+> and the npm commands below are the v1 implementation; they are kept here only as the reference used
+> by the parity harness and the Go test suite, and are not part of any release artifact.
 
 ## Commands (Go implementation)
 

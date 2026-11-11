@@ -95,7 +95,7 @@ docker run -d --name botler --restart unless-stopped \
 # Open the WebUI at http://<host-ip>:8900
 ```
 
-Image defaults (`WEBUI_HOST=0.0.0.0`, `WEBUI_ENABLED=1`, `SCHEDULER_ENABLED=1`, `MONITOR_ENABLED=1`) take precedence over the mounted `/config/.env` — override them at container creation (e.g. `-e WEBUI_ENABLED=0`). A `/healthz` healthcheck on port 8899 is built in. For WeChat QR login, the Feishu port, git commit identity, and upgrading steps, see [Docker deployment (NAS)](docs/docker.md).
+Image defaults (`WEBUI_HOST=0.0.0.0`, `WEBUI_ENABLED=1`, `SCHEDULER_ENABLED=1`, `MONITOR_ENABLED=1`) take precedence over the mounted `/config/.env` — override them at container creation (e.g. `-e WEBUI_ENABLED=0`). A `/healthz` healthcheck on port 8899 is built in. For the compose file, git commit identity, ssh credentials, and NAS permissions needed by `GIT_PUSH=1`, see [Git push from the container](docs/docker-git-push.md).
 
 **Git push inside Docker (`GIT_PUSH=1`)**
 
@@ -114,7 +114,7 @@ printf '[safe]\n\tdirectory = *\n' > ./config/gitconfig   # NAS bind mounts: avo
 ```yaml
 services:
   botler:
-    image: crossoverjie/botler-agent:v0.5.1     # `latest` is only produced by a `v*` tag (make release)
+    image: crossoverjie/botler-agent:v1.0.0     # `latest` is only produced by a `v*` tag (make release)
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
@@ -446,6 +446,6 @@ implementation under `src/`, which is kept for the parity harness and the Go tes
 
 ## Related docs
 
-- Docker deployment (NAS / container): [docs/docker.md](docs/docker.md)
+- Docker deployment (NAS / container), incl. `GIT_PUSH=1`: [docs/docker-git-push.md](docs/docker-git-push.md)
 - Repo guide for AI coding assistants: [`AGENTS.md`](AGENTS.md)
 - Environment variable template: [`.env.example`](.env.example)
