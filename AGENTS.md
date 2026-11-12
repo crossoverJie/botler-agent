@@ -34,6 +34,12 @@ go test ./...     # unit + integration tests (must pass before committing)
 go test -race ./...  # CI variant
 make cover        # coverage -> coverage.out; must match CI: -coverpkg=./internal/... so the number
                   # covers the whole internal/ tree, not each package's own tests (see below)
+make cover-check  # the CI gate: fails if coverage fell below coverage.baseline.json
+make cover-update # raise the floor after adding tests (commits the new baseline)
+                  # Refresh it from a CI run: a local ~/.botler-agent / .env lets a few
+                  # env-dependent tests take extra branches (~0.7pt higher locally).
+                  # A PR that adds untested code fails here; keep the baseline current instead of
+                  # lowering it. `go run ./scripts/covercheck -min 70` is the ad-hoc variant.
 
 # Process control / packaging helpers (Go programs under scripts/, not shell scripts):
 go run ./scripts/botlerctl {restart [main|stable]|start|stop|status|logs}

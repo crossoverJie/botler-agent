@@ -306,7 +306,9 @@ func mergeCall(calls []agentrt.ToolCall, index map[string]int, fc *genai.Functio
 		key = fc.Name
 	}
 	if i, ok := index[key]; ok {
-		if len(args) > 2 {
+		// json.Marshal of nil Args is "null", so the "{}" guard alone is not enough: a later chunk
+		// carrying no args must not wipe the payload an earlier chunk already delivered.
+		if len(args) > 2 && string(args) != "null" {
 			calls[i].Arguments = args
 		}
 		if fc.Name != "" {

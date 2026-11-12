@@ -30,9 +30,14 @@ const (
 
 // session is the account snapshot one inbound message is processed against.
 type session struct {
-	client *ilink.Client
+	client ilinkSender
 	acct   ResolvedAccount
 }
+
+// dispatchTask is the pipeline entry point. It is a variable for the same reason timeNow is: the
+// monitor's routing decisions (allowlist → batching → reply) are worth testing without standing up
+// the model / routing stack behind dispatch.
+var dispatchTask = dispatch.Dispatch
 
 // monitor owns the batching coordinator plus the per-sender flush timers (the coordinator itself
 // stays pure).
@@ -223,7 +228,7 @@ func (m *wechatMonitor) runTask(ctx context.Context, s *session, fromUserID, con
 		}
 	}()
 
-	res := dispatch.Dispatch(ctx, text, dispatch.Options{
+	res := dispatchTask(ctx, text, dispatch.Options{
 		ID:            id,
 		Source:        "wechat",
 		Recipient:     &push.Recipient{Source: push.SourceWeChat, UserID: fromUserID},
