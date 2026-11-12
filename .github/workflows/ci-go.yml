@@ -69,6 +69,8 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.out
           flags: go
+          # Upload exactly the profile above instead of letting the uploader scan the workspace.
+          disable_search: true
           # An upload hiccup (Codecov outage, fork PR without the secret) must not fail the build.
           fail_ci_if_error: false
 

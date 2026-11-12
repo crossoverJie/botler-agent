@@ -47,6 +47,9 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
           flags: ts
+          # c8 leaves raw V8 dumps in coverage/tmp/*.json; without this they are swept in as extra
+          # reports (42 files instead of 1) and skew the number.
+          disable_search: true
           fail_ci_if_error: false
 
   docker-smoke:
