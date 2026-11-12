@@ -1,0 +1,28 @@
+{
+  "total": 80.6,
+  "packages": {
+    "github.com/crossoverJie/botler-agent/internal/agentrt": 76.1,
+    "github.com/crossoverJie/botler-agent/internal/agentrt/adk": 55.1,
+    "github.com/crossoverJie/botler-agent/internal/agentrt/fake": 88.9,
+    "github.com/crossoverJie/botler-agent/internal/channels/allowlist": 100,
+    "github.com/crossoverJie/botler-agent/internal/channels/telegram": 78.6,
+    "github.com/crossoverJie/botler-agent/internal/channels/wechat": 81.2,
+    "github.com/crossoverJie/botler-agent/internal/config": 80.2,
+    "github.com/crossoverJie/botler-agent/internal/conversation": 81.5,
+    "github.com/crossoverJie/botler-agent/internal/dispatch": 71.8,
+    "github.com/crossoverJie/botler-agent/internal/greeting": 89.5,
+    "github.com/crossoverJie/botler-agent/internal/images": 81.8,
+    "github.com/crossoverJie/botler-agent/internal/initcmd": 82.4,
+    "github.com/crossoverJie/botler-agent/internal/logs": 88.6,
+    "github.com/crossoverJie/botler-agent/internal/monitor": 75.3,
+    "github.com/crossoverJie/botler-agent/internal/paths": 83.3,
+    "github.com/crossoverJie/botler-agent/internal/prompt": 88.4,
+    "github.com/crossoverJie/botler-agent/internal/push": 93.2,
+    "github.com/crossoverJie/botler-agent/internal/runner": 75.8,
+    "github.com/crossoverJie/botler-agent/internal/safety": 90.2,
+    "github.com/crossoverJie/botler-agent/internal/scheduler": 86.4,
+    "github.com/crossoverJie/botler-agent/internal/tools": 90.1,
+    "github.com/crossoverJie/botler-agent/internal/version": 88.9,
+    "github.com/crossoverJie/botler-agent/internal/webui": 63
+  }
+}

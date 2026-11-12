@@ -61,6 +61,10 @@ jobs:
           go test -count=1 -covermode=atomic -coverpkg=./internal/... \
             -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out | tail -1
+      - name: coverage gate
+        # A floor, not a target: it fails when a change adds more untested code than it tests.
+        # The baseline lives in coverage.baseline.json; raise it with `make cover-update`.
+        run: go run ./scripts/covercheck -profile coverage.out -v
       - name: upload to Codecov
         # Pinned by SHA on purpose: codecov's uploader was the target of the 2021 supply-chain
         # attack, so this action never floats on a tag.
