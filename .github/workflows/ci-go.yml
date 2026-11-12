@@ -2,6 +2,10 @@ name: ci-go
 
 # Go pipeline for `main`. The TypeScript pipeline (ci.yml) still runs, but only to keep the v1
 # reference tree under src/ compiling and tested — it gates nothing in a release.
+#
+# The path filter must list every input of the coverage gate, not just Go sources: a PR that only
+# lowers coverage.baseline.json (or the Makefile target) would otherwise skip the job that enforces
+# it and weaken the floor unvalidated. `**.go` already covers scripts/covercheck.
 on:
   push:
     branches: [main]
@@ -10,6 +14,9 @@ on:
       - "go.mod"
       - "go.sum"
       - "Dockerfile"
+      - "Makefile"
+      - "coverage.baseline.json"
+      - "scripts/covercheck/**"
       - ".github/workflows/ci-go.yml"
   pull_request:
     paths:
@@ -17,6 +24,9 @@ on:
       - "go.mod"
       - "go.sum"
       - "Dockerfile"
+      - "Makefile"
+      - "coverage.baseline.json"
+      - "scripts/covercheck/**"
       - ".github/workflows/ci-go.yml"
 
 permissions:

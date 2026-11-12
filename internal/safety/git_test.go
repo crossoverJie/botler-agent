@@ -43,6 +43,15 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// runGitBare runs git against a bare repository. A bare repo is refused outright when
+// safe.bareRepository=explicit is set (a common hardening in CI images and on dev machines), which
+// is unrelated to the behaviour under test, so the policy is overridden here instead of relying on
+// the machine's git config.
+func runGitBare(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	return runGit(t, dir, append([]string{"-c", "safe.bareRepository=all"}, args...)...)
+}
+
 // newRepo creates an independent data subproject repo with a hermetic config: the machine's global
 // hooks (e.g. a lefthook wrapper) must not influence the test.
 func newRepo(t *testing.T, root, name string) string {
@@ -204,7 +213,7 @@ func newRemote(t *testing.T, root, name string) string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	runGit(t, dir, "init", "-q", "--bare", "-b", "main")
+	runGitBare(t, dir, "init", "-q", "--bare", "-b", "main")
 	return dir
 }
 
@@ -220,7 +229,7 @@ func TestPushIfPendingPushesAndSetsUpstream(t *testing.T) {
 	CommitIfChanged("agent: first", nil)
 
 	local := head(t, repo)
-	pushed := runGit(t, remote, "rev-parse", "main")
+	pushed := runGitBare(t, remote, "rev-parse", "main")
 	if local != pushed {
 		t.Fatalf("commit was not pushed: local=%s remote=%s", local, pushed)
 	}
@@ -275,7 +284,7 @@ func TestPushIfPendingSkipsDetachedHead(t *testing.T) {
 
 	pushIfPending(repo, "repo")
 	// A detached HEAD has no upstream to establish; the remote stays empty.
-	if out := runGit(t, remote, "branch"); out != "" {
+	if out := runGitBare(t, remote, "branch"); out != "" {
 		t.Fatalf("nothing should have been pushed: %q", out)
 	}
 }
@@ -288,7 +297,7 @@ func TestPushIfPendingSkipsUnbornBranch(t *testing.T) {
 
 	// A fresh repo with no commit: rev-list fails, and `push -u` must not be attempted.
 	pushIfPending(repo, "repo")
-	if out := runGit(t, remote, "branch"); out != "" {
+	if out := runGitBare(t, remote, "branch"); out != "" {
 		t.Fatalf("an unborn branch must not be pushed: %q", out)
 	}
 }
@@ -314,7 +323,7 @@ func TestPushIfPendingSkipsStaleUpstream(t *testing.T) {
 	if after := runGit(t, repo, "config", "--get", "branch.main.merge"); after != before {
 		t.Fatalf("the tracking config must not be rewritten: %q -> %q", before, after)
 	}
-	if out := runGit(t, remote, "branch"); out != "" {
+	if out := runGitBare(t, remote, "branch"); out != "" {
 		t.Fatalf("nothing should have been pushed: %q", out)
 	}
 }
