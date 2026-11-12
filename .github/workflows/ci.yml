@@ -16,6 +16,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Codecov needs the base commit to compute patch (PR diff) coverage.
+          fetch-depth: 2
 
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -29,8 +32,25 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test
-        run: npm test
+      - name: Test (coverage)
+        # Same tests as `npm test`, run under c8. c8 is required instead of node's built-in
+        # reporter: the built-in one silently drops files no test imports, which overstates this
+        # tree at ~86% instead of the real ~42%.
+        run: npm run cover:lcov
+
+      - name: Upload to Codecov
+        # Covers the v1 reference tree (src/) only, under the `ts` flag, so it can never move the
+        # `?flag=go` badge that represents the shipped Go implementation. SHA-pinned on purpose:
+        # codecov's uploader was the target of the 2021 supply-chain attack.
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          flags: ts
+          # c8 leaves raw V8 dumps in coverage/tmp/*.json; without this they are swept in as extra
+          # reports (42 files instead of 1) and skew the number.
+          disable_search: true
+          fail_ci_if_error: false
 
   docker-smoke:
     # Build the production image and actually boot the entrypoint (`botler init` on the static Go

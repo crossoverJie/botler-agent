@@ -32,6 +32,8 @@ gofmt -l .        # formatting (must be empty)
 go vet ./...      # static checks
 go test ./...     # unit + integration tests (must pass before committing)
 go test -race ./...  # CI variant
+make cover        # coverage -> coverage.out; must match CI: -coverpkg=./internal/... so the number
+                  # covers the whole internal/ tree, not each package's own tests (see below)
 
 # Process control / packaging helpers (Go programs under scripts/, not shell scripts):
 go run ./scripts/botlerctl {restart [main|stable]|start|stop|status|logs}
@@ -55,7 +57,8 @@ npm start              # run: no args starts the persistent channel; a message a
 npm start -- "message" # CLI mode: process a single message directly (local debugging)
 npm run restart        # stop + pull latest code (git main) + npm install + restart in background
 npm run typecheck      # tsc --noEmit type check
-npm test               # node:test suite (scheduler cron + store)
+npm test               # node:test suite (all src/**/*.test.ts)
+npm run cover          # c8 coverage of src/ (--all: files no test imports count as 0%, not dropped)
 ```
 
 > Environment variables are in `.env.example`; the real config goes in `~/.botler-agent/.env`. `.env` is gitignored — do not commit real credentials.

@@ -13,7 +13,7 @@ LDFLAGS := -s -w -X github.com/crossoverJie/botler-agent/internal/version.Versio
 IMAGE ?= botler-agent
 TAG   ?= dev
 
-.PHONY: all build test lint fmt vet clean current check-clean release tag cover image
+.PHONY: all build test lint fmt vet clean current check-clean release tag cover cover-html image
 
 all: build
 
@@ -23,8 +23,15 @@ build:
 test:
 	go test ./...
 
+# Must match CI (.github/workflows/ci-go.yml): -coverpkg makes the number reflect the whole
+# internal/ tree instead of each package's own tests only (runner.go is reached from dispatch's
+# tests, so without it the number looks ~16 points worse than reality).
 cover:
-	go test -cover ./...
+	go test -count=1 -covermode=atomic -coverpkg=./internal/... -coverprofile=coverage.out ./...
+	@go tool cover -func=coverage.out | tail -1
+
+cover-html: cover
+	go tool cover -html=coverage.out
 
 fmt:
 	gofmt -l -w .

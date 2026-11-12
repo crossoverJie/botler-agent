@@ -13,3 +13,6 @@ coverage/
 
 # Go build output
 /botler
+coverage.out
+coverage.html
+lcov.info

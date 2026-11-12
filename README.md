@@ -1,5 +1,8 @@
 # botler-agent
 
+[![coverage](https://codecov.io/gh/crossoverJie/botler-agent/branch/main/graph/badge.svg?flag=go)](https://codecov.io/gh/crossoverJie/botler-agent)
+[![v1 (TypeScript) coverage](https://codecov.io/gh/crossoverJie/botler-agent/branch/main/graph/badge.svg?flag=ts)](https://codecov.io/gh/crossoverJie/botler-agent)
+
 > 🌐 [中文文档](README-ZH.md)
 
 <p align="center">

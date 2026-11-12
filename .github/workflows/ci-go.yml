@@ -40,6 +40,40 @@ jobs:
       - name: build (static)
         run: CGO_ENABLED=0 go build -trimpath ./cmd/botler
 
+  coverage:
+    # Coverage must be measured with -coverpkg: without it a package only counts the statements its
+    # OWN tests reach, so internal/runner/runner.go reports 0% even though dispatch's tests drive it
+    # through agentrt/fake. The denominator is ./internal/... (dev tooling under scripts/ and the
+    # cmd/ entry wiring are intentionally excluded). Uploaded with the `go` flag; the README badge
+    # reads `?flag=go`, so a future TS upload can never move this number.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Codecov needs the base commit to compute patch (PR diff) coverage.
+          fetch-depth: 2
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache-dependency-path: go.sum
+      - name: test (coverage)
+        run: |
+          go test -count=1 -covermode=atomic -coverpkg=./internal/... \
+            -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out | tail -1
+      - name: upload to Codecov
+        # Pinned by SHA on purpose: codecov's uploader was the target of the 2021 supply-chain
+        # attack, so this action never floats on a tag.
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.out
+          flags: go
+          # Upload exactly the profile above instead of letting the uploader scan the workspace.
+          disable_search: true
+          # An upload hiccup (Codecov outage, fork PR without the secret) must not fail the build.
+          fail_ci_if_error: false
+
   container-smoke:
     runs-on: ubuntu-latest
     steps:
