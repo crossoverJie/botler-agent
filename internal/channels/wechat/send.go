@@ -15,6 +15,15 @@ import (
 
 var httpsURLRe = regexp.MustCompile(`(?i)^https://`)
 
+// ilinkSender is the subset of *ilink.Client the reply path uses. Narrowing it to an interface is
+// what makes the monitor testable: every *ilink.Client call needs a live long poll, so a fake is the
+// only way to exercise processMessage / dispatchAndReply / runTask.
+type ilinkSender interface {
+	SendText(ctx context.Context, to, text, contextToken string) (string, error)
+	UploadFile(ctx context.Context, plaintext []byte, toUserID string, mediaType ilink.UploadMediaType) (*ilink.UploadResult, error)
+	SendImage(ctx context.Context, to, contextToken string, uploaded *ilink.UploadResult) (string, error)
+}
+
 // newClient builds an SDK client bound to one resolved account.
 func newClient(acct ResolvedAccount) *ilink.Client {
 	client := ilink.NewClient(acct.Token)
@@ -24,7 +33,7 @@ func newClient(acct ResolvedAccount) *ilink.Client {
 
 // sendText sends plain text. contextToken is required: it must echo the inbound message's
 // context_token, otherwise WeChat cannot associate the reply with the conversation.
-func sendText(ctx context.Context, client *ilink.Client, to, text, contextToken string) error {
+func sendText(ctx context.Context, client ilinkSender, to, text, contextToken string) error {
 	if contextToken == "" {
 		return errors.New("sendText: contextToken is required")
 	}
@@ -33,7 +42,7 @@ func sendText(ctx context.Context, client *ilink.Client, to, text, contextToken 
 }
 
 // sendImageFile uploads a local image file to the WeChat CDN and sends it as an image message.
-func sendImageFile(ctx context.Context, client *ilink.Client, to, localPath, contextToken string) error {
+func sendImageFile(ctx context.Context, client ilinkSender, to, localPath, contextToken string) error {
 	if contextToken == "" {
 		return errors.New("sendImageFile: contextToken is required")
 	}
