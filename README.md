@@ -1,7 +1,7 @@
 # botler-agent
 
-[![coverage](https://codecov.io/gh/crossoverJie/botler-agent/branch/main/graph/badge.svg?flag=go)](https://codecov.io/gh/crossoverJie/botler-agent)
-[![v1 (TypeScript) coverage](https://codecov.io/gh/crossoverJie/botler-agent/branch/main/graph/badge.svg?flag=ts)](https://codecov.io/gh/crossoverJie/botler-agent)
+[![golang coverage](https://img.shields.io/codecov/c/gh/crossoverJie/botler-agent?flag=go&label=golang)](https://codecov.io/gh/crossoverJie/botler-agent)
+[![typescript (v1) coverage](https://img.shields.io/codecov/c/gh/crossoverJie/botler-agent?flag=ts&label=typescript%20(v1))](https://codecov.io/gh/crossoverJie/botler-agent)
 
 > 🌐 [中文文档](README-ZH.md)
 
