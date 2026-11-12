@@ -36,6 +36,8 @@ make cover        # coverage -> coverage.out; must match CI: -coverpkg=./interna
                   # covers the whole internal/ tree, not each package's own tests (see below)
 make cover-check  # the CI gate: fails if coverage fell below coverage.baseline.json
 make cover-update # raise the floor after adding tests (commits the new baseline)
+                  # Refresh it from a CI run: a local ~/.botler-agent / .env lets a few
+                  # env-dependent tests take extra branches (~0.7pt higher locally).
                   # A PR that adds untested code fails here; keep the baseline current instead of
                   # lowering it. `go run ./scripts/covercheck -min 70` is the ad-hoc variant.
 

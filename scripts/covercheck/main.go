@@ -18,6 +18,10 @@
 //	go run ./scripts/covercheck -v                 # also list every package
 //	go run ./scripts/covercheck -update            # rewrite the baseline from this profile
 //	go run ./scripts/covercheck -min 78            # ad-hoc absolute floor, no baseline needed
+//
+// Regenerate the baseline from a CI run, not from a dev machine: a populated ~/.botler-agent (or a
+// local .env) makes a few env-dependent tests take extra branches, so a local profile can be ~0.7pt
+// higher than what CI measures. The floor must describe the lower of the two, or the gate flaps.
 package main
 
 import (
