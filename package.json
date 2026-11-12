@@ -31,7 +31,9 @@
 		"restart": "bash scripts/botlerctl.sh restart",
 		"init": "tsx src/init.ts",
 		"typecheck": "tsc --noEmit",
-		"test": "tsx --test src/scheduler/cron.test.ts src/scheduler/engine.test.ts src/scheduler/store.test.ts src/scheduler/history.test.ts src/logging/store.test.ts src/monitor/stats.test.ts src/greeting.test.ts src/channels/allowlist.test.ts src/channels/wechat/aes-ecb.test.ts src/channels/wechat/download.test.ts src/channels/wechat/image-batch.test.ts src/channels/wechat/pair.test.ts src/channels/wechat/account.test.ts src/conversation/store.test.ts src/tools/clear-conversation.test.ts src/tools/paths.test.ts src/safety/validate.test.ts src/safety/git-push.test.ts src/safety/git.test.ts src/runner/decisions.test.ts",
+		"cover": "c8 --all --src src --include 'src/**/*.ts' --exclude '**/*.test.ts' --exclude 'src/types/**' node --import tsx --test \"src/**/*.test.ts\"",
+		"cover:lcov": "c8 --all --src src --include 'src/**/*.ts' --exclude '**/*.test.ts' --exclude 'src/types/**' --reporter=lcovonly node --import tsx --test \"src/**/*.test.ts\"",
+		"test": "node --import tsx --test \"src/**/*.test.ts\"",
 		"webui": "tsx src/webui/server.ts",
 		"cli": "tsx src/index.ts"
 	},
@@ -46,6 +48,7 @@
 	"devDependencies": {
 		"@types/node": "^22.20.5",
 		"@types/qrcode": "^1.5.6",
+		"c8": "^12.0.0",
 		"tsx": "^4.23.15",
 		"typescript": "^5.7.0"
 	}
