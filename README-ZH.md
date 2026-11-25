@@ -3,505 +3,151 @@
 [![golang coverage](https://img.shields.io/codecov/c/gh/crossoverJie/botler-agent?flag=go&label=golang)](https://codecov.io/gh/crossoverJie/botler-agent)
 [![typescript (v1) coverage](https://img.shields.io/codecov/c/gh/crossoverJie/botler-agent?flag=ts&label=typescript%20(v1))](https://codecov.io/gh/crossoverJie/botler-agent)
 
+> 🌐 [English](README.md) · 📖 [配置与参考手册](docs/configuration-zh.md)
+
 <p align="center">
   <img src="docs/images/IMG_0592.PNG" alt="botler-agent 运行截图 1" width="32%">
   <img src="docs/images/IMG_0593.PNG" alt="botler-agent 运行截图 2" width="32%">
   <img src="docs/images/IMG_0594.PNG" alt="botler-agent 运行截图 3" width="32%">
 </p>
 
-通用轻量个人 Agent 框架：从 **Telegram / 飞书 / 微信（iLink）** 接收消息，在**数据根目录（`DATA_ROOT`）**内的各数据子项目中自主完成短任务，并把结果回发给用户。可选运行定时任务（内置调度器），并提供本地 WebUI 与健康度监控。
+通用轻量个人 Agent 框架：从 **Telegram / 飞书 / 微信（iLink）** 接收消息，在数据根目录（`DATA_ROOT`）下的各数据子项目中自主完成短任务并回发结果；内置可选的定时调度器、本地 WebUI 与健康度监控。
 
-- **框架只定义边界**：可操作目录白名单、只提供 `read / write / edit / run / schedule` 五个数据工具，外加 IM-only 的 `clear_conversation_context`（run 仅限项目内已有脚本，schedule 只写固定的外置 `schedules.json`，二者都不是任意 shell）、写后校验 JSON 合法、有改动自动 git commit。
-- **业务规则由数据项目自描述**：每个数据子项目根目录的 `AGENTS.md` 描述其文件结构与操作规则，Agent 动手前先读它。框架不硬编码任何具体业务。
-- **提示词与配置外置**：放在 `~/.botler-agent/`，跨 clone / 跨机器复用，用户可定制或让 AI 生成。
+- **框架只定义边界**：`DATA_ROOT` 一级子目录白名单、6 个受控工具（`read / write / edit / run / schedule` + IM 专属 `clear_conversation_context`）、写后校验 JSON 合法、有改动自动 `git commit`。
+- **业务规则由数据项目自描述**：每个子项目根目录的 `AGENTS.md` 描述自身的文件结构与操作规则；框架不硬编码任何具体业务。
+- **提示词与配置外置**：统一存放在 `~/.botler-agent/`，可跨目录、跨机器直接复用。
 
 ## 为什么选 botler-agent？
 
-刻意做**轻**，区别于重型 Agent 框架：
+- **极简轻量** — 单个静态 Go 二进制 + 6 个受控工具，无重型运行时或后台依赖，秒级安装。
+- **极致省 Token** — 每次任务都是全新短命 `Agent`（仅复用受限的最近可见对话轮次）；两阶段路由只加载目标子项目的 `AGENTS.md`，日常开销仅为通用助手的零头。
+- **聚焦垂直日常任务** — 专为饮食营养、个人记账、日常笔记、生词本、定时提醒等边界清晰的小任务设计，数据本地结构化可控。
 
-- **轻量** — 只有六个工具，无重型运行时 / 守护进程，单个静态 Go 二进制即可，秒级安装。
-- **省 token** — 每个任务都是全新短命 Agent，仅复用受限的最近可见对话窗口；路由只用「项目名 + 摘要」小提示词，只加载被选中子项目的约定。没有巨型 system prompt、不追长上下文，多数任务成本只有通用助手的零头。
-- **聚焦垂直简单任务** — 不是通用聊天机器人，擅长小、重复、边界清晰的活（饮食记录、生词查询、定时提醒），每个由自己的 `AGENTS.md` 描述。
+| | **botler-agent** | **通用 Agent**（OpenClaw / WorkBuddy） | **Coding Agent**（Claude Code / Codex） | **云端聊天机器人**（豆包 / 元宝 / ChatGPT） |
+|---|---|---|---|---|
+| **定位** | 轻量个人数据助手 | 通用任务自动化 | 代码库内的软件工程 | 对话式问答服务 |
+| **安装体积** | 单个静态 Go 二进制，秒级安装 | 安装包庞大，冗余功能多 | 较重，依赖完整开发环境 | 网页 / App，无需安装 |
+| **内置工具** | 仅 6 个受控工具（`read/write/edit/run/schedule` + `clear_conversation_context`） | 内置大量复杂工具 | 完整的 shell、文件系统与命令权限 | 仅对话，无本地文件工具 |
+| **文件与本机权限** | 路径白名单（仅限 `DATA_ROOT` 一级子目录）；无任意 shell | 文件与本机权限较开放 | 可读写整个工作区并执行任意命令 | 无（纯云端服务） |
+| **交互方式** | 移动端优先：微信 / Telegram / 飞书 | 多端 | 以桌面 / 终端为主 | 网页 / App 聊天 |
+| **数据存储** | 本地优先：存于 `DATA_ROOT`，结构化且 Git 版本化 | 取决于平台 | 代码仓库内 | 仅在云端，多为非结构化聊天记录 |
 
-## botler-agent 与同类对比
+## 快速开始
 
-| | **botler-agent** | **通用 Agent**（OpenClaw / WorkBuddy） | **Coding Agent**（Claude Code / Codex） |
-|---|---|---|---|
-| **定位** | 轻量个人数据助手 | 通用任务自动化 | 代码库内的软件工程 |
-| **安装体积** | 单个静态 Go 二进制，秒级安装，无重型运行时 | 庞大的安装包，携带大量可能用不上的功能 | 较重，依赖完整的开发环境 |
-| **内置工具** | 仅 6 个受控工具（read / write / edit / run / schedule + IM-only `clear_conversation_context`） | 内置大量、往往复杂的工具 | 完整的 shell、文件系统与命令权限 |
-| **文件操作** | 路径白名单——仅限 `DATA_ROOT` 一级子目录 | 文件访问较开放 | 可读取/改写整个工作区 |
-| **对电脑的权限** | 极其克制——无任意 shell | 较开放 | 高度开放（执行命令、修改代码） |
-| **交互方式** | 移动端优先：微信 / Telegram / 飞书 聊天 | 多端 | 以桌面 / 终端为主 |
-| **最擅长** | 轻量日常记录（饮食、生词、提醒） | 通用自动化 | 写代码、重构、调试 |
-
-- **对比通用 Agent**：botler 更轻。没有臃肿的安装包堆砌冗余能力，没有大而全的工具集，文件访问也更克制、更安全。
-- **对比 Coding Agent**：botler 刻意「做减法」。它面向手机端的轻量记录，而不是去操作你的电脑——因此对机器的权限要求极低，也不需要复杂的工具。
-
-**自定义结构化数据**：botler-agent 不规定固定 schema。每个 `DATA_ROOT` 下的子项目自带 `AGENTS.md`（格式与约定）与数据文件，结构由你按自己的需求定义。如果想看具体的结构化数据布局范例（饮食/营养记录、日常记录、个人记账、旅行见闻），可参考开源模板集 [`botler-agent-app`](https://github.com/crossoverJie/botler-agent-app)。
-
-## 安装
-
-只分发两种产物：**Go 二进制**（源码构建）与 **Docker 镜像**。配置与数据目录格式与 v1 完全一致
-（`~/.botler-agent/`、`DATA_ROOT`、`schedules.json`、任务日志……），现网安装可直接换二进制。
-
-**方式 A — 源码构建（推荐）**
+### 方式 A — 源码编译安装（推荐）
 
 ```bash
+# 克隆至 ~/.local/share/botler-agent，编译静态 Go 二进制并执行 `botler init`（可重复执行以更新）
 git clone https://github.com/crossoverJie/botler-agent.git
 cd botler-agent && go run ./scripts/install
+
+# 或在当前目录就地编译：
+go build -o botler ./cmd/botler && ./botler init
 ```
 
-clone 到 `~/.local/share/botler-agent`（可用 `BOTLER_INSTALL_DIR` 覆盖），自动编译并执行 `botler init`；可重复执行——重跑时会更新代码并重新编译。
-
-也可以就地编译、直接驱动二进制：
+完成配置并启动：
 
 ```bash
-go build -o botler ./cmd/botler
-./botler init              # 生成 ~/.botler-agent/ 模板（不覆盖已有文件）
-./botler "你的消息"         # 单条消息（CLI 模式）；不带参数启动渠道服务
-go run ./scripts/botlerctl restart     # 后台 start/stop/status/logs [main|stable]
-go run ./scripts/parity                # 与 v1 的差分测试（确定性模型 stub）
+# 1. 编辑 ~/.botler-agent/.env（填写 DATA_ROOT、PI_PROVIDER / PI_MODEL 及渠道凭据）
+# 2.（可选）编辑 ~/.botler-agent/providers.json 配置自定义 OpenAI / Anthropic 兼容网关
+# 3.（可选）微信 iLink 渠道扫码登录：
+botler wechat-login
+
+# 4a. CLI 模式（单条消息本地调试）
+botler "早上吃了个馒头"
+
+# 4b. 常驻服务模式（按 .env 启动消息渠道 / 调度器 / WebUI）
+botler
+# 或在仓库目录管理后台进程：go run ./scripts/botlerctl restart
 ```
 
-**方式 B — Docker（NAS / 容器部署）**
+### 方式 B — Docker 部署（NAS / 容器）
 
-已发布多架构镜像（`linux/amd64` + `linux/arm64`）到 Docker Hub（`crossoverjie/botler-agent`，标签 `latest` / `edge` / `vX.Y.Z`）。容器直接运行静态 Go 二进制（容器内无需构建），并通过两个挂载卷持久化一切：
-
-| 关注点 | 容器内路径 | 推荐挂载 |
-| --- | --- | --- |
-| 配置目录（`BOTLER_CONFIG_DIR`） | `/config` | `./config:/config` |
-| 数据根目录（`DATA_ROOT`） | `/data` | `./data:/data` |
-
-快速开始：
+Docker Hub 已发布多架构镜像 `crossoverjie/botler-agent`（`linux/amd64` + `linux/arm64`，标签 `latest` / `edge` / `vX.Y.Z`），通过 `/config` 与 `/data` 两个挂载卷持久化全部状态：
 
 ```bash
-# 1. 原地生成配置模板（复制 .env / providers.json / system-prompt.md / schedules.json）
+# 1. 生成初始配置模板到 ./config
 docker run --rm -v "$PWD/config:/config" crossoverjie/botler-agent:latest init
 
-# 2. 编辑 ./config/.env：设置 PI_PROVIDER / PI_MODEL 及你的渠道凭据
+# 2. 编辑 ./config/.env（配置 PI_PROVIDER / PI_MODEL 与渠道凭据）
 
-# 3. 启动容器（镜像内默认已开启 WebUI / 调度器 / 监控）
+# 3. 启动容器（镜像默认已开启 WebUI :8900、调度器与健康监控 :8899）
 docker run -d --name botler --restart unless-stopped \
   -e TZ=Asia/Shanghai \
   -p 8900:8900 \
   -v "$PWD/config:/config" \
   -v "$PWD/data:/data" \
   crossoverjie/botler-agent:latest
-
-# 浏览器打开 WebUI：http://<host-ip>:8900
 ```
 
-镜像默认值（`WEBUI_HOST=0.0.0.0`、`WEBUI_ENABLED=1`、`SCHEDULER_ENABLED=1`、`MONITOR_ENABLED=1`）优先级高于挂载的 `/config/.env`——如需修改请在创建容器时覆盖（如 `-e WEBUI_ENABLED=0`）。容器内已内置 8899 端口的 `/healthz` 健康检查。`GIT_PUSH=1` 所需的 compose 编排、git 提交身份、ssh 凭据与 NAS 权限，见 [容器内 git push](docs/docker-git-push.md)。
+> **容器内开启 `GIT_PUSH=1`**：容器环境变量优先级高于 `/config/.env`。关于 Docker Compose 编排、SSH 密钥挂载、Git 提交身份与 NAS 权限配置，请参阅 **[容器内 git push 指南](docs/docker-git-push.md)**。
 
-**容器内 git push（`GIT_PUSH=1`）**
+## 示例数据模板（`botler-agent-app`）
 
-`GIT_PUSH=1` 时，每次写入任务都会把仍有未推送提交的数据子项目推回远端。镜像只提供 `git` + `openssh-client`，**key / `known_hosts` / 提交身份一律不进镜像**，靠挂载与环境变量注入：
+botler-agent 不强制固定数据格式。如需开箱即用的结构化模板——`cook`（饮食营养）、`daily-log`（日常记录）、`ledger`（个人记账）、`travel`（旅行见闻），可将 [`botler-agent-app`](https://github.com/crossoverJie/botler-agent-app) 克隆作为你的 `DATA_ROOT`（本仓库内的同名 submodule 仅作展示）：
 
 ```bash
-# 宿主机执行一次：生成 key、预置 host key、写 ssh config
-mkdir -p ./config/ssh && chmod 700 ./config/ssh
-ssh-keygen -t ed25519 -N '' -f ./config/ssh/id_ed25519
-ssh-keyscan -p 443 ssh.github.com 2>/dev/null > ./config/ssh/known_hosts   # 公钥加到机器用户账号
-printf 'Host github.com\n  HostName ssh.github.com\n  Port 443\n  User git\n  IdentityFile /root/.ssh/id_ed25519\n  IdentitiesOnly yes\n  BatchMode yes\n  StrictHostKeyChecking yes\n  UserKnownHostsFile /root/.ssh/known_hosts\n' > ./config/ssh/config
-chmod 600 ./config/ssh/id_ed25519 ./config/ssh/known_hosts ./config/ssh/config
-printf '[safe]\n\tdirectory = *\n' > ./config/gitconfig   # NAS 挂载场景，避免 "dubious ownership"
+git clone https://github.com/crossoverJie/botler-agent-app.git /path/to/your/data-root
+export DATA_ROOT=/path/to/your/data-root
 ```
 
-```yaml
-services:
-  botler:
-    image: crossoverjie/botler-agent:v1.0.0     # `latest` 只由 `v*` tag 产出（make release）
-    restart: unless-stopped
-    environment:
-      TZ: Asia/Shanghai
-      GIT_AUTHOR_NAME: botler-agent
-      GIT_AUTHOR_EMAIL: botler@localhost
-      GIT_COMMITTER_NAME: botler-agent
-      GIT_COMMITTER_EMAIL: botler@localhost
-      GIT_TERMINAL_PROMPT: "0"                  # 需要输入时立刻失败
-      GIT_SSH_COMMAND: ssh -F /root/.ssh/config
-      GIT_CONFIG_GLOBAL: /config/gitconfig
-      GIT_PUSH: "1"                             # 进程 env 优先于 /config/.env
-    volumes:
-      - ./config:/config
-      - ./data:/data
-      - ./config/ssh:/root/.ssh:ro
-      - ./config/gitconfig:/config/gitconfig:ro
-```
+## 架构与安全边界
 
-```bash
-docker compose up -d
-docker compose exec botler sh -c 'command -v ssh && ssh -F /root/.ssh/config -T git@github.com'
-#   -> "Hi <user>! You've successfully authenticated ..."
-```
-
-key 属于一个专用机器用户，并把该用户加为每个数据仓库的 **collaborator（Write）**——不要一个仓库一把 deploy key。push 与本次 commit 解耦（上次失败的推送会在下一次写入任务自愈），失败只记录 git stderr 首行、不会让任务失败。完整步骤、uid 1000 变体与 14 项验证清单：[容器内 git push](docs/docker-git-push.md)。
-
-## 快速开始
-
-```bash
-# 1. 初始化用户级配置目录（~/.botler-agent/）
-botler init
-
-# 2. 编辑 ~/.botler-agent/.env，填入 DATA_ROOT / 模型选择（PI_PROVIDER / PI_MODEL）/ 渠道凭据
-# 3. 编辑 ~/.botler-agent/providers.json，配置你的模型供应商（baseUrl / apiKey / models）
-# 4.（可选）定制 ~/.botler-agent/system-prompt.md（或让 AI 按项目背景生成）
-
-# 5a. CLI 模式（本地调试，直接传一条消息）
-botler "早上吃了个馒头"
-
-# 5b. 常驻渠道模式（按 .env 启动 Telegram / 飞书 / 微信）
-botler
-
-# 6.（可选）微信 iLink 渠道——先扫码登录：
-botler wechat-login
-
-# 7.（可选）通过 .env 开关启用调度器 / WebUI / 监控（SCHEDULER_ENABLED / WEBUI_ENABLED / MONITOR_ENABLED）
-```
-
-## 示例数据模板
-
-本仓库在根目录以 git submodule 形式附带了一套开源的**数据模板集**：[`botler-agent-app`](https://github.com/crossoverJie/botler-agent-app)。它包含 4 个开箱即用的数据子项目的**格式与约定**（非真实数据）——`cook`（饮食/营养记录）、`daily-log`（日常记录）、`ledger`（个人记账）、`travel`（旅行见闻）。每个子项目都带有说明其 schema 的 `AGENTS.md` 以及合成的 `*.sample.json` 示例文件。
-
-> 根目录下的 `botler-agent-app` submodule **仅用于展示/发现**：botler-agent 读取的是独立的 `DATA_ROOT`，并不读取框架仓库内的这个 submodule。要把模板真正用起来，需把 `botler-agent-app` 克隆进你自己的 `DATA_ROOT`。
-
-带 submodule 一起克隆：
-
-```bash
-git clone --recurse-submodules <本仓库>
-# 或者普通克隆后：
-git submodule update --init --recursive
-```
-
-把它作为你的数据根目录使用（botler-agent 运行时会加载每个子项目的 `AGENTS.md`）：
-
-```bash
-export DATA_ROOT=/path/to/botler-agent-app   # 或只复制你需要的子项目文件夹到这里
-botler
-```
-
-各子项目的 schema 与定制说明见 [`botler-agent-app/README.md`](botler-agent-app/README.md)。
-
-## 架构
-
-```
+```text
 Telegram / 飞书 / 微信（iLink）
       │  消息
       ▼
- channel adapter ──► Dispatcher（去重 + 顺序队列，串行化写操作）
+ Channel Adapter ──► Dispatcher（5 分钟去重 + 串行队列，避免并发写冲突）
                         │
                         ▼
                   Runner（两阶段：路由 → 执行）
-                        ├─ ① 路由：判断消息属于哪个子项目（或 __scheduler__）；模糊则让用户说清楚
-                        ├─ ② 执行：system prompt 按需拼接该子项目的 AGENTS.md
-                        ├─ model（anthropic 或自定义 OpenAI-completions / anthropic-messages 网关）
-                        └─ 工具 read / write / edit / run / schedule（白名单目录；run 仅限项目内脚本；schedule 只写 schedules.json；IM 执行额外加入 clear_conversation_context）
+                        ├─ ① 路由：基于轻量摘要判断目标子项目（或 __scheduler__）
+                        ├─ ② 执行：新建独立 Agent + 按需注入子项目 AGENTS.md + 受控工具集
                         │
                         ▼
-                  读/写 DATA_ROOT 下各子项目（每个子项目自带 AGENTS.md 描述约定）
+                  Validator（校验所有数据 JSON 语法合法，失败则自愈修复一次）
                         │
                         ▼
-                  Validator（校验所有数据 JSON 是合法 JSON，失败则自愈重试）
+                  Git Commit（遍历 DATA_ROOT 下各独立 Git 仓库，有改动才提交；可选 push）
                         │
-                        ▼
-                  Git commit（遍历 DATA_ROOT 下各独立 git 仓库，有改动才提交）
-                        │
-                        └──► 最终文本回复（微信还会发送图片）
+                        └──► 文本回复（微信渠道支持同时发送图片）
 
-Scheduler ──► dispatch(schedule.message) ──►（同上流水线）
-   └─ 若该条目带 recipient：deliver({text,images}, recipient) → 主渠道 → 兜底 telegram → feishu → wechat
+Scheduler ──► dispatch(schedule.message) ──► deliver() 推送（主渠道 → telegram → feishu → wechat 兜底）
 ```
 
-### 模块职责
+- **应用与数据分离**：框架代码、密钥与 `DATA_ROOT` 物理隔离，数据目录内只有纯数据子项目。
+- **严格路径白名单**：`safePath()` 仅放行 `DATA_ROOT` 下的一级子目录，并对最深已存在祖先执行 `realpath` 校验以防止符号链接逃逸。
+- **禁止任意 Shell**：`run` 仅允许直接执行白名单项目内已有的 `.py`/`.js`/`.mjs` 脚本（不经 shell，60s 超时）；`schedule` 仅读写固定的 `schedules.json`；`clear_conversation_context` 仅重置当前 IM 会话窗口。
 
-| 文件 | 职责 |
-|------|------|
-| `src/index.ts` | 入口：位置参数 → CLI / 微信 CLI 子命令；否则按 `.env` 启动渠道与服务 |
-| `src/init.ts` | 初始化 `~/.botler-agent/`（.env + providers.json + system-prompt.md 模板）；已存在的文件不覆盖 |
-| `src/config.ts` | 两级 `.env` 加载（用户级 > 源码级）+ providers.json + `CONFIG` + `USER_CONFIG_DIR` |
-| `src/dispatcher.ts` | 去重 + 顺序队列 + 校验重试 + 提交编排（**绝不 reject**）+ 任务日志追加 |
-| `src/runner.ts` | 两阶段路由 + new Agent + 收集最终回复 + 工具轮次上限 |
-| `src/providers.ts` | 把自定义供应商配置构建成 pi-ai `Provider`（openai-completions / anthropic-messages） |
-| `src/prompts/system-prompt.ts` | 内置通用默认提示词 + 路由提示词 + `loadSystemPrompt()`（按需加载，注入占位符） |
-| `src/tools/paths.ts` | **安全边界**：`safePath()` 白名单校验 + `projectOf()` |
-| `src/tools/{read,write,edit,run,schedule}.ts` | 五个 DATA_ROOT `AgentTool`；read/write/edit/run 经 `safePath` 校验（run 仅限项目内 python3/node 脚本）；`schedule` 管理 `schedules.json`（固定文件、无路径参数） |
-| `src/tools/clear-conversation.ts` | IM-only 会话控制 `AgentTool`；通过 `task-context` 清空当前任务的会话，不触碰 `DATA_ROOT`，无路径参数 |
-| `src/tools/task-context.ts` | 模块级每任务上下文；为 `schedule` 注入消息发送者，为 `clear_conversation_context` 注入当前会话 key |
-| `src/safety/validate.ts` | 写后校验所有数据 JSON 合法（兜 edit 破坏语法），返回自包含的 `fix` 指令 |
-| `src/safety/git.ts` | 遍历 DATA_ROOT 子项目各自 commit（可选 push） |
-| `src/scheduler/{types,store,engine,cron}.ts` | schedules.json 的 schema + 校验/原子存储、进程内触发循环（watermark + `nextFireEpoch`），saved 监听器使写入立即唤醒循环 |
-| `src/push/{types,contacts,deliver}.ts` | 推送类型；每渠道已知地址存储（`contacts.json`）；`deliver()` 主渠道发送 + `telegram → feishu → wechat` 兜底 |
-| `src/logging/{types,collect,store}.ts` | 每任务 JSONL 日志（`task-logs/`），供 WebUI 使用 |
-| `src/monitor/{stats,health}.ts` | 进程内计数器 + 本地健康/指标服务（`/healthz`、`/metrics`、`/healthz/history`） |
-| `src/webui/server.ts` | 本地任务日志 WebUI（仅绑定 `127.0.0.1`） |
-| `src/channels/allowlist.ts` | Telegram / 飞书共用的发送者白名单助手（微信有独立主号 + 额外发送者门控） |
-| `src/channels/{telegram,feishu}.ts` | 渠道适配：grammy 长轮询 / 飞书 webhook（含解密） |
-| `src/channels/wechat/*` | 微信 iLink 渠道：扫码登录（`login.ts`）、长轮询监听（`monitor.ts`）、媒体发送/上传、context_token 持久化（`context.ts`）、主号续期提醒循环（`reminder.ts`） |
+## 核心功能速览
 
-## 配置目录 `~/.botler-agent/`
-
-| 文件 | 作用 |
-|------|------|
-| `.env` | 用户级配置（`DATA_ROOT`、模型、渠道凭据、`GIT_PUSH`、`SCHEDULER_ENABLED`、`WEBUI_ENABLED`、`MONITOR_ENABLED` 等），权限 600 |
-| `providers.json` | 自定义模型供应商（OpenAI-completions / Anthropic-messages 网关）：每个 provider 含 api / baseUrl / apiKey / models |
-| `system-prompt.md` | 外置系统提示词，支持 `__DATA_ROOT__` / `__PROJECTS__` / `__PROJECT_CONTEXT__` / `__TODAY__` 占位符 |
-| `schedules.json` | 定时任务配置（外置，与 providers.json 同机制）；由聊天、WebUI 或手改生成 |
-| `contacts.json` | 每渠道已知地址存储（微信 context_token + 已记录地址），供推送使用 |
-| `task-logs/` | 每日 JSONL 任务日志（供 WebUI 使用） |
-| `wechat/account.json` | 微信 iLink 登录凭据（切勿提交） |
-
-配置加载优先级（从高到低）：
-
-```
-进程环境变量  >  ~/.botler-agent/.env  >  源码 .env（开发回退）  >  内置默认值
-```
-
-可用 `BOTLER_CONFIG_DIR` 覆盖 `~/.botler-agent` 位置（测试 / 多套配置）。
-
-### 自定义模型供应商（`providers.json`）
-
-自定义 OpenAI-completions / Anthropic-messages 兼容网关（自建 / 内部端点，如自建 OpenAI-completions 网关、火山方舟 ark 编码端点）定义在 `~/.botler-agent/providers.json`（`botler init` 会生成模板）。它是供应商元数据的主配置源；文件缺失时，旧版 `CUSTOM_BASE_URL` / `CUSTOM_API_KEY` 环境变量仍可作为兜底。
-
-`api` 字段按供应商选择通信协议：`"openai-completions"`（默认）或 `"anthropic-messages"`。
-
-```json
-{
-  "providers": {
-    "custom": {
-      "api": "openai-completions",
-      "baseUrl": "https://your-gateway.example.com/v1",
-      "apiKey": "sk-…",
-      "models": [
-        { "id": "your-model-pro", "name": "Your Model Pro", "reasoning": true, "contextWindow": 1048576, "maxTokens": 393216 },
-        { "id": "your-model-flash", "name": "Your Model Flash", "reasoning": false, "contextWindow": 1048576, "maxTokens": 393216 }
-      ]
-    },
-    "ark": {
-      "api": "anthropic-messages",
-      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding",
-      "apiKey": "sk-…",
-      "models": [
-        { "id": "ark-code-latest", "name": "…", "reasoning": false, "contextWindow": 524288, "maxTokens": 32768 }
-      ]
-    }
-  }
-}
-```
-
-- **选择模型**：在 `.env` 里把 `PI_PROVIDER` 设为某个 provider id、`PI_MODEL` 设为其中某个模型 id，然后重启——模型按进程缓存。
-- **新增供应商 / 模型**：只需编辑本文件，无需改框架代码。格式有误的条目会被跳过并告警。
-- **`api`**：`"openai-completions"`（OpenAI Chat Completions，默认）或 `"anthropic-messages"`（Anthropic Messages API，SDK 会在 baseUrl 后追加 `/v1/messages`）。
-- **模型字段**：`id`（发给网关的模型 id）、`name`、`reasoning`（是否支持思考）、`contextWindow`（上下文 token 数）、`maxTokens`（最大输出 token 数）。
-- **内置 anthropic**：设 `PI_PROVIDER=anthropic`，用 `ANTHROPIC_API_KEY` 或 `ANTHROPIC_AUTH_TOKEN` 鉴权即可（无需 providers.json 条目）。
-
-### 自定义系统提示词
-
-系统提示词外置后，你（或 AI 助手）可以按自己项目的背景定制：
-
-1. `botler init` 生成 `~/.botler-agent/system-prompt.md`（默认通用模板）。
-2. 把模板替换成你自己数据子项目的约定（文件结构、操作规则等），保留 `__DATA_ROOT__` / `__PROJECTS__` / `__PROJECT_CONTEXT__` / `__TODAY__` 占位符。
-3. 也可直接让 AI 助手生成，例如：
-
-   > 我的 botler-agent 数据目录下有以下子项目：`notes/`（每日笔记）、`vocab/`（生词本）。
-   > 请写一份 `~/.botler-agent/system-prompt.md`：说明每个子项目的数据文件结构与操作规则，
-   > 遵循「先 read 再 write、保持 JSON 合法、字段类型一致、写后中文汇报」，并保留 `__DATA_ROOT__` / `__PROJECTS__` / `__PROJECT_CONTEXT__` / `__TODAY__` 占位符。
-
-> **安全边界不因提示词改变**：白名单目录、无 bash 等由代码强制，提示词内容无法突破工具边界。
-
-## 渠道
-
-- **Telegram**（`grammy`，长轮询）：最简单，首选。需要 `TELEGRAM_BOT_TOKEN`；大陆网络下需配置 `TG_PROXY` 才能连接 API。可设置 `TELEGRAM_ALLOW_FROM`（逗号分隔的 Telegram 用户 id 或用户名）限制发送者；留空则全部放行。
-- **飞书**（事件订阅 webhook，含解密）：需要 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`；可选 `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY`，监听 `FEISHU_PORT`（默认 3000）。可设置 `FEISHU_ALLOW_FROM`（逗号分隔的发送者 `open_id`/`user_id`/`union_id` 或 chat id）限制发送者；留空则全部放行。
-- **微信（iLink / ClawBot 官方 Bot API）**：私聊渠道。先用 `botler wechat-login` 登录（终端打印二维码，用微信扫码——凭据存入 `~/.botler-agent/wechat/account.json`），再设 `WECHAT_ENABLED=1` 启用。账号主号（扫码者）始终允许；`WECHAT_ALLOW_FROM` 可额外放行 `ilink_user_id`。续期提醒（`WECHAT_REMINDER_HOURS`）会在主号 24h `context_token` 窗口临近过期前提醒其刷新。
-  - **入站图片即视觉输入**：微信可接收你发来的图片，解码后作为视觉输入喂给模型，并把原图持久化到 `DATA_ROOT/<project>/photos/`。由于微信「选图即发、文字后到」，入站图片会在一个短暂窗口内暂存（`WECHAT_IMAGE_BATCH_SECONDS`，默认 60s；设 `0` 关闭），让随后补发的文字作为同一条任务的描述合并进入；窗口内的多张图片也会合并。若当前模型无法读图，代理会用中文回复，请你补一句文字说明。
-  - **问候短路**：仅含问候（如 你好 / hi）的消息会跳过路由 LLM 调用，直接给出一份零开销的中文欢迎语，列出当前可用子项目。
-  - **上下文重置**：当用户明确要求新任务或忽略/重置上文时，路由模型或执行 Agent 会清空共享的最近对话窗口。纯重置命令本身不写入历史。
-
-只有微信渠道会发送图片；其他渠道仅发文本（回复中的图片 markdown 会被去除）。
-
-## 调度器（`schedules.json`）
-
-设 `SCHEDULER_ENABLED=1` 运行进程内调度器。每个条目触发时进入 `dispatch`（绕过去重），若设置了 `recipient` 还会把结果回推给用户。条目可由聊天（`schedule` 工具）、WebUI 或手改 `schedules.json` 创建——都是同一份存储，写入会立即唤醒触发循环。
-
-Schema——`cron` / `interval` / `at` / `once` 四选一：
-
-```json
-{
-  "schedules": [
-    {
-      "id": "morning-water",
-      "enabled": true,
-      "cron": "0 8 * * *",
-      "timezone": "Asia/Shanghai",
-      "message": "提醒我该喝水了",
-      "project": "my-project",
-      "recipient": { "source": "wechat", "userId": "wxid_xxx" },
-      "retry": { "max": 1, "backoffMs": 60000 },
-      "silentHours": { "from": "23:00", "to": "07:00" }
-    },
-    {
-      "id": "workday-standup",
-      "enabled": true,
-      "cron": "0 9,18 * * *",
-      "timezone": "Asia/Shanghai",
-      "message": "提醒我复盘今天的工作",
-      "holidayMode": "workday",
-      "recipient": { "source": "wechat", "userId": "wxid_xxx" }
-    }
-  ]
-}
-```
-
-- `cron`：5 字段表达式（`分 时 日 月 周`）。
-- `interval`：简单 `"5m"` / `"2h"` / `"1d"`（按分钟粒度、对齐墙钟）。
-- `at`：每日固定 `"HH:MM"`（按 `timezone` 本地时间）。
-- `once`：一次性绝对时间，ISO 8601 格式（如 `"2026-08-20T22:00:00+08:00"` 或 `"2026-08-20T14:00:00Z"`）。在那一瞬间**只触发一次**，之后永久失效。`silentHours` 对此类**有意不生效**——一次性提醒是用户指定的精确时刻。
-- `timezone`：IANA 时区；默认 `Asia/Shanghai`。
-- `message`：触发时发回给 Agent 的指令（走正常路由/执行）。
-- `project`：可选路由提示；有效的子项目名可跳过路由 LLM 调用。
-- `recipient`：可选；设置后触发结果通过 `deliver()` 推送——先主渠道，再按 `telegram → feishu → wechat` 兜底（仅在已配置且有已记录联系地址的渠道上）。微信推送会去掉 markdown，且是唯一同时发送图片的渠道。
-- `retry` / `silentHours`：可选失败重试与免打扰窗口（落在窗口内的触发延后到窗口结束）。
-- `holidayMode: "workday"`：**中国法定工作日门控**，仅作用于 `cron` / `interval` / `at` 触发。该条目**只在法定工作日触发**——跳过法定假日（法定假日），并在调休补班日（补班）正常触发。cron 的日期字段被忽略，只使用「时刻」（`hour:minute`），因此 `0 9,18 * * *` 会在每个工作日的 09:00 与 18:00 各触发一次。不可与 `once` 组合。日历在启动 + 每 24h 从 `BOTLER_HOLIDAY_API_URL` 拉取并缓存到 `BOTLER_HOLIDAYS_FILE`；任何拉取失败都保留缓存数据，并退化为普通周一至周五。
-
-**路由**：创建/管理定时任务的消息（或含中文关键词 定时 / 提醒 / 日程）会路由到虚拟项目 `__scheduler__`；`schedule` 工具属于 `dataTools`，因此在任何执行上下文中都可用。非调度项目的 IM 执行任务还会额外获得 `clear_conversation_context`。
-
-## WebUI
-
-设 `WEBUI_ENABLED=1` 启动本地任务日志 WebUI（仅绑定 `127.0.0.1`，端口 `WEBUI_PORT`，默认 8900）。它读取 `task-logs/` 下每日 JSONL 日志，含监控视图（数据与 `/metrics` 一致）。唯一的写操作是删除任务日志。
+- **多消息渠道**（[详情](docs/configuration-zh.md#消息渠道telegram--飞书--微信)）：支持 **Telegram**（长轮询 + 代理）、**飞书**（事件 Webhook 含解密）与 **微信 iLink**（扫码登录、入站图片视觉识别与图文批处理合并、出站发图、24h 会话续期提醒），内置零成本问候短路与最近对话上下文。
+- **模型网关与自动容灾**（[详情](docs/configuration-zh.md#自定义模型供应商providersjson)）：内置 `anthropic` 之外，可在 `providers.json` 中配置任意 `openai-completions` / `anthropic-messages` 兼容网关，支持流式中断重试与多供应商优先级 Fallback 链。
+- **定时调度器**（[详情](docs/configuration-zh.md#定时调度器schedulesjson)）：支持 `cron` / `interval` / `at` / `once` 四类触发器、免打扰时间窗、失败重试、多渠道兜底推送，以及中国法定工作日门控（`holidayMode: "workday"`，自动跳过法定节假日并识别调休补班）。
+- **WebUI 与监控**（[详情](docs/configuration-zh.md#webui-与健康度监控)）：提供本地任务日志与 Token 统计界面（`127.0.0.1:8900`）及 Prometheus/JSON 健康度端点（`127.0.0.1:8899` `/healthz`、`/metrics`）。
 
 <p align="center">
   <img src="docs/images/webui-tasklog.png" alt="botler-agent WebUI 任务日志界面" width="85%">
 </p>
 
-## 监控
+## 配置与相关文档
 
-默认启动一个本地健康/指标服务，监听 `127.0.0.1:MONITOR_PORT`（默认 8899，避开 3000=飞书 / 8900=webui），暴露 `/healthz`（JSON）、`/metrics`（Prometheus 文本）、`/healthz/history`（趋势采样）。设 `MONITOR_ENABLED=0` 只关闭独立 scrape 端口；WebUI 监控视图由 WebUI 进程自身采样，不受影响。
+`~/.botler-agent/`（可用 `BOTLER_CONFIG_DIR` 覆盖）核心文件速览：
 
-## 安全边界
-
-- **应用与数据分离**：框架（本仓库，含 `.env`）与数据目录（`DATA_ROOT`）是两个独立位置。数据目录里只有被操作的项目，不含源码或密钥。
-- **路径白名单**：`safePath()` 只放行 `DATA_ROOT` 下的一级子目录；用 `root + sep` 前缀匹配防止 `/agent2` 误入，并对最深已存在祖先做 `realpath` 防止符号链接逃逸。
-- **不提供任意 shell**：只读/写/edit + 受控 run（仅限白名单项目内已存在的 python3/node 脚本，不经 shell、参数直传、超时 60s）+ 受控 schedule（只写固定的 `schedules.json`、无文件路径参数）。IM 执行额外只在当前会话暴露 `clear_conversation_context`，且不触碰 `DATA_ROOT`。git 提交由胶水层用 `execFileSync` 完成。
-
-## 目录结构
-
-```
-src/
-├── index.ts                 # 入口：CLI / 微信 CLI 子命令 / 按 .env 启动渠道与服务
-├── init.ts                  # 初始化 ~/.botler-agent/（.env + providers.json + system-prompt.md 模板）
-├── config.ts                # 两级 .env 加载 + providers.json + CONFIG（DATA_ROOT / 模型 / 渠道 / 调度器 / WebUI / 监控）
-├── dispatcher.ts            # 去重 + 顺序队列 + 校验重试 + 提交编排（绝不 reject）
-├── runner.ts                # 两阶段路由 + new Agent + 收集最终回复 + 工具轮次上限
-├── providers.ts             # 构建自定义 OpenAI-completions / anthropic-messages 供应商
-├── prompts/system-prompt.ts # 内置默认提示词 + 路由提示词 + loadSystemPrompt()（按需加载）
-├── tools/
-│   ├── index.ts             # 注册 read/write/edit/run/schedule + clear_conversation_context
-│   ├── paths.ts             # safePath 白名单校验 + projectOf
-│   ├── read.ts / write.ts / edit.ts / run.ts / schedule.ts
-│   └── clear-conversation.ts # IM-only 会话上下文清理
-│   └── task-context.ts      # 每任务上下文（把消息发送者注入为推送对象）
-├── safety/
-│   ├── validate.ts          # 写后校验所有数据 JSON 合法（兜 edit 破坏语法）
-│   └── git.ts               # 遍历 DATA_ROOT 子项目各自 commit（可选 push）
-├── scheduler/
-│   ├── types.ts / store.ts / engine.ts / cron.ts   # schedules.json 的 schema、原子存储、进程内触发循环
-├── push/
-│   ├── types.ts / contacts.ts / deliver.ts         # 推送类型、每渠道已知地址存储、带兜底的推送
-├── logging/
-│   ├── types.ts / collect.ts / store.ts            # 供 WebUI 使用的每任务 JSONL 日志
-├── monitor/
-│   ├── stats.ts / health.ts                        # 进程内计数器 + 本地健康/指标服务
-├── webui/
-│   └── server.ts            # 本地任务日志 WebUI（仅绑定 127.0.0.1）
-└── channels/
-    ├── telegram.ts          # grammy + 长轮询
-    ├── feishu.ts            # 飞书事件订阅 webhook（含解密）
-    └── wechat/              # 微信 iLink：登录 / 长轮询监听 / 媒体 / context_token / 续期提醒
-```
-
-## 环境变量
-
-| 变量 | 说明 |
+| 路径 | 作用 |
 |------|------|
-| `DATA_ROOT` | 被 Agent 操作的数据根目录（白名单 = 其一级子目录） |
-| `BOTLER_CONFIG_DIR` | 覆盖用户级配置目录（默认 `~/.botler-agent`） |
-| `PI_PROVIDER` | pi-ai provider id（`anthropic` 或 `providers.json` 里定义的 provider id） |
-| `PI_MODEL` | 模型 id（如 `claude-sonnet-4-5` 或 `your-model-flash`） |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | 内置 anthropic 鉴权（当 `PI_PROVIDER=anthropic`） |
-| `~/.botler-agent/providers.json` | 自定义 OpenAI-completions / Anthropic-messages 网关（每个 provider 含 baseUrl / apiKey / models）；旧版兜底：`CUSTOM_BASE_URL` / `CUSTOM_API_KEY` 环境变量 |
-| `TELEGRAM_BOT_TOKEN` | Telegram BotFather token；留空则不启动 Telegram |
-| `TG_PROXY` | 大陆网络下 Telegram API 需要代理（如 `http://127.0.0.1:7890`） |
-| `TELEGRAM_ALLOW_FROM` | 可选逗号分隔的 Telegram 发送者白名单（用户 id 或用户名）；留空则全部放行 |
-| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书应用凭据；留空则不启动飞书 |
-| `FEISHU_VERIFICATION_TOKEN` | 飞书事件订阅 URL 校验 token（可选） |
-| `FEISHU_ENCRYPT_KEY` | 飞书消息加密 key；不填则只处理明文事件 |
-| `FEISHU_PORT` | 飞书 webhook 监听端口，默认 `3000` |
-| `FEISHU_ALLOW_FROM` | 可选逗号分隔的飞书发送者白名单（`open_id`/`user_id`/`union_id` 或 chat id）；留空则全部放行 |
-| `WECHAT_ENABLED` | `=1` 启动微信 iLink 渠道（需先完成 `wechat-login`） |
-| `WECHAT_ALLOW_FROM` | 可选逗号分隔的额外 `ilink_user_id` 白名单（主号始终允许） |
-| `WECHAT_REMINDER_HOURS` | 微信续期提醒阈值：`0`=关闭，`1`-`24`=主号静默 N 小时后提醒（默认 23） |
-| `WECHAT_IMAGE_BATCH_SECONDS` | 微信入站图片批处理窗口（秒）：`0`=关闭批处理（立即分发），正整数则短暂暂存图片，让随后补发的文字合并为同一条任务（默认 60） |
-| `GIT_PUSH` | `=1` 时提交后额外 git push（默认关，push 失败仅告警）；容器内还需 ssh 与凭据，见 [容器内 git push](docs/docker-git-push.md) |
-| `WEBUI_ENABLED` | `=1` 启动本地任务日志 WebUI（仅绑定 127.0.0.1） |
-| `WEBUI_PORT` | WebUI 监听端口，默认 `8900` |
-| `BOTLER_LOG_DIR` | 任务日志 JSONL 目录（默认 `~/.botler-agent/task-logs/`） |
-| `MONITOR_ENABLED` | `!=0` 启用本地健康/指标服务（默认开；`=0` 仅关闭独立端口） |
-| `MONITOR_PORT` | 健康/指标服务端口，默认 `8899`（避开 3000 / 8900） |
-| `SCHEDULER_ENABLED` | `=1` 运行进程内调度器，触发 `schedules.json` 条目 |
-| `BOTLER_SCHEDULES_FILE` | 调度配置文件（默认 `~/.botler-agent/schedules.json`） |
-| `BOTLER_HOLIDAY_API_URL` | `holidayMode:"workday"` 用的中国法定节假日日历源；`{year}` 占位符会被替换（默认 `https://raw.githubusercontent.com/NateScarlet/holiday-cn/master/{year}.json`） |
-| `BOTLER_HOLIDAYS_FILE` | 缓存的节假日日历文件（默认 `~/.botler-agent/holidays.json`） |
-| `MAX_TOOL_TURNS` | 单任务最大工具轮次（默认 20；临近上限时提示收尾，达到上限强制停止） |
-| `CONVERSATION_CONTEXT_ENABLED` | `=0` 关闭最近对话上下文注入（默认开启） |
-| `CONVERSATION_CONTEXT_TURNS` | 每个 IM 会话保留的最近可见轮数（默认 5；`0` 关闭注入） |
-| `CONVERSATION_TURN_MAX_CHARS` | 每条存储的用户/助手消息最大字符数（默认 4000） |
-| `CONVERSATION_CONTEXT_MAX_CHARS` | 注入上下文的全窗口字符上限；超限时从最旧轮开始丢弃（默认 12000） |
+| `.env` | 核心配置（`DATA_ROOT`、`PI_PROVIDER`/`PI_MODEL`、渠道凭据与功能开关）——参考 [`.env.example`](.env.example) |
+| `providers.json` | 自定义模型网关、识图开关与多供应商 Fallback 优先级 |
+| `system-prompt.md` | 可定制的全局系统提示词（支持 `__DATA_ROOT__` / `__PROJECTS__` / `__PROJECT_CONTEXT__` / `__TODAY__`） |
+| `schedules.json` | 定时任务存储（可通过聊天指令、WebUI 或手改维护） |
+| `contacts.json` / `wechat/` / `task-logs/` | 推送联系地址、微信登录凭据与按日 JSONL 任务日志 |
 
-## 工作原理
-
-### 一次任务的生命周期
-
-1. 渠道收到消息 → `dispatch(text, { id, source, recipient })`。
-2. **去重**：同一 `id`（如 `chatId:messageId`）在 5 分钟窗口内重复出现会被忽略。
-3. **顺序队列**：所有任务串行执行，避免并发改坏同一文件。
-4. `runTask` 两阶段：先路由判断消息属于哪个子项目（或 `__scheduler__`；无法确定则回复让用户说清楚），再新建独立 Agent、按需拼接该子项目的 `AGENTS.md` 约定，执行任务。`MAX_TOOL_TURNS` 上限约束执行：临近上限时提示模型收尾，达到上限则强制停止并给出诊断信息。
-5. 只读任务直接返回；写任务先 `validateState()`（所有数据 JSON 是否合法）：
-   - 通过 → `commitIfChanged()` 遍历提交被改动的子项目，追加任务日志，返回结果。
-   - 不通过 → 用**自包含修正指令**再跑一次新 Agent 原地修复（不新增记录）；仍失败则返回错误提示且不提交。
-6. 每次任务都会追加一条 JSONL 任务日志（`task-logs/`），供 WebUI/监控使用，无论成败。
-
-### 调度与推送
-
-- `SCHEDULER_ENABLED=1` 启动触发循环；到期条目以 `source: "scheduler"`、id 形如 `schedule:<id>:<epoch>` 进入 dispatch（绕过去重）。
-- 若条目带 `recipient`，结果通过 `deliver()` 推送：先主渠道，再按 `telegram → feishu → wechat` 兜底（仅在已配置且有已记录联系地址的渠道上）。
-
-### 数据文件约定
-
-框架不硬编码任何数据 schema。每个数据子项目根目录的 `AGENTS.md`（或 `CLAUDE.md`，或 `CODEBUDDY.md`——取最先找到者）是权威约定，路由确定子项目后按需拼进 system prompt。`write` 工具保证序列化合法 JSON；`validate.ts` 只兜 `edit` 破坏 JSON 语法的情况。
-
-## 脚本
-
-实际分发的 CLI 是 Go 二进制（`botler init` / `botler "消息"` / `botler`，见[安装](#安装)）。
-下面的 npm 脚本只驱动 `src/` 下的 v1 TypeScript 参考实现——它仅用于 parity 差分测试与 Go 测试套件。
-
-| 命令 | 说明 |
-|------|------|
-| `npm start` | 运行 v1 TypeScript 实现（CLI 或常驻渠道） |
-| `npm run dev` | 同 `npm start` |
-| `npm run init` | 初始化 `~/.botler-agent/`（等价于 `botler init`） |
-| `npm run typecheck` | `tsc --noEmit` 类型检查 |
-| `npm run cli` | 同 `npm start` |
-| `npm test` | `node:test` 测试套件（调度 cron + 存储） |
+- **[配置与参考手册](docs/configuration-zh.md)** — `providers.json`、`schedules.json`、各渠道细节、系统提示词定制与全量环境变量表
+- **[容器内 `GIT_PUSH=1` 部署指南](docs/docker-git-push.md)** — Docker Compose 编排、SSH 密钥挂载与 NAS 权限说明
+- **[`AGENTS.md`](AGENTS.md)** — 代码库架构、Go 模块划分、测试命令与开发者说明
 
 ## 许可证
 
-[AGPL-3.0](LICENSE)（GNU Affero General Public License v3）。第三方依赖的许可证声明见 [`THIRD-PARTY-LICENSES`](THIRD-PARTY-LICENSES)。
+[AGPL-3.0](LICENSE)（GNU Affero General Public License v3）。第三方依赖许可证声明见 [`THIRD-PARTY-LICENSES`](THIRD-PARTY-LICENSES)。
 
-> **AGPL 提示**：若你将**修改过**的 botler-agent 作为网络服务运行（如公开的机器人），必须向与之交互的用户提供其源代码。
-
-## 相关文档
-
-- Docker 部署（NAS / 容器），含 `GIT_PUSH=1`：[docs/docker-git-push.md](docs/docker-git-push.md)
-- 给 AI 编码助手的仓库说明：[`AGENTS.md`](AGENTS.md)
-- 环境变量模板：[`.env.example`](.env.example)
+> **AGPL 提示**：若你将**修改过**的 botler-agent 作为网络服务运行（如公开机器人），须向与之交互的用户提供相应源代码。
