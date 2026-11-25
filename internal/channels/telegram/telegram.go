@@ -99,10 +99,13 @@ func Register(ch *Channel) {
 func (c *Channel) Configured() bool { return c.token != "" }
 
 // Send delivers text to one chat id (push.Sender). Images are not supported by this channel.
-func (c *Channel) Send(address string, p push.Payload, withImages bool) error {
-	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+func (c *Channel) Send(ctx context.Context, address string, p push.Payload, withImages bool) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	return c.SendMessage(ctx, address, p.Text)
+	return c.SendMessage(sendCtx, address, p.Text)
 }
 
 // SendMessage posts a plain-text message to a chat id.

@@ -425,7 +425,7 @@ func (e *Engine) fire(ctx context.Context, s Schedule, attempt int) {
 		text = s.Message
 	}
 	if s.Recipient != nil {
-		r := push.Deliver(push.Payload{Text: text, Images: res.Images}, *s.Recipient)
+		r := push.Deliver(ctx, push.Payload{Text: text, Images: res.Images}, *s.Recipient)
 		if !r.OK {
 			warnf("%s push failed: %s", s.ID, r.Error)
 		}

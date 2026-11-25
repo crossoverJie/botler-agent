@@ -171,7 +171,7 @@ type fakeSender struct {
 
 func (f fakeSender) Configured() bool { return true }
 
-func (f fakeSender) Send(address string, p push.Payload, _ bool) error {
+func (f fakeSender) Send(_ context.Context, address string, p push.Payload, _ bool) error {
 	if f.onSend != nil {
 		f.onSend(address, p)
 	}

@@ -11,8 +11,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
+	anthropicopt "github.com/anthropics/anthropic-sdk-go/option"
+	openaiopt "github.com/openai/openai-go/v3/option"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/adk/v2/model/anthropicmodel"
 	"google.golang.org/adk/v2/model/openaimodel"
@@ -24,6 +28,7 @@ import (
 // Runtime implements agentrt.Runtime on top of an adk-go model.LLM.
 type Runtime struct {
 	llm       model.LLM
+	provider  string
 	modelName string
 	maxTokens int
 	// vision declares whether the model accepts image input. When false, images are replaced by
@@ -31,15 +36,26 @@ type Runtime struct {
 	vision bool
 }
 
+// Describe returns "provider/model" (or just "model" when Provider was not set).
+func (r *Runtime) Describe() string {
+	if r.provider == "" {
+		return r.modelName
+	}
+	return r.provider + "/" + r.modelName
+}
+
 // nonVisionImagePlaceholder mirrors pi-ai's NON_VISION_USER_IMAGE_PLACEHOLDER.
 const nonVisionImagePlaceholder = "(image omitted: model does not support images)"
 
 // OpenAIConfig configures an OpenAI-compatible gateway.
 type OpenAIConfig struct {
-	BaseURL   string
-	APIKey    string
-	Model     string
-	MaxTokens int
+	Provider       string
+	BaseURL        string
+	APIKey         string
+	Model          string
+	MaxTokens      int
+	RequestTimeout time.Duration
+	HTTPClient     *http.Client
 	// Vision reports whether the model accepts image input (default true).
 	Vision bool
 }
@@ -48,38 +64,67 @@ type OpenAIConfig struct {
 // APIChatCompletions is set explicitly: adk-go's zero value is the Responses API, which most
 // self-hosted gateways do not implement.
 func NewOpenAI(ctx context.Context, cfg OpenAIConfig) (*Runtime, error) {
+	opts := []openaiopt.RequestOption{openaiopt.WithMaxRetries(0)}
+	if cfg.RequestTimeout > 0 {
+		opts = append(opts, openaiopt.WithRequestTimeout(cfg.RequestTimeout))
+	}
 	llm, err := openaimodel.NewModel(ctx, cfg.Model, &openaimodel.ClientConfig{
-		APIKey:  cfg.APIKey,
-		BaseURL: cfg.BaseURL,
-		API:     openaimodel.APIChatCompletions,
+		APIKey:     cfg.APIKey,
+		BaseURL:    cfg.BaseURL,
+		HTTPClient: cfg.HTTPClient,
+		Options:    opts,
+		API:        openaimodel.APIChatCompletions,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{llm: llm, modelName: cfg.Model, maxTokens: cfg.MaxTokens, vision: cfg.Vision}, nil
+	return &Runtime{
+		llm:       llm,
+		provider:  cfg.Provider,
+		modelName: cfg.Model,
+		maxTokens: cfg.MaxTokens,
+		vision:    cfg.Vision,
+	}, nil
 }
 
 // AnthropicConfig configures an Anthropic Messages endpoint (a custom base URL is supported).
 type AnthropicConfig struct {
-	BaseURL   string
-	APIKey    string
-	Model     string
-	MaxTokens int
+	Provider       string
+	BaseURL        string
+	APIKey         string
+	Model          string
+	MaxTokens      int
+	RequestTimeout time.Duration
+	HTTPClient     *http.Client
 	// Vision reports whether the model accepts image input (default true).
 	Vision bool
 }
 
 // NewAnthropic builds a runtime against an Anthropic Messages endpoint.
 func NewAnthropic(ctx context.Context, cfg AnthropicConfig) (*Runtime, error) {
+	zero := 0
+	var reqOpts []anthropicopt.RequestOption
+	if cfg.RequestTimeout > 0 {
+		reqOpts = append(reqOpts, anthropicopt.WithRequestTimeout(cfg.RequestTimeout))
+	}
 	llm, err := anthropicmodel.NewModel(ctx, cfg.Model, anthropicmodel.ClientConfig{
-		APIKey:    cfg.APIKey,
-		BaseURL:   cfg.BaseURL,
-		MaxTokens: cfg.MaxTokens,
+		APIKey:         cfg.APIKey,
+		BaseURL:        cfg.BaseURL,
+		HTTPClient:     cfg.HTTPClient,
+		MaxTokens:      cfg.MaxTokens,
+		MaxRetries:     &zero,
+		RequestOptions: reqOpts,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{llm: llm, modelName: cfg.Model, maxTokens: cfg.MaxTokens, vision: cfg.Vision}, nil
+	return &Runtime{
+		llm:       llm,
+		provider:  cfg.Provider,
+		modelName: cfg.Model,
+		maxTokens: cfg.MaxTokens,
+		vision:    cfg.Vision,
+	}, nil
 }
 
 // BuildContents converts agentrt messages into genai contents, replacing images with a text
@@ -274,7 +319,7 @@ func (r *Runtime) Complete(ctx context.Context, req agentrt.Request) (*agentrt.M
 		return nil, fmt.Errorf("adk: %s returned no response", r.modelName)
 	}
 	if errMessage != "" {
-		return nil, fmt.Errorf("%s", errMessage)
+		return nil, &agentrt.StreamError{Model: r.modelName, Message: errMessage}
 	}
 
 	out := &agentrt.Message{Role: agentrt.RoleAssistant}

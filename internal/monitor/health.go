@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,6 +58,7 @@ type Snapshot struct {
 	TotalFailed      int64                   `json:"totalFailed"`
 	StatusCounts     map[string]int64        `json:"statusCounts"`
 	ModelCache       ModelCache              `json:"modelCache"`
+	LLM              LLMSnapshot             `json:"llm"`
 	SchedulesTotal   int                     `json:"schedulesTotal"`
 	SchedulesEnabled int                     `json:"schedulesEnabled"`
 	NextFireAtSec    int64                   `json:"nextFireAtSec"`
@@ -120,6 +122,7 @@ func BuildSnapshot() Snapshot {
 	if state.ModelCacheQueries > 0 {
 		s.ModelCache.HitRate = float64(state.ModelCacheHits) / float64(state.ModelCacheQueries)
 	}
+	s.LLM = state.LLM
 	s.SchedulesTotal = state.SchedulesTotal
 	s.SchedulesEnabled = state.SchedulesEnabled
 	if state.NextFireAt > 0 {
@@ -167,6 +170,10 @@ func BuildMetrics() string {
 	emitMetric(&b, "botler_failures_total", "counter", "Failed tasks (error + validation-failed)", strconv.FormatInt(s.TotalFailed, 10), "")
 	emitMetric(&b, "botler_model_cache_queries_total", "counter", "Model resolution cache queries", strconv.FormatInt(s.ModelCache.Queries, 10), "")
 	emitMetric(&b, "botler_model_cache_hits_total", "counter", "Model resolution cache hits", strconv.FormatInt(s.ModelCache.Hits, 10), "")
+	raw := StatsSnapshot()
+	emitProviderModelCounter(&b, "botler_llm_retries_total", "Same-provider LLM call retries", raw.LLMRetries)
+	emitFallbackCounter(&b, "botler_llm_fallbacks_total", "LLM provider fallback switches", raw.LLMFallbacks)
+	emitProviderModelCounter(&b, "botler_llm_giveups_total", "LLM calls given up after exhausting retries/chain", raw.LLMGiveups)
 	for status, n := range s.StatusCounts {
 		emitMetric(&b, "botler_tasks_total", "counter", "Tasks by final status", strconv.FormatInt(n, 10), `{status="`+status+`"}`)
 	}
@@ -182,6 +189,42 @@ func BuildMetrics() string {
 		emitMetric(&b, "botler_channel_up", "gauge", "Channel online (1) or down (0)", v, `{channel="`+name+`"}`)
 	}
 	return b.String()
+}
+
+func emitProviderModelCounter(b *strings.Builder, name, help string, series map[LLMProviderModel]int64) {
+	b.WriteString("# HELP " + name + " " + help + "\n")
+	b.WriteString("# TYPE " + name + " counter\n")
+	keys := make([]LLMProviderModel, 0, len(series))
+	for k := range series {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Provider != keys[j].Provider {
+			return keys[i].Provider < keys[j].Provider
+		}
+		return keys[i].Model < keys[j].Model
+	})
+	for _, k := range keys {
+		b.WriteString(name + `{provider=` + strconv.Quote(k.Provider) + `,model=` + strconv.Quote(k.Model) + `} ` + strconv.FormatInt(series[k], 10) + "\n")
+	}
+}
+
+func emitFallbackCounter(b *strings.Builder, name, help string, series map[LLMFallbackPair]int64) {
+	b.WriteString("# HELP " + name + " " + help + "\n")
+	b.WriteString("# TYPE " + name + " counter\n")
+	keys := make([]LLMFallbackPair, 0, len(series))
+	for k := range series {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].From != keys[j].From {
+			return keys[i].From < keys[j].From
+		}
+		return keys[i].To < keys[j].To
+	})
+	for _, k := range keys {
+		b.WriteString(name + `{from=` + strconv.Quote(k.From) + `,to=` + strconv.Quote(k.To) + `} ` + strconv.FormatInt(series[k], 10) + "\n")
+	}
 }
 
 func u(v uint64) string { return strconv.FormatUint(v, 10) }

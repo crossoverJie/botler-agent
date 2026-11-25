@@ -30,6 +30,11 @@ botler-agent 代码强制，不因本文件内容而改变。
 -->
 `
 
+// providersTemplate scaffolds providers.json without optional fallback fields set so single-provider
+// users do not think `priority` is required. Optional per-provider fields supported by LoadProvidersFile:
+//   - "priority" (int): opt into the fallback chain in ascending order (smaller = higher priority).
+//   - "model" (string): model id used when this provider serves as a fallback (required when priority is set).
+//   - "fallback" (bool, default true): set false to exclude this provider from acting as a backup.
 const providersTemplate = `{
   "providers": {
     "custom": {

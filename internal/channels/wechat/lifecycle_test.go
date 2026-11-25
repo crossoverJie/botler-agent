@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/crossoverJie/botler-agent/internal/config"
 	"github.com/crossoverJie/botler-agent/internal/push"
@@ -214,7 +215,7 @@ type reminderClient struct {
 }
 
 func (r *reminderClient) Configured() bool { return true }
-func (r *reminderClient) Send(string, push.Payload, bool) error {
+func (r *reminderClient) Send(context.Context, string, push.Payload, bool) error {
 	atomic.AddInt32(&r.sends, 1)
 	if r.fail {
 		return errors.New("send failed")
@@ -250,7 +251,7 @@ func withReminderSender(t *testing.T) *reminderClient {
 type unavailableSender struct{}
 
 func (unavailableSender) Configured() bool { return false }
-func (unavailableSender) Send(string, push.Payload, bool) error {
+func (unavailableSender) Send(context.Context, string, push.Payload, bool) error {
 	return errors.New("unavailable")
 }
 
@@ -386,7 +387,7 @@ func TestPushSenderReportsMissingState(t *testing.T) {
 	if sender.Configured() {
 		t.Fatal("no account means not configured")
 	}
-	if err := sender.Send("owner", push.Payload{Text: "hi"}, false); err == nil ||
+	if err := sender.Send(context.Background(), "owner", push.Payload{Text: "hi"}, false); err == nil ||
 		!strings.Contains(err.Error(), "not configured") {
 		t.Fatalf("expected a not-configured error, got %v", err)
 	}
@@ -396,7 +397,7 @@ func TestPushSenderReportsMissingState(t *testing.T) {
 	if !sender.Configured() {
 		t.Fatal("a saved token means configured")
 	}
-	if err := sender.Send("someone", push.Payload{Text: "hi"}, false); err == nil ||
+	if err := sender.Send(context.Background(), "someone", push.Payload{Text: "hi"}, false); err == nil ||
 		!strings.Contains(err.Error(), "context_token") {
 		t.Fatalf("expected a missing-context error, got %v", err)
 	}
@@ -417,7 +418,7 @@ func TestPushSenderSendsStrippedText(t *testing.T) {
 	SaveAccount(AccountUpdate{Token: "tok", BaseURL: srv.URL, UserID: "owner"})
 	UpdateContext("owner", "ct")
 
-	if err := (pushSender{}).Send("owner", push.Payload{Text: "**bold** text"}, false); err != nil {
+	if err := (pushSender{}).Send(context.Background(), "owner", push.Payload{Text: "**bold** text"}, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(bodies) == 0 {
@@ -439,11 +440,35 @@ func TestPushSenderImageWithoutLocalFileFails(t *testing.T) {
 	SaveAccount(AccountUpdate{Token: "tok", BaseURL: "http://127.0.0.1:1", UserID: "owner"})
 	UpdateContext("owner", "ct")
 
-	err := (pushSender{}).Send("owner", push.Payload{
+	err := (pushSender{}).Send(context.Background(), "owner", push.Payload{
 		Text:   "",
 		Images: []string{filepath.Join(t.TempDir(), "missing.png")},
 	}, true)
 	if err == nil {
 		t.Fatal("expected a read error for a missing image")
+	}
+}
+
+func TestPushSenderPropagatesCallerContextCancellation(t *testing.T) {
+	unblock := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-unblock
+	}))
+	defer srv.Close()
+	defer close(unblock)
+
+	withWechatConfig(t, nil)
+	SaveAccount(AccountUpdate{Token: "tok", BaseURL: srv.URL, UserID: "owner"})
+	UpdateContext("owner", "ct")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := (pushSender{}).Send(ctx, "owner", push.Payload{Text: "notice"}, false)
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("pushSender.Send ignored caller ctx deadline (took %s)", elapsed)
 	}
 }

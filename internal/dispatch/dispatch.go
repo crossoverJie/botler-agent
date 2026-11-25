@@ -168,6 +168,15 @@ func Dispatch(ctx context.Context, message string, opts Options) (dispatchResult
 		}
 	}()
 
+	var n *notifier
+	if r := opts.Recipient; r != nil && isInteractiveSource(source) {
+		n = newNotifier(ctx, *r, config.C().RetryNotify)
+	}
+	if n != nil {
+		ctx = agentrt.WithRetryObserver(ctx, n.observe)
+		defer n.close()
+	}
+
 	res, err := runner.RunTask(ctx, message, &runner.LogContext{
 		TaskID:        taskID,
 		Source:        source,
@@ -208,7 +217,8 @@ func Dispatch(ctx context.Context, message string, opts Options) (dispatchResult
 	validation := safety.ValidateState(log.Projects)
 	if !validation.OK {
 		fmt.Fprintf(os.Stderr, "[dispatch] Validation failed; self-heal retry: %s\n", validation.Fix)
-		heal, healErr := runner.RunTask(ctx, validation.Fix, &runner.LogContext{
+		healCtx := agentrt.WithRetryObserver(ctx, nil)
+		heal, healErr := runner.RunTask(healCtx, validation.Fix, &runner.LogContext{
 			TaskID:       taskID,
 			Source:       source,
 			Phase:        logs.PhaseSelfHeal,
