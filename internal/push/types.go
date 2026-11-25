@@ -2,6 +2,8 @@
 // channel fails. It also stores the per-channel known contact addresses used by that fallback.
 package push
 
+import "context"
+
 // Source is a channel name.
 type Source string
 
@@ -27,12 +29,16 @@ type Payload struct {
 
 // Sender is implemented by each channel adapter and registered at startup, so push never
 // imports the channels (and the channels never import push's delivery logic).
+//
+// Contract: every Send implementation MUST propagate ctx to its underlying HTTP request (for
+// example via context.WithTimeout(ctx, channelTimeout)) rather than constructing a fresh root
+// context; dispatch's fixed 2s notice-drain bound depends on cancelling ctx to abort hung sends.
 type Sender interface {
 	// Configured reports whether the channel has enough credentials to send.
 	Configured() bool
 	// Send delivers the payload to one address. It must return an error on failure so the
 	// caller can fall back to another channel.
-	Send(address string, p Payload, withImages bool) error
+	Send(ctx context.Context, address string, p Payload, withImages bool) error
 }
 
 var senders = map[Source]Sender{}

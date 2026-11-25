@@ -7,11 +7,15 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	ilink "github.com/openilink/openilink-sdk-go"
 
 	"github.com/crossoverJie/botler-agent/internal/push"
 )
+
+// wechatSendTimeout bounds a proactive push send while still honouring caller cancellation.
+const wechatSendTimeout = 30 * time.Second
 
 var httpsURLRe = regexp.MustCompile(`(?i)^https://`)
 
@@ -67,7 +71,7 @@ type pushSender struct{}
 
 func (pushSender) Configured() bool { return ResolveAccount().Configured }
 
-func (pushSender) Send(address string, p push.Payload, withImages bool) error {
+func (pushSender) Send(ctx context.Context, address string, p push.Payload, withImages bool) error {
 	acct := ResolveAccount()
 	if !acct.Configured {
 		return errors.New("wechat: account not configured")
@@ -77,11 +81,15 @@ func (pushSender) Send(address string, p push.Payload, withImages bool) error {
 		return errors.New("wechat: no cached context_token for this user")
 	}
 	client := newClient(acct)
-	ctx := context.Background()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, wechatSendTimeout)
+	defer cancel()
 	if text := MarkdownToPlainText(p.Text); len(text) > 0 {
 		plain := strings.TrimSpace(text)
 		if plain != "" {
-			if err := sendText(ctx, client, address, plain, entry.Token); err != nil {
+			if err := sendText(sendCtx, client, address, plain, entry.Token); err != nil {
 				return err
 			}
 		}
@@ -90,13 +98,13 @@ func (pushSender) Send(address string, p push.Payload, withImages bool) error {
 		for _, img := range p.Images {
 			localPath := img
 			if httpsURLRe.MatchString(img) {
-				tmp, err := downloadRemoteImageToTemp(ctx, img)
+				tmp, err := downloadRemoteImageToTemp(sendCtx, img)
 				if err != nil {
 					return err
 				}
 				localPath = tmp
 			}
-			if err := sendImageFile(ctx, client, address, localPath, entry.Token); err != nil {
+			if err := sendImageFile(sendCtx, client, address, localPath, entry.Token); err != nil {
 				return err
 			}
 		}

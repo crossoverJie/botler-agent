@@ -3,8 +3,13 @@ package adk
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/genai"
 
@@ -256,5 +261,117 @@ func TestConstructors(t *testing.T) {
 	}
 	if anthropic.modelName != "m2" || anthropic.maxTokens != 32 {
 		t.Fatalf("anthropic runtime not populated: %+v", anthropic)
+	}
+	if anthropic.Describe() != "m2" {
+		t.Fatalf("Describe without provider = %q, want m2", anthropic.Describe())
+	}
+
+	named, err := NewOpenAI(ctx, OpenAIConfig{
+		Provider: "ark", BaseURL: "http://127.0.0.1:1/v1", APIKey: "k",
+		Model: "ark-code-latest", RequestTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewOpenAI named: %v", err)
+	}
+	if named.Describe() != "ark/ark-code-latest" {
+		t.Fatalf("Describe() = %q, want ark/ark-code-latest", named.Describe())
+	}
+}
+
+func TestOpenAIStreamDropAndStatusClassificationIntegration(t *testing.T) {
+	var attempt atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := attempt.Add(1)
+		switch n {
+		case 1:
+			// 200 + mid-stream TCP drop (chunked stream closed without terminal chunk -> unexpected EOF).
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Error("ResponseWriter does not support Hijacker")
+				return
+			}
+			conn, buf, err := hj.Hijack()
+			if err != nil {
+				t.Errorf("Hijack: %v", err)
+				return
+			}
+			chunk := "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hel\"}}]}\n\n"
+			_, _ = fmt.Fprintf(buf, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n", len(chunk), chunk)
+			_ = buf.Flush()
+			_ = conn.Close()
+		case 2:
+			// 200 + proxy-truncated SSE frame mid-JSON -> json.SyntaxError.
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hel\n\n")
+		case 3:
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, "data: {\"id\":\"2\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hello world\"},\"finish_reason\":null}]}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"id\":\"2\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		case 4:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = fmt.Fprint(w, `{"error":{"message":"invalid api key","type":"invalid_request_error","code":"invalid_api_key"}}`)
+		case 5:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":{"message":"bad param","type":"invalid_request_error","code":"invalid_value"}}`)
+		}
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	inner, err := NewOpenAI(ctx, OpenAIConfig{
+		Provider:   "stub",
+		BaseURL:    srv.URL + "/v1",
+		APIKey:     "sk-test",
+		Model:      "test-m",
+		HTTPClient: srv.Client(),
+		Vision:     true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := agentrt.Request{
+		Messages: []agentrt.Message{{Role: agentrt.RoleUser, Parts: []agentrt.Part{{Type: agentrt.PartText, Text: "hi"}}}},
+	}
+
+	// RetryingRuntime recovers across both a raw TCP mid-stream drop (#1) and a proxy-truncated SSE frame (#2)
+	// and succeeds on attempt #3 (SDK internal retries are 0).
+	retrying := &agentrt.RetryingRuntime{
+		Inner:      inner,
+		MaxRetries: 2,
+		BaseDelay:  time.Millisecond,
+		MaxDelay:   2 * time.Millisecond,
+	}
+	reply, err := retrying.Complete(ctx, req)
+	if err != nil {
+		t.Fatalf("RetryingRuntime failed to recover from SSE drop: %v", err)
+	}
+	if reply.Text() != "hello world" {
+		t.Fatalf("reply = %q, want %q", reply.Text(), "hello world")
+	}
+	if got := attempt.Load(); got != 3 {
+		t.Fatalf("server hits = %d, want exactly 3 (SDK retries must be disabled)", got)
+	}
+
+	// 4th call: 401 -> retrySame=false, tryNext=true (only 1 hit).
+	_, err401 := inner.Complete(ctx, req)
+	if retrySame, tryNext := agentrt.Classify(ctx, err401); retrySame || !tryNext {
+		t.Fatalf("401 Classify(%v) = (%v, %v), want (false, true)", err401, retrySame, tryNext)
+	}
+	if got := attempt.Load(); got != 4 {
+		t.Fatalf("401 must not trigger SDK retries, server hits = %d", got)
+	}
+
+	// 5th call: 400 -> retrySame=false, tryNext=false (only 1 hit).
+	_, err400 := inner.Complete(ctx, req)
+	if retrySame, tryNext := agentrt.Classify(ctx, err400); retrySame || tryNext {
+		t.Fatalf("400 Classify(%v) = (%v, %v), want (false, false)", err400, retrySame, tryNext)
+	}
+	if got := attempt.Load(); got != 5 {
+		t.Fatalf("400 must not trigger SDK retries, server hits = %d", got)
 	}
 }

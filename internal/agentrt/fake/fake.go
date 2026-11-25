@@ -72,3 +72,6 @@ func (r *Runtime) CallCount() int {
 	defer r.mu.Unlock()
 	return len(r.Calls)
 }
+
+// Describe implements agentrt.Describer.
+func (r *Runtime) Describe() string { return "fake" }

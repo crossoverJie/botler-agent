@@ -261,7 +261,7 @@ func TestSendMessagePostsChatIDAndText(t *testing.T) {
 	defer srv.Close()
 
 	ch := newTestChannel(t, srv.URL, "")
-	if err := ch.Send("12345", push.Payload{Text: "hi"}, false); err != nil {
+	if err := ch.Send(context.Background(), "12345", push.Payload{Text: "hi"}, false); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if gotPath != "/botTEST/sendMessage" {
@@ -269,6 +269,27 @@ func TestSendMessagePostsChatIDAndText(t *testing.T) {
 	}
 	if gotBody["chat_id"] != "12345" || gotBody["text"] != "hi" {
 		t.Fatalf("body = %v", gotBody)
+	}
+}
+
+func TestSendPropagatesCallerContextCancellation(t *testing.T) {
+	unblock := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-unblock
+	}))
+	defer srv.Close()
+	defer close(unblock)
+
+	ch := newTestChannel(t, srv.URL, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := ch.Send(ctx, "12345", push.Payload{Text: "hi"}, false)
+	if err == nil {
+		t.Fatal("expected cancellation error")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Send ignored caller ctx deadline (took %s)", elapsed)
 	}
 }
 

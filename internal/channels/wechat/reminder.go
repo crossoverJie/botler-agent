@@ -123,6 +123,7 @@ func reminderTick(ctx context.Context) {
 		return // this quiet stretch was already nudged
 	}
 	res := push.Deliver(
+		ctx,
 		push.Payload{Text: ReminderText(float64(quiet) / 3600e3)},
 		push.Recipient{Source: push.SourceWeChat, UserID: owner},
 	)
@@ -131,7 +132,6 @@ func reminderTick(ctx context.Context) {
 	}
 	// Record the attempt regardless of outcome so we don't retry-spam on the same quiet stretch.
 	MarkReminded(owner)
-	_ = ctx
 }
 
 // ReminderText renders the reminder copy; values are defensively clamped (negative hours / over

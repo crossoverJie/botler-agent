@@ -1,11 +1,14 @@
 package push
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // withConfigDir isolates contacts.json: it lives in the externalized config dir, never in DATA_ROOT.
@@ -42,7 +45,7 @@ type fakeSender struct {
 
 func (f *fakeSender) Configured() bool { return f.configured }
 
-func (f *fakeSender) Send(address string, p Payload, withImages bool) error {
+func (f *fakeSender) Send(_ context.Context, address string, p Payload, withImages bool) error {
 	f.calls = append(f.calls, sendCall{address: address, payload: p, withImages: withImages})
 	if f.fail {
 		return errors.New("send failed")
@@ -56,7 +59,7 @@ func TestDeliverUsesPrimaryChannel(t *testing.T) {
 	wx := &fakeSender{configured: true}
 	RegisterSender(SourceWeChat, wx)
 
-	res := Deliver(Payload{Text: "hi", Images: []string{"a.png"}},
+	res := Deliver(context.Background(), Payload{Text: "hi", Images: []string{"a.png"}},
 		Recipient{Source: SourceWeChat, UserID: "wx-1"})
 
 	if !res.OK || res.Via != SourceWeChat {
@@ -77,7 +80,7 @@ func TestDeliverSendsTextOnlyOnNonWeChatPrimary(t *testing.T) {
 	tg := &fakeSender{configured: true}
 	RegisterSender(SourceTelegram, tg)
 
-	res := Deliver(Payload{Text: "hi", Images: []string{"a.png"}},
+	res := Deliver(context.Background(), Payload{Text: "hi", Images: []string{"a.png"}},
 		Recipient{Source: SourceTelegram, UserID: "42"})
 
 	if !res.OK || res.Via != SourceTelegram {
@@ -97,7 +100,7 @@ func TestDeliverDegradesToFallbackChannel(t *testing.T) {
 	RegisterSender(SourceTelegram, tg)
 	RecordContact(SourceTelegram, "42")
 
-	res := Deliver(Payload{Text: "hi", Images: []string{"a.png"}},
+	res := Deliver(context.Background(), Payload{Text: "hi", Images: []string{"a.png"}},
 		Recipient{Source: SourceWeChat, UserID: "wx-1"})
 
 	if !res.OK || res.Via != SourceTelegram {
@@ -122,7 +125,7 @@ func TestDeliverTriesEveryKnownContact(t *testing.T) {
 	RecordContact(SourceTelegram, "first")
 	RecordContact(SourceTelegram, "second")
 
-	res := Deliver(Payload{Text: "hi"}, Recipient{Source: SourceWeChat, UserID: "wx-1"})
+	res := Deliver(context.Background(), Payload{Text: "hi"}, Recipient{Source: SourceWeChat, UserID: "wx-1"})
 
 	if !res.OK || res.Via != SourceTelegram {
 		t.Fatalf("expected success on the second address, got %+v", res)
@@ -140,12 +143,12 @@ type conditionalSender struct {
 
 func (c *conditionalSender) Configured() bool { return true }
 
-func (c *conditionalSender) Send(address string, p Payload, withImages bool) error {
+func (c *conditionalSender) Send(ctx context.Context, address string, p Payload, withImages bool) error {
 	if c.failTimes > 0 {
 		c.failTimes--
 		return errors.New("transient")
 	}
-	return c.inner.Send(address, p, withImages)
+	return c.inner.Send(ctx, address, p, withImages)
 }
 
 func TestDeliverSkipsUnconfiguredAndUnknownContacts(t *testing.T) {
@@ -155,7 +158,7 @@ func TestDeliverSkipsUnconfiguredAndUnknownContacts(t *testing.T) {
 	RegisterSender(SourceTelegram, &fakeSender{configured: false}) // credentials missing
 	RegisterSender(SourceFeishu, &fakeSender{configured: true})    // configured but nobody recorded
 
-	res := Deliver(Payload{Text: "hi"}, Recipient{Source: SourceWeChat, UserID: "wx-1"})
+	res := Deliver(context.Background(), Payload{Text: "hi"}, Recipient{Source: SourceWeChat, UserID: "wx-1"})
 	if res.OK {
 		t.Fatalf("expected failure, got %+v", res)
 	}
@@ -171,7 +174,7 @@ func TestDeliverUnregisteredPrimaryDegrades(t *testing.T) {
 	RegisterSender(SourceTelegram, tg)
 	RecordContact(SourceTelegram, "42")
 
-	res := Deliver(Payload{Text: "hi"}, Recipient{Source: SourceFeishu, UserID: "chat-1"})
+	res := Deliver(context.Background(), Payload{Text: "hi"}, Recipient{Source: SourceFeishu, UserID: "chat-1"})
 	if !res.OK || res.Via != SourceTelegram {
 		t.Fatalf("expected degradation, got %+v", res)
 	}
@@ -185,7 +188,7 @@ func TestDeliverEmptyAddressDegrades(t *testing.T) {
 	withSenders(t)
 	RegisterSender(SourceTelegram, &fakeSender{configured: true})
 
-	res := Deliver(Payload{Text: "hi"}, Recipient{Source: SourceWeChat})
+	res := Deliver(context.Background(), Payload{Text: "hi"}, Recipient{Source: SourceWeChat})
 	if res.OK {
 		t.Fatalf("expected failure, got %+v", res)
 	}
@@ -270,5 +273,80 @@ func TestSenderRegistry(t *testing.T) {
 	got, ok := SenderFor(SourceWeChat)
 	if !ok || got != s {
 		t.Fatalf("unexpected registry entry: %v %v", got, ok)
+	}
+}
+
+type blockingSender struct{}
+
+func (blockingSender) Configured() bool { return true }
+
+func (blockingSender) Send(ctx context.Context, _ string, _ Payload, _ bool) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestNotifyNeverDegradesAndValidatesTarget(t *testing.T) {
+	withConfigDir(t)
+	withSenders(t)
+
+	// Missing sender registration.
+	if err := Notify(context.Background(), Recipient{Source: SourceWeChat, UserID: "wx-1"}, "notice"); err == nil ||
+		!strings.Contains(err.Error(), "not available") {
+		t.Fatalf("expected not-available error, got %v", err)
+	}
+
+	// Unconfigured sender.
+	RegisterSender(SourceWeChat, &fakeSender{configured: false})
+	if err := Notify(context.Background(), Recipient{Source: SourceWeChat, UserID: "wx-1"}, "notice"); err == nil ||
+		!strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("expected not-configured error, got %v", err)
+	}
+
+	// Empty recipient address.
+	wx := &fakeSender{configured: true}
+	RegisterSender(SourceWeChat, wx)
+	if err := Notify(context.Background(), Recipient{Source: SourceWeChat}, "notice"); err == nil ||
+		!strings.Contains(err.Error(), "empty") {
+		t.Fatalf("expected empty-address error, got %v", err)
+	}
+
+	// Primary fails -> must NOT degrade to Telegram even when Telegram is configured with contacts.
+	wx.fail = true
+	tg := &fakeSender{configured: true}
+	RegisterSender(SourceTelegram, tg)
+	RecordContact(SourceTelegram, "42")
+	if err := Notify(context.Background(), Recipient{Source: SourceWeChat, UserID: "wx-1"}, "notice"); err == nil {
+		t.Fatal("expected primary error")
+	}
+	if len(tg.calls) != 0 {
+		t.Fatalf("Notify must never degrade to another channel, got %d telegram calls", len(tg.calls))
+	}
+
+	// Healthy primary sends plain text without images.
+	wx.fail = false
+	wx.calls = nil
+	if err := Notify(nil, Recipient{Source: SourceWeChat, UserID: "wx-1"}, "notice"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(wx.calls) != 1 || wx.calls[0].payload.Text != "notice" || wx.calls[0].withImages {
+		t.Fatalf("unexpected send call: %+v", wx.calls)
+	}
+}
+
+func TestNotifyPropagatesContextCancellation(t *testing.T) {
+	withConfigDir(t)
+	withSenders(t)
+	RegisterSender(SourceWeChat, blockingSender{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := Notify(ctx, Recipient{Source: SourceWeChat, UserID: "wx-1"}, "notice")
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded, got %v", err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("ctx cancellation was not propagated promptly: took %s", elapsed)
 	}
 }

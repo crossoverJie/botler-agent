@@ -80,7 +80,10 @@ func run(repo, scenario string, port int, message string, skipV1 bool, work stri
 		if err := writeProviders(filepath.Join(dir, "providers.json"), port); err != nil {
 			return err
 		}
+		// Disable retries explicitly so the scripted stub sees deterministic 1:1 request counts
+		// across v1 (no retries) and Go.
 		env := fmt.Sprintf("DATA_ROOT=%s\nPI_PROVIDER=stub\nPI_MODEL=stub-model\n"+
+			"LLM_MAX_RETRIES=0\n"+
 			"WEBUI_ENABLED=0\nSCHEDULER_ENABLED=0\nMONITOR_ENABLED=0\nGIT_PUSH=0\n"+
 			"CONVERSATION_CONTEXT_ENABLED=1\n", dataDir)
 		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o644); err != nil {

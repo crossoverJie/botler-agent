@@ -9,9 +9,11 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ModelMeta describes one model of a custom provider (providers.json).
@@ -35,13 +37,33 @@ const (
 	APIAnthropicMessages = "anthropic-messages"
 )
 
+// RetryNotifyMode controls how much of the LLM retry / fallback process is announced to
+// interactive chat channels.
+type RetryNotifyMode string
+
+// Supported LLM_RETRY_NOTIFY values.
+const (
+	RetryNotifyOff      RetryNotifyMode = "off"      // stderr only
+	RetryNotifyFallback RetryNotifyMode = "fallback" // default: announce provider switches only
+	RetryNotifyAll      RetryNotifyMode = "all"      // also announce the first retry per provider
+)
+
+// ProviderTarget is one fully-resolved (provider, model) pair in the fallback chain.
+type ProviderTarget struct {
+	Provider string
+	Model    string
+}
+
 // CustomProvider is one entry of providers.json.
 type CustomProvider struct {
-	ID      string
-	API     string
-	BaseURL string
-	APIKey  string
-	Models  []ModelMeta
+	ID       string
+	API      string
+	BaseURL  string
+	APIKey   string
+	Models   []ModelMeta
+	Priority *int
+	Model    string
+	Fallback *bool
 }
 
 // Config is the resolved runtime configuration.
@@ -51,6 +73,14 @@ type Config struct {
 	Model    string
 
 	CustomProviders []CustomProvider
+
+	MaxRetries      int
+	RetryBaseDelay  time.Duration
+	RetryMaxDelay   time.Duration
+	RetryBudget     time.Duration
+	RequestTimeout  time.Duration
+	FallbackEnabled bool
+	RetryNotify     RetryNotifyMode
 
 	TelegramToken     string
 	TelegramAllowFrom string
@@ -161,6 +191,13 @@ func Load() *Config {
 		DataRoot:                 os.Getenv("DATA_ROOT"),
 		Provider:                 envOr("PI_PROVIDER", "anthropic"),
 		Model:                    envOr("PI_MODEL", "claude-sonnet-4-5"),
+		MaxRetries:               envNonNegativeInt("LLM_MAX_RETRIES", 2),
+		RetryBaseDelay:           time.Duration(envPositiveInt("LLM_RETRY_BASE_MS", 1000)) * time.Millisecond,
+		RetryMaxDelay:            time.Duration(envPositiveInt("LLM_RETRY_MAX_MS", 15000)) * time.Millisecond,
+		RetryBudget:              time.Duration(envNonNegativeInt("LLM_RETRY_BUDGET_SECONDS", 0)) * time.Second,
+		RequestTimeout:           time.Duration(envNonNegativeInt("LLM_REQUEST_TIMEOUT_SECONDS", 0)) * time.Second,
+		FallbackEnabled:          os.Getenv("LLM_FALLBACK_ENABLED") != "0",
+		RetryNotify:              parseRetryNotify(os.Getenv("LLM_RETRY_NOTIFY")),
 		TelegramToken:            os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramAllowFrom:        os.Getenv("TELEGRAM_ALLOW_FROM"),
 		FeishuAppID:              os.Getenv("FEISHU_APP_ID"),
@@ -213,6 +250,40 @@ func envInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// envNonNegativeInt returns def when key is unset, unparsable, or negative.
+// Zero is preserved so keys such as LLM_MAX_RETRIES=0 can turn features off.
+func envNonNegativeInt(key string, def int) int {
+	n := envInt(key, def)
+	if n < 0 {
+		return def
+	}
+	return n
+}
+
+// envPositiveInt returns def when key is unset, unparsable, or <= 0 (used for backoff delays so
+// LLM_RETRY_BASE_MS=0 cannot degrade into a zero-delay retry storm; use LLM_MAX_RETRIES=0 to disable).
+func envPositiveInt(key string, def int) int {
+	n := envInt(key, def)
+	if n <= 0 {
+		return def
+	}
+	return n
+}
+
+func parseRetryNotify(v string) RetryNotifyMode {
+	switch RetryNotifyMode(strings.ToLower(strings.TrimSpace(v))) {
+	case RetryNotifyOff:
+		return RetryNotifyOff
+	case RetryNotifyAll:
+		return RetryNotifyAll
+	case RetryNotifyFallback, "":
+		return RetryNotifyFallback
+	default:
+		warnf("invalid LLM_RETRY_NOTIFY %q, falling back to %q", v, RetryNotifyFallback)
+		return RetryNotifyFallback
+	}
 }
 
 func parseMonitorPort() int {
@@ -327,18 +398,27 @@ func LoadProvidersFile() []CustomProvider {
 	}
 	var doc struct {
 		Providers map[string]struct {
-			API     any             `json:"api"`
-			BaseURL any             `json:"baseUrl"`
-			APIKey  any             `json:"apiKey"`
-			Models  json.RawMessage `json:"models"`
+			API      any             `json:"api"`
+			BaseURL  any             `json:"baseUrl"`
+			APIKey   any             `json:"apiKey"`
+			Models   json.RawMessage `json:"models"`
+			Priority json.RawMessage `json:"priority"`
+			Model    any             `json:"model"`
+			Fallback json.RawMessage `json:"fallback"`
 		} `json:"providers"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		warnf("failed to parse %s, falling back to CUSTOM_* env config: %v", file, err)
 		return nil
 	}
+	ids := make([]string, 0, len(doc.Providers))
+	for id := range doc.Providers {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
 	var out []CustomProvider
-	for id, p := range doc.Providers {
+	for _, id := range ids {
+		p := doc.Providers[id]
 		baseURL, _ := p.BaseURL.(string)
 		apiKey, _ := p.APIKey.(string)
 		if baseURL == "" || apiKey == "" {
@@ -372,7 +452,36 @@ func LoadProvidersFile() []CustomProvider {
 		if len(kept) == 0 {
 			continue
 		}
-		out = append(out, CustomProvider{ID: id, API: api, BaseURL: baseURL, APIKey: apiKey, Models: kept})
+		var priority *int
+		if rawPrio := strings.TrimSpace(string(p.Priority)); rawPrio != "" && rawPrio != "null" {
+			var v int
+			if err := json.Unmarshal(p.Priority, &v); err != nil {
+				warnf("provider %q has invalid priority %s, ignoring priority", id, rawPrio)
+			} else {
+				priority = &v
+			}
+		}
+		model, _ := p.Model.(string)
+		model = strings.TrimSpace(model)
+		var fallback *bool
+		if rawFB := strings.TrimSpace(string(p.Fallback)); rawFB != "" && rawFB != "null" {
+			var v bool
+			if err := json.Unmarshal(p.Fallback, &v); err != nil {
+				warnf("provider %q has invalid fallback %s, ignoring fallback", id, rawFB)
+			} else {
+				fallback = &v
+			}
+		}
+		out = append(out, CustomProvider{
+			ID:       id,
+			API:      api,
+			BaseURL:  baseURL,
+			APIKey:   apiKey,
+			Models:   kept,
+			Priority: priority,
+			Model:    model,
+			Fallback: fallback,
+		})
 	}
 	return out
 }
@@ -399,7 +508,7 @@ func buildCustomProviders(provider string) []CustomProvider {
 	return []CustomProvider{{ID: id, API: APIOpenAICompletions, BaseURL: baseURL, APIKey: apiKey, Models: legacyCustomModels}}
 }
 
-// Provider returns the custom provider with the given id.
+// FindProvider returns the custom provider with the given id.
 func (c *Config) FindProvider(id string) (CustomProvider, bool) {
 	for _, p := range c.CustomProviders {
 		if p.ID == id {
@@ -407,6 +516,39 @@ func (c *Config) FindProvider(id string) (CustomProvider, bool) {
 		}
 	}
 	return CustomProvider{}, false
+}
+
+// ProviderChain returns the ordered fallback chain. Element 0 is always the explicit choice
+// (PI_PROVIDER / PI_MODEL); the rest are providers.json entries that opted in with `priority`.
+func (c *Config) ProviderChain() []ProviderTarget {
+	chain := []ProviderTarget{{Provider: c.Provider, Model: c.Model}}
+	if !c.FallbackEnabled {
+		return chain
+	}
+	var rest []CustomProvider
+	for _, p := range c.CustomProviders {
+		if p.ID == c.Provider || p.Priority == nil {
+			continue
+		}
+		if p.Fallback != nil && !*p.Fallback {
+			continue
+		}
+		if p.Model == "" {
+			warnf("provider %q has priority but no model, skipping fallback", p.ID)
+			continue
+		}
+		rest = append(rest, p)
+	}
+	sort.SliceStable(rest, func(i, j int) bool {
+		if *rest[i].Priority != *rest[j].Priority {
+			return *rest[i].Priority < *rest[j].Priority
+		}
+		return rest[i].ID < rest[j].ID
+	})
+	for _, p := range rest {
+		chain = append(chain, ProviderTarget{Provider: p.ID, Model: p.Model})
+	}
+	return chain
 }
 
 func warnf(format string, args ...any) {

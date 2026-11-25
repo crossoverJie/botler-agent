@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -31,7 +32,7 @@ func TestHealthEndpointsShape(t *testing.T) {
 	for _, key := range []string{
 		"ok", "pid", "uptimeSec", "startedAt", "memory", "eventLoopLagMs", "queueDepth",
 		"activeTasks", "activeAgents", "totalDispatched", "duplicatesTotal", "totalFailed",
-		"statusCounts", "modelCache", "schedulesTotal", "schedulesEnabled",
+		"statusCounts", "modelCache", "llm", "schedulesTotal", "schedulesEnabled",
 		"nextFireAtSec", "lastFireAtSec", "lastFireId", "channels",
 	} {
 		if _, ok := snap[key]; !ok {
@@ -48,6 +49,9 @@ func TestMetricNamesMatchV1(t *testing.T) {
 		"botler_event_loop_lag_p50_ms",
 		"botler_model_cache_queries_total",
 		"botler_model_cache_hits_total",
+		"botler_llm_retries_total",
+		"botler_llm_fallbacks_total",
+		"botler_llm_giveups_total",
 		"botler_schedules_total",
 		"botler_schedules_enabled_total",
 		"botler_scheduler_next_fire_epoch_seconds",
@@ -55,6 +59,32 @@ func TestMetricNamesMatchV1(t *testing.T) {
 	} {
 		if !containsLine(body, "# TYPE "+name+" ") {
 			t.Fatalf("metric %q is missing (or misnamed)", name)
+		}
+	}
+}
+
+func TestLLMRetryCountersAndSnapshot(t *testing.T) {
+	before := BuildSnapshot().LLM
+	MarkLLMRetry("retry", "custom/m1", "", "unexpected EOF")
+	MarkLLMRetry("fallback", "custom/m1", "ark/m2", "503 overloaded")
+	MarkLLMRetry("give-up", "bare-model", "", "502 bad gateway")
+
+	after := BuildSnapshot().LLM
+	if after.Retries-before.Retries != 1 || after.Fallbacks-before.Fallbacks != 1 || after.Giveups-before.Giveups != 1 {
+		t.Fatalf("unexpected LLM snapshot delta: before=%+v after=%+v", before, after)
+	}
+	if after.LastError != "502 bad gateway" {
+		t.Fatalf("LastError = %q, want 502 bad gateway", after.LastError)
+	}
+
+	metrics := BuildMetrics()
+	for _, want := range []string{
+		`botler_llm_retries_total{provider="custom",model="m1"} `,
+		`botler_llm_fallbacks_total{from="custom/m1",to="ark/m2"} `,
+		`botler_llm_giveups_total{provider="",model="bare-model"} `,
+	} {
+		if !strings.Contains(metrics, want) {
+			t.Fatalf("metrics missing %q:\n%s", want, metrics)
 		}
 	}
 }

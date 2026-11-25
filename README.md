@@ -273,6 +273,7 @@ Custom OpenAI-completions / Anthropic-messages compatible gateways (self-hosted 
 - **Select**: set `PI_PROVIDER` to a provider id and `PI_MODEL` to one of its model ids in `.env`, then restart — the model is cached per process.
 - **Add a provider / model**: just edit this file, no framework change needed. Malformed entries are skipped with a warning.
 - **`api`**: `"openai-completions"` (OpenAI Chat Completions, default) or `"anthropic-messages"` (Anthropic Messages API, whose SDK appends `/v1/messages` to `baseUrl`).
+- **Provider fallback fields (optional)**: set `"priority"` (integer, smaller = higher priority) and `"model"` (backup model id, required when `priority` is set) on backup provider entries to form an automatic runtime fallback chain behind `PI_PROVIDER` / `PI_MODEL`. Set `"fallback": false` to exclude an entry from acting as a backup. Providers without `priority` never join the fallback chain.
 - **Model fields**: `id` (as sent to the gateway), `name`, `reasoning` (supports thinking), `contextWindow` (context tokens), `maxTokens` (max output tokens), `vision` (whether the model accepts image input; **defaults to `true` — image input is enabled**. Only set `vision: false` for text-only models. If you omit the field entirely, vision stays ON. Do NOT add `vision: false` unless the model genuinely cannot read images, or WeChat inbound images and any image-based tasks will silently fail).
 - **Built-in anthropic**: set `PI_PROVIDER=anthropic` and authenticate via `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` (no `providers.json` entry needed).
 
@@ -377,6 +378,13 @@ By default a local health/metrics server runs on `127.0.0.1:MONITOR_PORT` (defau
 | `PI_MODEL` | Model id (e.g. `claude-sonnet-4-5` or `your-model-flash`) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | Built-in anthropic auth (when `PI_PROVIDER=anthropic`) |
 | `~/.botler-agent/providers.json` | Custom OpenAI-completions / Anthropic-messages gateways (baseUrl / apiKey / models per provider); legacy fallback: `CUSTOM_BASE_URL` / `CUSTOM_API_KEY` env vars |
+| `LLM_MAX_RETRIES` | Max retries on the same provider per LLM call, including mid-stream drops (`0` disables retries; default `2`) |
+| `LLM_RETRY_BASE_MS` | Exponential backoff base delay in ms (`> 0`, default `1000`) |
+| `LLM_RETRY_MAX_MS` | Single retry backoff hard cap in ms (`> 0`, default `15000`) |
+| `LLM_RETRY_BUDGET_SECONDS` | Wall-clock retry budget across the provider chain per LLM call (`0` = unlimited, default `0`; recommended `120` with multiple providers) |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | Per-attempt HTTP request timeout in seconds (`0` = never time out, default `0`; recommended `600`) |
+| `LLM_FALLBACK_ENABLED` | `=0` disables provider-chain fallback and uses only `PI_PROVIDER` (default `1`) |
+| `LLM_RETRY_NOTIFY` | User-visible retry notices on WeChat / Telegram: `fallback` (default, provider switches only), `all` (first retry per provider + switches), or `off` |
 | `TELEGRAM_BOT_TOKEN` | Telegram BotFather token; left empty to disable Telegram |
 | `TG_PROXY` | Telegram API needs a proxy on the mainland China network (e.g. `http://127.0.0.1:7890`) |
 | `TELEGRAM_ALLOW_FROM` | Optional comma-separated Telegram sender allowlist (user ids or usernames); empty = allow all |

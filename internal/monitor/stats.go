@@ -19,6 +19,26 @@ type ChannelState struct {
 	LastError   string `json:"lastError,omitempty"`
 }
 
+// LLMProviderModel identifies one (provider, model) pair for LLM retry/giveup counters.
+type LLMProviderModel struct {
+	Provider string
+	Model    string
+}
+
+// LLMFallbackPair identifies one (from, to) transition for LLM fallback counters.
+type LLMFallbackPair struct {
+	From string
+	To   string
+}
+
+// LLMSnapshot is the /healthz "llm" block.
+type LLMSnapshot struct {
+	Retries   int64  `json:"retries"`
+	Fallbacks int64  `json:"fallbacks"`
+	Giveups   int64  `json:"giveups"`
+	LastError string `json:"lastError"`
+}
+
 // Stats is the snapshot exposed by /healthz.
 type Stats struct {
 	StartedAt int64 `json:"startedAt"`
@@ -35,6 +55,11 @@ type Stats struct {
 
 	ModelCacheQueries int64 `json:"-"`
 	ModelCacheHits    int64 `json:"-"`
+
+	LLM          LLMSnapshot                `json:"llm"`
+	LLMRetries   map[LLMProviderModel]int64 `json:"-"`
+	LLMFallbacks map[LLMFallbackPair]int64  `json:"-"`
+	LLMGiveups   map[LLMProviderModel]int64 `json:"-"`
 
 	SchedulesTotal   int    `json:"schedulesTotal"`
 	SchedulesEnabled int    `json:"schedulesEnabled"`
@@ -67,7 +92,14 @@ var (
 )
 
 func newState() *Stats {
-	return &Stats{StartedAt: startedAt, StatusCounts: map[string]int64{}, Channels: map[string]ChannelState{}}
+	return &Stats{
+		StartedAt:    startedAt,
+		StatusCounts: map[string]int64{},
+		Channels:     map[string]ChannelState{},
+		LLMRetries:   map[LLMProviderModel]int64{},
+		LLMFallbacks: map[LLMFallbackPair]int64{},
+		LLMGiveups:   map[LLMProviderModel]int64{},
+	}
 }
 
 // StartedAtMs is the single process-start timestamp shared by both HTTP exits.
@@ -136,6 +168,36 @@ func MarkModelCache(hit bool) {
 	if hit {
 		state.ModelCacheHits++
 	}
+}
+
+// MarkLLMRetry records one LLM retry / fallback / give-up / budget-exhausted event.
+// Labels come from Runtime.Describe() ("provider/model" or "model").
+func MarkLLMRetry(kind, from, to, errText string) {
+	mu.Lock()
+	defer mu.Unlock()
+	if errText != "" {
+		state.LLM.LastError = errText
+	}
+	switch kind {
+	case "retry":
+		state.LLM.Retries++
+		state.LLMRetries[splitProviderModel(from)]++
+	case "fallback":
+		state.LLM.Fallbacks++
+		state.LLMFallbacks[LLMFallbackPair{From: from, To: to}]++
+	case "give-up":
+		state.LLM.Giveups++
+		state.LLMGiveups[splitProviderModel(from)]++
+	}
+}
+
+func splitProviderModel(label string) LLMProviderModel {
+	for i := 0; i < len(label); i++ {
+		if label[i] == '/' {
+			return LLMProviderModel{Provider: label[:i], Model: label[i+1:]}
+		}
+	}
+	return LLMProviderModel{Model: label}
 }
 
 // MarkAgentStart records an in-flight agent run.
@@ -211,6 +273,18 @@ func StatsSnapshot() Stats {
 	out.Channels = make(map[string]ChannelState, len(state.Channels))
 	for k, v := range state.Channels {
 		out.Channels[k] = v
+	}
+	out.LLMRetries = make(map[LLMProviderModel]int64, len(state.LLMRetries))
+	for k, v := range state.LLMRetries {
+		out.LLMRetries[k] = v
+	}
+	out.LLMFallbacks = make(map[LLMFallbackPair]int64, len(state.LLMFallbacks))
+	for k, v := range state.LLMFallbacks {
+		out.LLMFallbacks[k] = v
+	}
+	out.LLMGiveups = make(map[LLMProviderModel]int64, len(state.LLMGiveups))
+	for k, v := range state.LLMGiveups {
+		out.LLMGiveups[k] = v
 	}
 	return out
 }

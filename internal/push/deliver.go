@@ -1,6 +1,7 @@
 package push
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -16,12 +17,12 @@ func channelConfigured(src Source) bool {
 	return ok && s.Configured()
 }
 
-func deliverToChannel(src Source, p Payload, address string, withImages bool) error {
+func deliverToChannel(ctx context.Context, src Source, p Payload, address string, withImages bool) error {
 	s, ok := SenderFor(src)
 	if !ok {
 		return fmt.Errorf("%s: channel not available", src)
 	}
-	return s.Send(address, p, withImages)
+	return s.Send(ctx, address, p, withImages)
 }
 
 // DeliverResult reports the outcome of Deliver.
@@ -35,27 +36,30 @@ type DeliverResult struct {
 // the other configured channels in fallbackOrder, trying only channels that are configured and
 // have a recorded contact address, and each recorded address until one succeeds. Degraded
 // channels receive plain text only; images go out only on the primary WeChat channel.
-func Deliver(p Payload, recipient Recipient) DeliverResult {
+func Deliver(ctx context.Context, p Payload, recipient Recipient) DeliverResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	primary := recipient.Source
 	if recipient.UserID != "" {
-		if err := deliverToChannel(primary, p, recipient.UserID, primary == SourceWeChat); err == nil {
+		if err := deliverToChannel(ctx, primary, p, recipient.UserID, primary == SourceWeChat); err == nil {
 			return DeliverResult{OK: true, Via: primary}
 		} else {
 			fmt.Fprintf(os.Stderr, "[push] primary %s failed: %v\n", primary, err)
-			return degrade(p, primary, err)
+			return degrade(ctx, p, primary, err)
 		}
 	}
-	return degrade(p, primary, errors.New("recipient address is empty"))
+	return degrade(ctx, p, primary, errors.New("recipient address is empty"))
 }
 
-func degrade(p Payload, primary Source, primaryErr error) DeliverResult {
+func degrade(ctx context.Context, p Payload, primary Source, primaryErr error) DeliverResult {
 	textOnly := Payload{Text: p.Text}
 	for _, src := range fallbackOrder {
 		if src == primary || !channelConfigured(src) {
 			continue
 		}
 		for _, addr := range Contacts(src) {
-			if err := deliverToChannel(src, textOnly, addr, false); err != nil {
+			if err := deliverToChannel(ctx, src, textOnly, addr, false); err != nil {
 				fmt.Fprintf(os.Stderr, "[push] fallback %s -> %s failed: %v\n", src, addr, err)
 				continue
 			}
